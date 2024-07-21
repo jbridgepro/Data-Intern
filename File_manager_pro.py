@@ -80,5 +80,9 @@ class FileManagerProApp(tk.Tk):
         self.style.configure('TEntry', foreground=self.text_color, font=self.label_font)
 
 if __name__ == "__main__":
-    app = FileManagerProApp()
-    app.mainloop()
+    try:
+        app = FileManagerProApp()
+        app.mainloop()
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        sys.exit(1)
