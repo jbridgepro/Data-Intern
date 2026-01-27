@@ -1,0 +1,91 @@
+name: Release
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            binary_name: voice-service
+            sidecar_name: voice-service-x86_64-unknown-linux-gnu
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            binary_name: voice-service
+            sidecar_name: voice-service-x86_64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            binary_name: voice-service.exe
+            sidecar_name: voice-service-x86_64-pc-windows-msvc.exe
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies (Ubuntu)
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libssl-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller -r python-voice-service/requirements.txt
+
+      - name: Build Python Sidecar
+        run: |
+          cd python-voice-service
+          pyinstaller --clean --name voice-service --onefile service.py
+        
+      - name: Prepare Sidecar
+        shell: bash
+        run: |
+          mkdir -p src-tauri/binaries
+          # Move and rename the binary to match Tauri's target triple expectation
+          if [ "${{ matrix.os }}" == "windows-latest" ]; then
+            mv python-voice-service/dist/${{ matrix.binary_name }} src-tauri/binaries/${{ matrix.sidecar_name }}
+          else
+            mv python-voice-service/dist/${{ matrix.binary_name }} src-tauri/binaries/${{ matrix.sidecar_name }}
+            chmod +x src-tauri/binaries/${{ matrix.sidecar_name }}
+          fi
+          echo "Sidecar prepared at src-tauri/binaries/${{ matrix.sidecar_name }}"
+
+      - name: Install Frontend Dependencies
+        run: npm install
+
+      - name: Build Tauri App
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: 'ProjectFile Pro ${{ github.ref_name }}'
+          releaseBody: 'See the assets to download this version and install.'
+          releaseDraft: true
+          prerelease: false
+          args: --target ${{ matrix.target }}

@@ -1,0 +1,397 @@
+/**
+ * File: src/App.tsx
+ *
+ * Frontend: Main application component
+ * Integrates panel configuration system for UI layout and visibility control
+ * Supports resizable and minimizable panels for all major UI sections
+ */
+
+import { useState, useEffect } from "react";
+import { MainLayout } from "./components/layout/MainLayout";
+import { Sidebar } from "./components/layout/Sidebar";
+import { FileMapper } from "./features/file-mapper/FileMapper";
+import { FileCopy } from "./features/file-copy/FileCopy";
+import { FolderCreation } from "./features/folder-creation/FolderCreation";
+import { EmptyFiles } from "./features/empty-files/EmptyFiles";
+import { Terminal } from "./features/terminal/Terminal";
+import { FindReplace } from "./features/find-replace/FindReplace";
+import { SQLExportWizard } from "./features/sql-export-wizard/SQLExportWizard";
+import { AIFileAssistant } from "./features/ai-assistant/AIFileAssistant";
+import { Settings } from "./features/settings/Settings";
+import { AgentSidebar } from "./features/agents/components/AgentSidebar";
+import { AgentFloatingButton } from "./features/agents/components/AgentFloatingButton";
+import { PanelConfiguration } from "./features/panel-configuration/components/PanelConfiguration";
+import { usePanelConfiguration } from "./features/panel-configuration/hooks/usePanelConfiguration";
+import { ChatPanel } from "./components/panels/ChatPanel";
+import { EditorsPanel } from "./components/panels/EditorsPanel";
+import { BottomPanel } from "./components/panels/BottomPanel";
+import { TitleBar } from "./components/layout/TitleBar";
+import { StatusBar } from "./components/layout/StatusBar";
+import { ResizablePanel } from "./components/ui/resizable-panel";
+
+import { AgentSelectionProvider } from "./features/agents/contexts/AgentSelectionContext";
+import { ChatProvider } from "./features/chat/contexts/ChatContext";
+import { EditorProvider } from "./contexts/EditorContext";
+
+function App() {
+  const [activeTab, setActiveTab] = useState("mapper");
+
+  // Panel configuration hook - manages UI visibility, layout, and panel sizes
+  const { 
+    configuration, 
+    togglePanelVisibility, 
+    setPanelVisibility,
+    setPanelSize,
+    togglePanelMinimized,
+  } = usePanelConfiguration();
+
+  // Agent sidebar state - synced with panel configuration
+  const [agentSidebarOpen, setAgentSidebarOpen] = useState(() => {
+    const saved = localStorage.getItem("agent-sidebar-open");
+    return saved === "true";
+  });
+
+  const [themeMode, setThemeMode] = useState<"light" | "dark">(() => {
+    // 1. Check saved preference
+    const saved = localStorage.getItem("theme-mode") as "light" | "dark" | null;
+    if (saved) return saved;
+    // 2. Check system preference
+    if (window.matchMedia("(prefers-color-scheme: dark)").matches) {
+      return "dark";
+    }
+    return "light";
+  });
+
+  // Sync agent sidebar with panel configuration visibility
+  // This ensures the sidebar state matches the panel configuration
+  useEffect(() => {
+    setAgentSidebarOpen(configuration.visibility.agents);
+  }, [configuration.visibility.agents]);
+
+  // Handle manual agent sidebar toggle - updates both state and configuration
+  const handleToggleAgentSidebar = () => {
+    const newState = !agentSidebarOpen;
+    setAgentSidebarOpen(newState);
+    setPanelVisibility("agents", newState);
+  };
+
+  useEffect(() => {
+    // Apply theme to html element
+    const root = window.document.documentElement;
+    root.classList.remove("light", "dark");
+    root.classList.add(themeMode);
+
+    // Persist choice
+    localStorage.setItem("theme-mode", themeMode);
+  }, [themeMode]);
+
+  useEffect(() => {
+    // Persist agent sidebar state
+    localStorage.setItem("agent-sidebar-open", agentSidebarOpen.toString());
+  }, [agentSidebarOpen]);
+
+  const toggleTheme = () => {
+    setThemeMode((prev) => (prev === "light" ? "dark" : "light"));
+  };
+
+  // Keyboard shortcuts for panel toggles
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const isMac = navigator.platform.toUpperCase().indexOf("MAC") >= 0;
+      const modKey = isMac ? e.metaKey : e.ctrlKey;
+
+      // Toggle Agents sidebar: ⌘⇧S / Ctrl+Shift+S
+      if (modKey && e.shiftKey && e.key === "S") {
+        e.preventDefault();
+        togglePanelVisibility("agents");
+        return;
+      }
+
+      // Toggle Chat panel: ⌘⇧B / Ctrl+Shift+B
+      if (modKey && e.shiftKey && e.key === "B") {
+        e.preventDefault();
+        togglePanelVisibility("chat");
+        return;
+      }
+
+      // Toggle Editors panel: ⌘⇧E / Ctrl+Shift+E
+      if (modKey && e.shiftKey && e.key === "E") {
+        e.preventDefault();
+        togglePanelVisibility("editors");
+        return;
+      }
+
+      // Toggle bottom Panel: ⌘J / Ctrl+J
+      if (modKey && !e.shiftKey && e.key === "j") {
+        e.preventDefault();
+        togglePanelVisibility("panel");
+        return;
+      }
+
+      // Toggle main Sidebar: ⌘B / Ctrl+B
+      if (modKey && !e.shiftKey && e.key === "b") {
+        e.preventDefault();
+        togglePanelVisibility("sidebar");
+        return;
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [togglePanelVisibility]);
+
+  // Handle custom navigation events
+  useEffect(() => {
+    const handleNavigation = (e: CustomEvent) => {
+        if (e.detail?.tab) {
+            setActiveTab(e.detail.tab);
+        }
+    };
+
+    window.addEventListener('filepro:navigate', handleNavigation as EventListener);
+    return () => window.removeEventListener('filepro:navigate', handleNavigation as EventListener);
+  }, []);
+
+  const renderContent = () => {
+    switch (activeTab) {
+      case "mapper":
+        return <FileMapper />;
+      case "copy":
+        return <FileCopy />;
+      case "folder":
+        return <FolderCreation />;
+      case "empty":
+        return <EmptyFiles />;
+      case "terminal":
+        return <Terminal />;
+      case "find-replace":
+        return <FindReplace />;
+      case "sql-export":
+        return <SQLExportWizard />;
+      case "ai-assistant":
+        return <AIFileAssistant />;
+      case "settings":
+        return (
+          <Settings
+            themeMode={themeMode}
+            toggleTheme={toggleTheme}
+            onNavigateToPanelConfig={() => setActiveTab("panel-config")}
+          />
+        );
+      case "panel-config":
+        return (
+          <PanelConfiguration
+            onNavigateToSettings={() => setActiveTab("settings")}
+          />
+        );
+      default:
+        return <FileMapper />;
+    }
+  };
+
+  // Determine agent sidebar position and visibility
+  const agentSidebarVisible =
+    configuration.visibility.agents &&
+    configuration.layout.agentSidebarPosition !== "hidden" &&
+    agentSidebarOpen;
+
+
+  // Determine if agent sidebar should be shown based on panel configuration and its own state
+  const shouldShowAgentSidebar = agentSidebarVisible;
+
+  return (
+    <AgentSelectionProvider>
+      <ChatProvider>
+        <EditorProvider>
+          <div className="flex h-screen flex-col bg-background font-sans text-foreground overflow-hidden">
+          {/* Title Bar */}
+          <TitleBar
+            isVisible={configuration.layout.showTitleBar}
+            onSettingsClick={() => setActiveTab("settings")}
+          />
+          
+          <div className="flex flex-1 overflow-hidden min-h-0">
+            {/* Main Content Area */}
+            <div className="flex flex-1 overflow-hidden min-h-0 relative">
+              
+              {/* Main Sidebar - Resizable */}
+              {configuration.visibility.sidebar && (
+                <ResizablePanel
+                  size={configuration.panelSizes.sidebar.size}
+                  minSize={configuration.panelSizes.sidebar.minSize}
+                  maxSize={configuration.panelSizes.sidebar.maxSize}
+                  isMinimized={configuration.panelSizes.sidebar.isMinimized}
+                  onSizeChange={(size) => setPanelSize("sidebar", size)}
+                  onMinimizeChange={() => togglePanelMinimized("sidebar")}
+                  direction="right"
+                  className="border-r border-slate-200/50 dark:border-slate-800/50"
+                >
+                  <Sidebar
+                    activeTab={activeTab}
+                    setActiveTab={setActiveTab}
+                    themeMode={themeMode}
+                    toggleTheme={toggleTheme}
+                    agentSidebarOpen={agentSidebarOpen}
+                    onToggleAgentSidebar={handleToggleAgentSidebar}
+                  />
+                </ResizablePanel>
+              )}
+
+              {/* Agent Sidebar - Left Position - Resizable */}
+              {configuration.layout.agentSidebarPosition === 'left' && shouldShowAgentSidebar && (
+                <ResizablePanel
+                  size={configuration.panelSizes.agents.size}
+                  minSize={configuration.panelSizes.agents.minSize}
+                  maxSize={configuration.panelSizes.agents.maxSize}
+                  isMinimized={configuration.panelSizes.agents.isMinimized}
+                  onSizeChange={(size) => setPanelSize("agents", size)}
+                  onMinimizeChange={() => togglePanelMinimized("agents")}
+                  direction="right"
+                  className="shrink-0"
+                >
+                  <AgentSidebar 
+                    isOpen={true} 
+                    onClose={handleToggleAgentSidebar} 
+                    position="left"
+                    isMinimized={configuration.panelSizes.agents.isMinimized}
+                    onToggleMinimize={() => togglePanelMinimized("agents")}
+                  />
+                </ResizablePanel>
+              )}
+
+              {/* Main View Area */}
+              <main className="flex-1 overflow-hidden relative flex flex-col min-h-0 h-full">
+                <MainLayout>
+                  {renderContent()}
+                </MainLayout>
+              </main>
+
+              {/* Chat Panel (Right Side) - Resizable */}
+              {configuration.visibility.chat && (
+                <ResizablePanel
+                  size={configuration.panelSizes.chat.size}
+                  minSize={configuration.panelSizes.chat.minSize}
+                  maxSize={configuration.panelSizes.chat.maxSize}
+                  isMinimized={configuration.panelSizes.chat.isMinimized}
+                  onSizeChange={(size) => setPanelSize("chat", size)}
+                  onMinimizeChange={() => togglePanelMinimized("chat")}
+                  direction="left"
+                  className="shrink-0"
+                >
+                  <ChatPanel
+                    isVisible={configuration.visibility.chat}
+                    onClose={() => setPanelVisibility("chat", false)}
+                    isMinimized={configuration.panelSizes.chat.isMinimized}
+                    onToggleMinimize={() => togglePanelMinimized("chat")}
+                  />
+                </ResizablePanel>
+              )}
+
+              {/* Agent Sidebar - Right Position - Resizable */}
+              {configuration.layout.agentSidebarPosition === 'right' && shouldShowAgentSidebar && (
+                <ResizablePanel
+                  size={configuration.panelSizes.agents.size}
+                  minSize={configuration.panelSizes.agents.minSize}
+                  maxSize={configuration.panelSizes.agents.maxSize}
+                  isMinimized={configuration.panelSizes.agents.isMinimized}
+                  onSizeChange={(size) => setPanelSize("agents", size)}
+                  onMinimizeChange={() => togglePanelMinimized("agents")}
+                  direction="left"
+                  className="shrink-0"
+                >
+                  <AgentSidebar 
+                    isOpen={true} 
+                    onClose={handleToggleAgentSidebar} 
+                    position="right"
+                    isMinimized={configuration.panelSizes.agents.isMinimized}
+                    onToggleMinimize={() => togglePanelMinimized("agents")}
+                  />
+                </ResizablePanel>
+              )}
+              
+              {/* Editors Panel (Right Side) - Resizable */}
+              {configuration.visibility.editors && (
+                <ResizablePanel
+                  size={configuration.panelSizes.editors.size}
+                  minSize={configuration.panelSizes.editors.minSize}
+                  maxSize={configuration.panelSizes.editors.maxSize}
+                  isMinimized={configuration.panelSizes.editors.isMinimized}
+                  onSizeChange={(size) => setPanelSize("editors", size)}
+                  onMinimizeChange={() => togglePanelMinimized("editors")}
+                  direction="left"
+                  className="shrink-0"
+                >
+                  <EditorsPanel
+                    isVisible={configuration.visibility.editors}
+                    onClose={() => setPanelVisibility("editors", false)}
+                    isMinimized={configuration.panelSizes.editors.isMinimized}
+                    onToggleMinimize={() => togglePanelMinimized("editors")}
+                  />
+                </ResizablePanel>
+              )}
+            </div>
+          </div>
+
+          {/* Bottom Panel - Resizable */}
+          {configuration.visibility.panel && (
+            <ResizablePanel
+              size={configuration.panelSizes.panel.size}
+              minSize={configuration.panelSizes.panel.minSize}
+              maxSize={configuration.panelSizes.panel.maxSize}
+              isMinimized={configuration.panelSizes.panel.isMinimized}
+              onSizeChange={(size) => setPanelSize("panel", size)}
+              onMinimizeChange={() => togglePanelMinimized("panel")}
+              direction="top"
+              className="border-t border-slate-200/50 dark:border-slate-800/50"
+              minimizedSize={36}
+            >
+              <BottomPanel
+                isVisible={configuration.visibility.panel}
+                onClose={() => setPanelVisibility("panel", false)}
+                isMinimized={configuration.panelSizes.panel.isMinimized}
+                onToggleMinimize={() => togglePanelMinimized("panel")}
+              />
+            </ResizablePanel>
+          )}
+
+          {/* Status Bar */}
+          <StatusBar isVisible={configuration.layout.showStatusBar} />
+
+          {/* Agent Sidebar - Bottom Position - Resizable */}
+          {configuration.layout.agentSidebarPosition === 'bottom' && shouldShowAgentSidebar && (
+            <ResizablePanel
+              size={configuration.panelSizes.agents.size}
+              minSize={configuration.panelSizes.agents.minSize}
+              maxSize={configuration.panelSizes.agents.maxSize}
+              isMinimized={configuration.panelSizes.agents.isMinimized}
+              onSizeChange={(size) => setPanelSize("agents", size)}
+              onMinimizeChange={() => togglePanelMinimized("agents")}
+              direction="top"
+              className="shrink-0 border-t border-slate-200/50 dark:border-slate-800/50"
+              minimizedSize={36}
+            >
+              <AgentSidebar 
+                isOpen={true} 
+                onClose={handleToggleAgentSidebar} 
+                position="bottom"
+                isMinimized={configuration.panelSizes.agents.isMinimized}
+                onToggleMinimize={() => togglePanelMinimized("agents")}
+              />
+            </ResizablePanel>
+          )}
+
+          {/* Floating Action Button for Agents (Mobile/Collapsed) */}
+          {!shouldShowAgentSidebar && configuration.visibility.agents && (
+            <AgentFloatingButton 
+              onClick={handleToggleAgentSidebar} 
+              isOpen={agentSidebarOpen} 
+            />
+          )}
+        </div>
+        </EditorProvider>
+      </ChatProvider>
+    </AgentSelectionProvider>
+  );
+}
+
+export default App;
