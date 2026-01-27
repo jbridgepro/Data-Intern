@@ -28,6 +28,9 @@ export class VoiceService {
   private onVoiceActivity?: (isActive: boolean) => void;
   private currentAudioLevel: number = 0;
   private isVoiceActive: boolean = false;
+  private isProcessingTurn: boolean = false;
+  private lastFlushTime: number = 0;
+  private readonly MIN_FLUSH_INTERVAL = 4000; // Minimum 4 seconds between flushes to reduce partial transcripts
 
   constructor(settings: VoiceSettings) {
     this.settings = settings;
@@ -244,13 +247,29 @@ export class VoiceService {
       });
 
       // Configure VAD based on settings - TUNED FOR NATURAL CONVERSATION
+      // Higher thresholds reduce false positives from ambient noise
+      // Increased silence duration to allow natural pauses within sentences
+      
+      // Calculate VAD threshold from micSensitivity (1-10)
+      // Default sensitivity is now 3 (less sensitive) to avoid ambient noise triggers
+      // Sensitivity 1 = threshold 0.25 (very insensitive, only loud speech)
+      // Sensitivity 3 = threshold 0.19 (recommended default)
+      // Sensitivity 5 = threshold 0.13 (balanced)
+      // Sensitivity 10 = threshold 0.03 (very sensitive, picks up quiet sounds)
+      const sensitivity = this.settings.micSensitivity ?? 3; // Default to 3 (less sensitive)
+      const baseThreshold = 0.28 - (sensitivity * 0.025); // Range: 0.255 to 0.03
+      
       if (this.settings.noiseCancellation) {
-        this.audioRecorder.setVADThreshold(0.05);
-        this.audioRecorder.setVADSilenceDuration(2000); // 2.0s for noisy (was 1000)
+        // Noisy environment: Increase threshold more
+        this.audioRecorder.setVADThreshold(Math.min(baseThreshold + 0.05, 0.30));
+        this.audioRecorder.setVADSilenceDuration(3500); // 3.5s for noisy environments
       } else {
-        this.audioRecorder.setVADThreshold(0.015);
-        this.audioRecorder.setVADSilenceDuration(1500); // 1.5s for normal (was 800)
+        // Quiet environment: Use calculated threshold
+        this.audioRecorder.setVADThreshold(baseThreshold);
+        this.audioRecorder.setVADSilenceDuration(3000); // 3.0s for normal environments
       }
+      
+      console.log(`[Voice] VAD configured: threshold=${baseThreshold.toFixed(3)}, sensitivity=${sensitivity}, noiseCancellation=${this.settings.noiseCancellation}`);
 
       // Handle Silence Detection (End of Thought)
       this.audioRecorder.setSilenceDetectionCallback(async () => {
@@ -298,7 +317,25 @@ export class VoiceService {
    * Processes the current audio turn (silence detected).
    */
   private async processConversationTurn() {
-    if (!this.audioRecorder || !this.isListening) return;
+    if (!this.audioRecorder || !this.isListening || this.isPaused) {
+      return;
+    }
+
+    // Prevent concurrent processing
+    if (this.isProcessingTurn) {
+      console.debug('Already processing a turn, skipping...');
+      return;
+    }
+
+    // Debounce: prevent too frequent flush attempts
+    const now = Date.now();
+    if (now - this.lastFlushTime < this.MIN_FLUSH_INTERVAL) {
+      console.debug(`Flush cooldown active (${now - this.lastFlushTime}ms since last flush)`);
+      return;
+    }
+
+    this.isProcessingTurn = true;
+    this.lastFlushTime = now;
 
     try {
       // Flush the audio buffer without stopping recording
@@ -314,10 +351,23 @@ export class VoiceService {
         }
 
         await this.transcribeWithFasterWhisper(audioBase64);
+      } else {
+        // Audio was too short or invalid - this is normal, don't log as error
+        console.debug('No valid audio to process (too short or invalid format)');
       }
-    } catch (error) {
-      console.error('Error processing conversation turn:', error);
-      this.setState('listening'); // Reset to listening on error
+    } catch (error: any) {
+      // Only log unexpected errors, not expected decoding failures
+      if (!error.message?.includes('Decoding failed') && !error.message?.includes('too short')) {
+        console.warn('Error processing conversation turn:', error.message || error);
+      }
+      // Reset to listening state
+      if (this.isListening) {
+        this.setState('listening');
+      } else {
+        this.setState('idle');
+      }
+    } finally {
+      this.isProcessingTurn = false;
     }
   }
 
@@ -441,7 +491,14 @@ export class VoiceService {
           errorMessage = `Transcription failed: ${errorMessage}. The voice service may not be ready yet, or the Whisper model may still be loading.`;
         }
 
-        console.error('Transcription failed:', errorMessage);
+        // Only log as error if it's not a common/expected error
+        // "Unknown error" often means the audio was invalid or too short
+        if (errorMessage.includes('Unknown error') && audioBase64.length < 5000) {
+          // Small audio segments often fail - use debug level
+          console.debug('Transcription failed (likely due to short/invalid audio):', errorMessage);
+        } else {
+          console.warn('Transcription failed:', errorMessage);
+        }
 
         // Provide user-friendly error feedback
         if (this.onTranscript) {

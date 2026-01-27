@@ -170,7 +170,8 @@ export const ChatMessage = ({
           </CardContent>
         </Card>
 
-        {/* Reasoning Chain Display */}
+        {/* Reasoning Chain Display - Shows AI's chain of thought */}
+        {/* Auto-collapses when AI finishes thinking, user can expand to see reasoning */}
         {message.metadata?.reasoningSteps && 
          Array.isArray(message.metadata.reasoningSteps) && 
          message.metadata.reasoningSteps.length > 0 && (
@@ -178,6 +179,8 @@ export const ChatMessage = ({
             <ReasoningChain
               steps={message.metadata.reasoningSteps as ReasoningStep[]}
               isProcessing={isProcessing && message.role === 'assistant'}
+              startCollapsed={!isProcessing} // Start collapsed for completed messages
+              autoCollapseOnComplete={true}
             />
           </div>
         )}

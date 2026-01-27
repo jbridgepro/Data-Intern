@@ -2,9 +2,10 @@
  * File: src/features/ai-assistant/voice/components/VoiceSettingsPanel.tsx
  *
  * Voice settings configuration panel.
+ * Includes environment presets for quick configuration.
  */
 
-import { X, Volume2, Mic, Settings2, Play, Loader2 } from "lucide-react";
+import { X, Volume2, Mic, Settings2, Play, Loader2, Sparkles, Home, Building2, Headphones, Zap } from "lucide-react";
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useToast } from "@/components/ui/use-toast";
@@ -28,8 +29,89 @@ import {
 import { Slider } from "@/components/ui/slider";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
 import type { VoiceSettings } from "../types";
 import { VoiceServiceStatus } from "./VoiceServiceStatus";
+
+// Environment preset definitions
+interface EnvironmentPreset {
+  id: string;
+  name: string;
+  description: string;
+  icon: typeof Home;
+  settings: Partial<VoiceSettings>;
+}
+
+const ENVIRONMENT_PRESETS: EnvironmentPreset[] = [
+  {
+    id: 'quiet-office',
+    name: 'Quiet Office',
+    description: 'Low background noise, clear speech',
+    icon: Building2,
+    settings: {
+      noiseCancellation: false,
+      activationMode: 'continuous',
+      autoPunctuation: true,
+      whisperModelSize: 'base',
+      micSensitivity: 4, // Moderate sensitivity for quiet environments
+    },
+  },
+  {
+    id: 'home',
+    name: 'Home',
+    description: 'Moderate background noise',
+    icon: Home,
+    settings: {
+      noiseCancellation: true,
+      activationMode: 'continuous',
+      autoPunctuation: true,
+      whisperModelSize: 'base',
+      micSensitivity: 3, // Lower sensitivity for home noise
+    },
+  },
+  {
+    id: 'noisy',
+    name: 'Noisy Environment',
+    description: 'High background noise, crowds',
+    icon: Headphones,
+    settings: {
+      noiseCancellation: true,
+      activationMode: 'push-to-talk', // Push-to-talk recommended for noisy
+      autoPunctuation: true,
+      whisperModelSize: 'small',
+      micSensitivity: 1, // Very low sensitivity to avoid false triggers
+    },
+  },
+  {
+    id: 'high-accuracy',
+    name: 'High Accuracy',
+    description: 'Best transcription quality, slower',
+    icon: Sparkles,
+    settings: {
+      noiseCancellation: true,
+      activationMode: 'continuous',
+      autoPunctuation: true,
+      whisperModelSize: 'medium',
+      whisperComputeType: 'float32',
+      micSensitivity: 3, // Conservative to ensure clean audio
+    },
+  },
+  {
+    id: 'low-latency',
+    name: 'Low Latency',
+    description: 'Fastest response, good for quick commands',
+    icon: Zap,
+    settings: {
+      noiseCancellation: false,
+      activationMode: 'voice-activity-detection',
+      autoPunctuation: false,
+      whisperModelSize: 'tiny',
+      whisperComputeType: 'int8',
+      micSensitivity: 5, // Slightly higher for quick detection
+    },
+  },
+];
 
 interface VoiceSettingsPanelProps {
   settings: VoiceSettings;
@@ -335,6 +417,51 @@ export const VoiceSettingsPanel = ({
                   {settings.provider === "gemini-live" &&
                     "Multi-turn conversational AI"}
                 </p>
+              </div>
+
+              {/* Environment Presets - Quick Configuration */}
+              <Separator />
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <Label className="text-base font-semibold">
+                    Quick Setup
+                  </Label>
+                  <Badge variant="outline" className="text-xs">
+                    Presets
+                  </Badge>
+                </div>
+                <p className="text-xs text-muted-foreground mb-3">
+                  Choose a preset that matches your environment for optimal settings
+                </p>
+                <div className="grid grid-cols-2 gap-2">
+                  {ENVIRONMENT_PRESETS.map((preset) => {
+                    const PresetIcon = preset.icon;
+                    return (
+                      <Button
+                        key={preset.id}
+                        variant="outline"
+                        className={cn(
+                          "h-auto p-3 flex flex-col items-start gap-1 text-left hover:border-blue-500 hover:bg-blue-50 dark:hover:bg-blue-950/30 transition-all",
+                        )}
+                        onClick={() => {
+                          onUpdate(preset.settings);
+                          toast({
+                            title: `Applied: ${preset.name}`,
+                            description: preset.description,
+                          });
+                        }}
+                      >
+                        <div className="flex items-center gap-2">
+                          <PresetIcon className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+                          <span className="font-medium text-xs">{preset.name}</span>
+                        </div>
+                        <span className="text-[10px] text-muted-foreground line-clamp-1">
+                          {preset.description}
+                        </span>
+                      </Button>
+                    );
+                  })}
+                </div>
               </div>
 
               {/* Faster-Whisper Configuration */}
@@ -939,6 +1066,37 @@ export const VoiceSettingsPanel = ({
                         onUpdate({ noiseCancellation: checked })
                       }
                     />
+                  </div>
+
+                  {/* Microphone Sensitivity Slider */}
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <Label htmlFor="mic-sensitivity">
+                        Microphone Sensitivity
+                      </Label>
+                      <span className="text-xs text-muted-foreground font-medium">
+                        {settings.micSensitivity ?? 3}/10
+                      </span>
+                    </div>
+                    <Slider
+                      id="mic-sensitivity"
+                      value={[settings.micSensitivity ?? 3]}
+                      onValueChange={(value) =>
+                        onUpdate({ micSensitivity: value[0] })
+                      }
+                      min={1}
+                      max={10}
+                      step={1}
+                      className="w-full"
+                    />
+                    <div className="flex justify-between text-[10px] text-muted-foreground">
+                      <span>Less sensitive (recommended)</span>
+                      <span>More sensitive</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Lower values (1-3) are recommended to avoid false triggers from ambient noise.
+                      Increase only if your speech is not being detected.
+                    </p>
                   </div>
 
                   <div className="flex items-center justify-between">

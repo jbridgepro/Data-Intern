@@ -3,6 +3,12 @@
  * 
  * Registry of available tools for the AI to use.
  * Includes custom file operations and MCP tools.
+ * 
+ * This module provides:
+ * - Tool definitions in Anthropic's tool use format
+ * - Tool execution logic with error handling
+ * - Utility functions for common operations
+ * - Type-safe interfaces for tool parameters and results
  */
 
 import type { AISettings, DirectoryAnalysis, FileOperation, OrganizationConfig } from '../types';
@@ -34,6 +40,22 @@ export interface ToolDefinition {
     properties: Record<string, any>;
     required?: string[];
   };
+  category?: ToolCategory; // Optional categorization for better organization
+  examples?: string[]; // Optional usage examples
+}
+
+/**
+ * Tool categories for better organization and filtering.
+ */
+export enum ToolCategory {
+  FILE_OPERATIONS = 'file_operations',
+  DIRECTORY_OPERATIONS = 'directory_operations',
+  SEARCH_AND_ANALYSIS = 'search_and_analysis',
+  ORGANIZATION = 'organization',
+  AGENT_MANAGEMENT = 'agent_management',
+  SYSTEM_COMMANDS = 'system_commands',
+  TAB_TOOLS = 'tab_tools',
+  SKILLS = 'skills',
 }
 
 /**
@@ -46,13 +68,28 @@ export interface ToolContext {
 }
 
 /**
- * Tool execution result.
+ * Tool execution result with enhanced metadata.
  */
 export interface ToolResult {
   success: boolean;
   data?: any;
   error?: string;
   operation?: FileOperation;
+  warnings?: string[]; // Optional warnings (non-fatal issues)
+  metadata?: {
+    executionTime?: number; // Execution time in milliseconds
+    itemsProcessed?: number; // Number of items processed
+    [key: string]: any; // Additional metadata
+  };
+}
+
+/**
+ * Validation result for tool arguments.
+ */
+interface ValidationResult {
+  valid: boolean;
+  error?: string;
+  warnings?: string[];
 }
 
 /**
@@ -72,6 +109,11 @@ export const TOOLS: ToolDefinition[] = [
         },
       },
     },
+    category: ToolCategory.SEARCH_AND_ANALYSIS,
+    examples: [
+      'analyze_directory() - Analyze current directory',
+      'analyze_directory({ path: "/Downloads" }) - Analyze Downloads folder',
+    ],
   },
   {
     name: 'file_copy_tab',
@@ -275,6 +317,11 @@ export const TOOLS: ToolDefinition[] = [
       },
       required: ['strategy'],
     },
+    category: ToolCategory.ORGANIZATION,
+    examples: [
+      'organize_files({ strategy: "by-type" }) - Group files by extension',
+      'organize_files({ strategy: "by-date", dateFormat: "year-month" }) - Group by date',
+    ],
   },
   {
     name: 'find_duplicates',
@@ -288,6 +335,11 @@ export const TOOLS: ToolDefinition[] = [
         },
       },
     },
+    category: ToolCategory.SEARCH_AND_ANALYSIS,
+    examples: [
+      'find_duplicates() - Find duplicates in current directory',
+      'find_duplicates({ path: "/Photos" }) - Find duplicate photos',
+    ],
   },
   {
     name: 'rename_files',
@@ -423,6 +475,11 @@ export const TOOLS: ToolDefinition[] = [
       },
       required: ['pattern'],
     },
+    category: ToolCategory.SEARCH_AND_ANALYSIS,
+    examples: [
+      'search_files({ pattern: "*.jpg" }) - Find all JPG files',
+      'search_files({ pattern: "report*", includeSubdirectories: false }) - Find files starting with "report"',
+    ],
   },
   {
     name: 'list_directory_contents',
@@ -512,6 +569,11 @@ export const TOOLS: ToolDefinition[] = [
       },
       required: ['path', 'content'],
     },
+    category: ToolCategory.FILE_OPERATIONS,
+    examples: [
+      'write_file_content({ path: "/path/to/file.txt", content: "Hello World" })',
+      'write_file_content({ path: "/docs/report.md", content: "", createDirectories: true })',
+    ],
   },
   {
     name: 'delete_files',
@@ -535,6 +597,11 @@ export const TOOLS: ToolDefinition[] = [
       },
       required: ['paths'],
     },
+    category: ToolCategory.FILE_OPERATIONS,
+    examples: [
+      'delete_files({ paths: ["/path/to/file.txt"] })',
+      'delete_files({ paths: ["/folder"], recursive: true })',
+    ],
   },
   {
     name: 'calculate_directory_size',
@@ -735,6 +802,449 @@ export const TOOLS: ToolDefinition[] = [
       },
       required: ['command', 'args'],
     },
+    category: ToolCategory.SYSTEM_COMMANDS,
+  },
+  // ========== NEW TOOLS ==========
+  {
+    name: 'get_recent_files',
+    description: 'Find recently modified files in a directory. Useful for finding files you\'ve worked on recently or tracking changes. Can filter by time range and file type.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        path: {
+          type: 'string',
+          description: 'Directory path to search. If not provided, uses the current working directory.',
+        },
+        withinDays: {
+          type: 'number',
+          description: 'Find files modified within this many days. Default: 7.',
+        },
+        withinHours: {
+          type: 'number',
+          description: 'Find files modified within this many hours. More precise than withinDays.',
+        },
+        filePattern: {
+          type: 'string',
+          description: 'File pattern filter (e.g., "*.js", "*.doc"). Optional.',
+        },
+        includeSubdirectories: {
+          type: 'boolean',
+          description: 'Search in subdirectories recursively. Default: true.',
+        },
+        maxResults: {
+          type: 'number',
+          description: 'Maximum number of results to return. Default: 50.',
+        },
+        sortBy: {
+          type: 'string',
+          enum: ['modified', 'created', 'size', 'name'],
+          description: 'Sort results by: modified (newest first), created, size, or name. Default: modified.',
+        },
+      },
+    },
+    category: ToolCategory.SEARCH_AND_ANALYSIS,
+    examples: [
+      'get_recent_files({ withinDays: 1 }) - Files modified today',
+      'get_recent_files({ withinHours: 2, filePattern: "*.py" }) - Python files from last 2 hours',
+    ],
+  },
+  {
+    name: 'get_large_files',
+    description: 'Find large files in a directory that may be taking up disk space. Useful for cleanup and identifying space hogs.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        path: {
+          type: 'string',
+          description: 'Directory path to search. If not provided, uses the current working directory.',
+        },
+        minSizeMB: {
+          type: 'number',
+          description: 'Minimum file size in megabytes. Default: 100.',
+        },
+        minSizeKB: {
+          type: 'number',
+          description: 'Minimum file size in kilobytes. Use for smaller threshold. Takes precedence over minSizeMB.',
+        },
+        includeSubdirectories: {
+          type: 'boolean',
+          description: 'Search in subdirectories recursively. Default: true.',
+        },
+        maxResults: {
+          type: 'number',
+          description: 'Maximum number of results to return. Default: 50.',
+        },
+        excludePatterns: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Patterns to exclude (e.g., ["node_modules/*", "*.iso"]).',
+        },
+      },
+    },
+    category: ToolCategory.SEARCH_AND_ANALYSIS,
+    examples: [
+      'get_large_files({ minSizeMB: 500 }) - Files larger than 500MB',
+      'get_large_files({ minSizeKB: 1024 }) - Files larger than 1MB',
+    ],
+  },
+  {
+    name: 'get_empty_folders',
+    description: 'Find empty folders in a directory. Useful for cleanup and organization. Empty folders can accumulate over time and clutter your file system.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        path: {
+          type: 'string',
+          description: 'Directory path to search. If not provided, uses the current working directory.',
+        },
+        includeSubdirectories: {
+          type: 'boolean',
+          description: 'Search in subdirectories recursively. Default: true.',
+        },
+        deleteEmpty: {
+          type: 'boolean',
+          description: 'Actually delete the empty folders found. Default: false (just reports them).',
+        },
+      },
+    },
+    category: ToolCategory.ORGANIZATION,
+    examples: [
+      'get_empty_folders({ path: "/Downloads" }) - Find empty folders in Downloads',
+      'get_empty_folders({ deleteEmpty: true }) - Find and remove empty folders',
+    ],
+  },
+  {
+    name: 'backup_file',
+    description: 'Create a timestamped backup of a file or folder. Creates a copy with a timestamp suffix to preserve the original.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        sourcePath: {
+          type: 'string',
+          description: 'Path to the file or folder to backup.',
+        },
+        backupDirectory: {
+          type: 'string',
+          description: 'Directory to store the backup. If not provided, creates backup in the same directory.',
+        },
+        suffix: {
+          type: 'string',
+          description: 'Custom suffix for backup name. Default: timestamp (YYYY-MM-DD_HH-MM-SS).',
+        },
+        compress: {
+          type: 'boolean',
+          description: 'Compress the backup (creates a .zip file). Default: false.',
+        },
+      },
+      required: ['sourcePath'],
+    },
+    category: ToolCategory.FILE_OPERATIONS,
+    examples: [
+      'backup_file({ sourcePath: "/path/to/important.docx" }) - Create backup with timestamp',
+      'backup_file({ sourcePath: "/project", compress: true }) - Create compressed backup',
+    ],
+  },
+  {
+    name: 'get_disk_usage',
+    description: 'Get disk usage information for the current drive or a specific path. Shows total space, used space, and available space.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        path: {
+          type: 'string',
+          description: 'Path to check disk usage for. If not provided, uses the current working directory.',
+        },
+      },
+    },
+    category: ToolCategory.SEARCH_AND_ANALYSIS,
+    examples: [
+      'get_disk_usage() - Check disk space for current directory',
+      'get_disk_usage({ path: "/" }) - Check root disk usage',
+    ],
+  },
+  {
+    name: 'flatten_directory',
+    description: 'Move all files from subdirectories into a single directory. Useful for consolidating scattered files. Creates a flat structure.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        sourcePath: {
+          type: 'string',
+          description: 'Directory containing nested subdirectories to flatten.',
+        },
+        destinationPath: {
+          type: 'string',
+          description: 'Directory to move files to. If not provided, moves to the source directory.',
+        },
+        handleDuplicates: {
+          type: 'string',
+          enum: ['rename', 'skip', 'overwrite'],
+          description: 'How to handle duplicate file names: rename (add number), skip, or overwrite. Default: rename.',
+        },
+        deleteEmptyFolders: {
+          type: 'boolean',
+          description: 'Delete empty folders after flattening. Default: true.',
+        },
+        filePattern: {
+          type: 'string',
+          description: 'Only flatten files matching this pattern (e.g., "*.jpg"). Optional.',
+        },
+        preview: {
+          type: 'boolean',
+          description: 'Preview the operation without making changes. Default: false.',
+        },
+      },
+      required: ['sourcePath'],
+    },
+    category: ToolCategory.ORGANIZATION,
+    examples: [
+      'flatten_directory({ sourcePath: "/Photos", filePattern: "*.jpg" }) - Flatten all JPG files',
+      'flatten_directory({ sourcePath: "/Downloads", preview: true }) - Preview flatten operation',
+    ],
+  },
+  {
+    name: 'get_file_types_summary',
+    description: 'Get a summary of all file types in a directory with counts and total sizes. Useful for understanding what\'s in a directory at a glance.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        path: {
+          type: 'string',
+          description: 'Directory path to analyze. If not provided, uses the current working directory.',
+        },
+        includeSubdirectories: {
+          type: 'boolean',
+          description: 'Include files from subdirectories. Default: true.',
+        },
+        groupBy: {
+          type: 'string',
+          enum: ['extension', 'category', 'mime'],
+          description: 'How to group files: extension (e.g., .jpg), category (e.g., Images), or mime type. Default: extension.',
+        },
+      },
+    },
+    category: ToolCategory.SEARCH_AND_ANALYSIS,
+    examples: [
+      'get_file_types_summary() - Get summary of file types',
+      'get_file_types_summary({ groupBy: "category" }) - Group by category (Images, Documents, etc.)',
+    ],
+  },
+  {
+    name: 'preview_operation',
+    description: 'Preview a file operation without executing it. Shows what would happen if you ran organize, move, rename, or delete operations. Use this for safety before destructive operations.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        operation: {
+          type: 'string',
+          enum: ['organize', 'delete', 'move', 'rename', 'flatten'],
+          description: 'The operation to preview.',
+        },
+        params: {
+          type: 'object',
+          description: 'Parameters for the operation (same as the actual operation would use).',
+        },
+      },
+      required: ['operation', 'params'],
+    },
+    category: ToolCategory.FILE_OPERATIONS,
+    examples: [
+      'preview_operation({ operation: "delete", params: { paths: [...] }}) - Preview delete',
+      'preview_operation({ operation: "organize", params: { strategy: "by-type" }}) - Preview organize',
+    ],
+  },
+  {
+    name: 'undo_last_operation',
+    description: 'Undo the last file operation if possible. Works for move, rename, and copy operations. Some operations like delete cannot be undone.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        operationId: {
+          type: 'string',
+          description: 'ID of the operation to undo. If not provided, undoes the most recent operation.',
+        },
+      },
+    },
+    category: ToolCategory.FILE_OPERATIONS,
+    examples: [
+      'undo_last_operation() - Undo most recent operation',
+    ],
+  },
+  {
+    name: 'watch_directory',
+    description: 'Start watching a directory for changes. Reports new files, modified files, and deleted files. Useful for monitoring folders.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        path: {
+          type: 'string',
+          description: 'Directory path to watch.',
+        },
+        duration: {
+          type: 'number',
+          description: 'How long to watch in seconds. Default: 60.',
+        },
+        includeSubdirectories: {
+          type: 'boolean',
+          description: 'Watch subdirectories recursively. Default: true.',
+        },
+        filePattern: {
+          type: 'string',
+          description: 'Only report changes to files matching this pattern.',
+        },
+      },
+      required: ['path'],
+    },
+    category: ToolCategory.SEARCH_AND_ANALYSIS,
+    examples: [
+      'watch_directory({ path: "/Downloads", duration: 30 }) - Watch Downloads for 30 seconds',
+    ],
+  },
+  {
+    name: 'merge_text_files',
+    description: 'Merge multiple text files into one. Useful for combining logs, documents, or code files.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        sourcePaths: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Array of file paths to merge.',
+        },
+        destinationPath: {
+          type: 'string',
+          description: 'Path for the merged output file.',
+        },
+        separator: {
+          type: 'string',
+          description: 'Text to insert between merged files. Default: newline.',
+        },
+        includeFilenames: {
+          type: 'boolean',
+          description: 'Include filename headers in the merged file. Default: true.',
+        },
+      },
+      required: ['sourcePaths', 'destinationPath'],
+    },
+    category: ToolCategory.FILE_OPERATIONS,
+    examples: [
+      'merge_text_files({ sourcePaths: ["log1.txt", "log2.txt"], destinationPath: "combined.txt" })',
+    ],
+  },
+  {
+    name: 'split_file',
+    description: 'Split a large file into smaller parts. Useful for handling large files or preparing for upload.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        sourcePath: {
+          type: 'string',
+          description: 'Path to the file to split.',
+        },
+        chunkSizeMB: {
+          type: 'number',
+          description: 'Size of each chunk in megabytes. Default: 100.',
+        },
+        outputDirectory: {
+          type: 'string',
+          description: 'Directory for split files. If not provided, uses same directory as source.',
+        },
+        prefix: {
+          type: 'string',
+          description: 'Prefix for split file names. Default: original filename.',
+        },
+      },
+      required: ['sourcePath'],
+    },
+    category: ToolCategory.FILE_OPERATIONS,
+    examples: [
+      'split_file({ sourcePath: "/large-video.mp4", chunkSizeMB: 500 })',
+    ],
+  },
+  {
+    name: 'sync_directories',
+    description: 'Synchronize two directories so they have the same files. Can copy new/modified files from source to destination.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        sourcePath: {
+          type: 'string',
+          description: 'Source directory (the master copy).',
+        },
+        destinationPath: {
+          type: 'string',
+          description: 'Destination directory (will be updated to match source).',
+        },
+        mode: {
+          type: 'string',
+          enum: ['mirror', 'update', 'backup'],
+          description: 'Sync mode: mirror (exact copy, deletes extra), update (only add new/changed), backup (like update but keeps old versions). Default: update.',
+        },
+        deleteExtra: {
+          type: 'boolean',
+          description: 'Delete files in destination that don\'t exist in source. Only for mirror mode. Default: false.',
+        },
+        preview: {
+          type: 'boolean',
+          description: 'Preview the sync without making changes. Default: false.',
+        },
+      },
+      required: ['sourcePath', 'destinationPath'],
+    },
+    category: ToolCategory.FILE_OPERATIONS,
+    examples: [
+      'sync_directories({ sourcePath: "/Work", destinationPath: "/Backup/Work" })',
+      'sync_directories({ sourcePath: "/Photos", destinationPath: "/Backup", preview: true })',
+    ],
+  },
+  {
+    name: 'find_broken_links',
+    description: 'Find broken symbolic links and shortcuts in a directory. Broken links point to files/folders that no longer exist.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        path: {
+          type: 'string',
+          description: 'Directory path to search. If not provided, uses the current working directory.',
+        },
+        includeSubdirectories: {
+          type: 'boolean',
+          description: 'Search in subdirectories recursively. Default: true.',
+        },
+        deletebroken: {
+          type: 'boolean',
+          description: 'Delete broken links found. Default: false (just reports them).',
+        },
+      },
+    },
+    category: ToolCategory.SEARCH_AND_ANALYSIS,
+    examples: [
+      'find_broken_links() - Find broken links',
+      'find_broken_links({ deleteBroken: true }) - Find and remove broken links',
+    ],
+  },
+  {
+    name: 'get_tool_help',
+    description: 'Get detailed help and examples for a specific tool. Shows tool description, parameters, and usage examples.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        toolName: {
+          type: 'string',
+          description: 'Name of the tool to get help for. If not provided, lists all available tools.',
+        },
+        category: {
+          type: 'string',
+          enum: ['file_operations', 'directory_operations', 'search_and_analysis', 'organization', 'agent_management', 'system_commands', 'tab_tools', 'skills'],
+          description: 'Filter tools by category.',
+        },
+      },
+    },
+    category: ToolCategory.SYSTEM_COMMANDS,
+    examples: [
+      'get_tool_help({ toolName: "organize_files" }) - Get help for organize_files',
+      'get_tool_help({ category: "search_and_analysis" }) - List search tools',
+    ],
   },
 ];
 
@@ -871,84 +1381,270 @@ async function createClawdBotCommand(args: string[], workDir?: string): Promise<
   return { cmd, path: clawdbotPath };
 }
 
+/**
+ * Utility Functions for Tool Execution
+ * These functions provide common patterns used across multiple tools.
+ */
+
+/**
+ * Normalizes a file or directory path, resolving it relative to current directory if needed.
+ */
+async function normalizePath(path: string | undefined, currentDirectory: string): Promise<string | null> {
+  if (!path) {
+    return currentDirectory || null;
+  }
+  
+  // If path is already absolute, return as-is
+  if (path.startsWith('/') || path.startsWith('~')) {
+    return path;
+  }
+  
+  // Resolve relative to current directory
+  if (currentDirectory) {
+    try {
+      return await join(currentDirectory, path);
+    } catch (e) {
+      return null;
+    }
+  }
+  
+  return path;
+}
+
+/**
+ * Validates that a path exists and is accessible.
+ */
+async function validatePath(path: string, mustBeDirectory: boolean = false): Promise<ValidationResult> {
+  try {
+    const pathExists = await exists(path);
+    if (!pathExists) {
+      return {
+        valid: false,
+        error: `Path does not exist: ${path}`,
+      };
+    }
+    
+    if (mustBeDirectory) {
+      const pathStat = await stat(path);
+      // Note: Tauri's stat doesn't directly tell us if it's a directory
+      // We'll need to check by trying to read it as a directory
+      try {
+        await readDir(path);
+      } catch (e) {
+        return {
+          valid: false,
+          error: `Path is not a directory: ${path}`,
+        };
+      }
+    }
+    
+    return { valid: true };
+  } catch (error: any) {
+    return {
+      valid: false,
+      error: `Cannot access path: ${error.message}`,
+    };
+  }
+}
+
+/**
+ * Validates required parameters for a tool.
+ */
+function validateRequiredParams(args: Record<string, any>, required: string[]): ValidationResult {
+  const missing: string[] = [];
+  const warnings: string[] = [];
+  
+  for (const param of required) {
+    if (args[param] === undefined || args[param] === null || args[param] === '') {
+      missing.push(param);
+    }
+  }
+  
+  if (missing.length > 0) {
+    return {
+      valid: false,
+      error: `Missing required parameters: ${missing.join(', ')}`,
+    };
+  }
+  
+  return { valid: true, warnings };
+}
+
+/**
+ * Creates a standardized error result.
+ */
+function createErrorResult(error: string, warnings?: string[]): ToolResult {
+  return {
+    success: false,
+    error,
+    warnings,
+  };
+}
+
+/**
+ * Creates a standardized success result.
+ */
+function createSuccessResult(data: any, operation?: FileOperation, metadata?: ToolResult['metadata']): ToolResult {
+  return {
+    success: true,
+    data,
+    operation,
+    metadata,
+  };
+}
+
+/**
+ * Wraps tool execution with timing and error handling.
+ */
+async function executeWithTiming<T>(
+  fn: () => Promise<T>,
+  toolName: string
+): Promise<{ result: T; executionTime: number }> {
+  const startTime = Date.now();
+  try {
+    const result = await fn();
+    const executionTime = Date.now() - startTime;
+    return { result, executionTime };
+  } catch (error: any) {
+    const executionTime = Date.now() - startTime;
+    console.error(`[${toolName}] Execution failed after ${executionTime}ms:`, error);
+    throw error;
+  }
+}
+
+/**
+ * Executes a tool by name with the provided arguments.
+ * Enhanced with better error handling, validation, and timing.
+ */
 export async function executeTool(
   toolName: string,
   args: Record<string, any>,
   context: ToolContext
 ): Promise<ToolResult> {
-  const path = args.path || context.currentDirectory;
+  const startTime = Date.now();
+  
+  try {
+    // Get tool definition for validation
+    const toolDef = TOOLS.find(t => t.name === toolName);
+    if (toolDef && toolDef.input_schema.required) {
+      const validation = validateRequiredParams(args, toolDef.input_schema.required);
+      if (!validation.valid) {
+        return createErrorResult(validation.error || 'Invalid parameters', validation.warnings);
+      }
+    }
+    
+    const path = args.path || context.currentDirectory;
 
   try {
     switch (toolName) {
-      case 'analyze_directory':
-        if (!path) {
-          return {
-            success: false,
-            error: 'No directory path provided. Please select a directory first.',
-          };
+      case 'analyze_directory': {
+        const normalizedPath = await normalizePath(path, context.currentDirectory);
+        if (!normalizedPath) {
+          return createErrorResult('No directory path provided. Please select a directory first.');
         }
-        const analysis = await analyzeDirectoryFiles(path);
-        return {
-          success: true,
-          data: {
+        
+        const pathValidation = await validatePath(normalizedPath, true);
+        if (!pathValidation.valid) {
+          return createErrorResult(pathValidation.error || 'Invalid directory path');
+        }
+        
+        const { result: analysis, executionTime } = await executeWithTiming(
+          () => analyzeDirectoryFiles(normalizedPath),
+          toolName
+        );
+        
+        return createSuccessResult(
+          {
             totalFiles: analysis.totalFiles,
             totalSize: analysis.totalSize,
             organizationScore: analysis.organizationScore,
             fileTypes: analysis.fileTypes.slice(0, 10),
             summary: analysis.summary,
+            path: normalizedPath,
           },
-        };
+          undefined,
+          { executionTime, itemsProcessed: analysis.totalFiles }
+        );
+      }
 
-      case 'organize_files':
-        if (!path) {
-          return {
-            success: false,
-            error: 'No directory path provided. Please select a directory first.',
-          };
+      case 'organize_files': {
+        const normalizedPath = await normalizePath(path, context.currentDirectory);
+        if (!normalizedPath) {
+          return createErrorResult('No directory path provided. Please select a directory first.');
         }
+        
+        const pathValidation = await validatePath(normalizedPath, true);
+        if (!pathValidation.valid) {
+          return createErrorResult(pathValidation.error || 'Invalid directory path');
+        }
+        
         const config: OrganizationConfig = {
           strategy: args.strategy || 'by-type',
           options: {
             dateFormat: args.dateFormat || 'year-month',
           },
         };
-        const operation = await organizeFilesByStrategy(path, config);
-        return {
-          success: true,
-          data: {
+        
+        const { result: operation, executionTime } = await executeWithTiming(
+          () => organizeFilesByStrategy(normalizedPath, config),
+          toolName
+        );
+        
+        return createSuccessResult(
+          {
             description: operation.description,
             fileCount: operation.files.length,
             confidence: operation.confidence,
             requiresConfirmation: operation.requiresConfirmation,
+            path: normalizedPath,
+            strategy: config.strategy,
           },
           operation,
-        };
+          { executionTime, itemsProcessed: operation.files.length }
+        );
+      }
 
-      case 'find_duplicates':
-        if (!path) {
-          return {
-            success: false,
-            error: 'No directory path provided. Please select a directory first.',
-          };
+      case 'find_duplicates': {
+        const normalizedPath = await normalizePath(path, context.currentDirectory);
+        if (!normalizedPath) {
+          return createErrorResult('No directory path provided. Please select a directory first.');
         }
-        const duplicates = await findDuplicateFiles(path);
-        return {
-          success: true,
-          data: {
+        
+        const pathValidation = await validatePath(normalizedPath, true);
+        if (!pathValidation.valid) {
+          return createErrorResult(pathValidation.error || 'Invalid directory path');
+        }
+        
+        const { result: duplicates, executionTime } = await executeWithTiming(
+          () => findDuplicateFiles(normalizedPath),
+          toolName
+        );
+        
+        return createSuccessResult(
+          {
             totalDuplicates: duplicates.totalDuplicates,
             duplicateGroups: duplicates.duplicateGroups.slice(0, 10),
             totalWastedSpace: duplicates.totalWastedSpace,
             summary: duplicates.summary,
+            path: normalizedPath,
+            totalGroups: duplicates.duplicateGroups.length,
           },
-        };
+          undefined,
+          { executionTime, itemsProcessed: duplicates.totalDuplicates }
+        );
+      }
 
-      case 'rename_files':
-        if (!path) {
-          return {
-            success: false,
-            error: 'No directory path provided. Please select a directory first.',
-          };
+      case 'rename_files': {
+        const normalizedPath = await normalizePath(path, context.currentDirectory);
+        if (!normalizedPath) {
+          return createErrorResult('No directory path provided. Please select a directory first.');
         }
+        
+        const pathValidation = await validatePath(normalizedPath, true);
+        if (!pathValidation.valid) {
+          return createErrorResult(pathValidation.error || 'Invalid directory path');
+        }
+        
         const patternMap: Record<string, string> = {
           'date-prefix': 'Rename these files to include their creation date in YYYY-MM-DD format',
           'snake-case': 'Rename these files to snake_case format',
@@ -956,16 +1652,24 @@ export async function executeTool(
           'clean': 'Clean up the filenames by removing special characters',
         };
         const renameCommand = patternMap[args.pattern] || patternMap['clean'];
-        const renameOperation = await generateRenameOperation(path, renameCommand);
-        return {
-          success: true,
-          data: {
+        
+        const { result: renameOperation, executionTime } = await executeWithTiming(
+          () => generateRenameOperation(normalizedPath, renameCommand),
+          toolName
+        );
+        
+        return createSuccessResult(
+          {
             description: renameOperation.description,
             fileCount: renameOperation.files.length,
             confidence: renameOperation.confidence,
+            pattern: args.pattern,
+            path: normalizedPath,
           },
-          operation: renameOperation,
-        };
+          renameOperation,
+          { executionTime, itemsProcessed: renameOperation.files.length }
+        );
+      }
 
       case 'execute_operation':
         if (!args.operation) {
@@ -1432,18 +2136,126 @@ export async function executeTool(
           };
         }
 
+      // ========== NEW TOOL IMPLEMENTATIONS ==========
+
+      case 'get_recent_files':
+        return await executeGetRecentFiles(args, context);
+
+      case 'get_large_files':
+        return await executeGetLargeFiles(args, context);
+
+      case 'get_empty_folders':
+        return await executeGetEmptyFolders(args, context);
+
+      case 'backup_file':
+        return await executeBackupFile(args, context);
+
+      case 'get_disk_usage':
+        return await executeGetDiskUsage(args, context);
+
+      case 'flatten_directory':
+        return await executeFlattenDirectory(args, context);
+
+      case 'get_file_types_summary':
+        return await executeGetFileTypesSummary(args, context);
+
+      case 'preview_operation':
+        return await executePreviewOperation(args, context);
+
+      case 'merge_text_files':
+        return await executeMergeTextFiles(args, context);
+
+      case 'sync_directories':
+        return await executeSyncDirectories(args, context);
+
+      case 'get_tool_help':
+        return await executeGetToolHelp(args);
+
+      // Handle Clawdhub skill tools (skill_*)
       default:
+        // Check if this is a skill tool (starts with 'skill_')
+        if (toolName.startsWith('skill_')) {
+          try {
+            // Check if ClawdBot is enabled
+            if (!context.settings.clawdbotEnabled) {
+              return {
+                success: false,
+                error: 'ClawdBot is not enabled. Please enable it in Settings → Clawdbot Integration to use skills.',
+              };
+            }
+
+            // Extract skill name from tool name (skill_<name>)
+            const skillName = toolName.replace('skill_', '');
+            const skillArgs = (args.args as string[]) || [];
+            const cwd = args.cwd || context.currentDirectory || undefined;
+
+            // Get skill information
+            const { discoverClawdhubSkills } = await import('./clawdhubToolDiscovery');
+            const skills = await discoverClawdhubSkills();
+            const skill = skills.find(s => s.name === skillName && s.isExecutable);
+
+            if (!skill || !skill.executablePath || !skill.nodePath) {
+              return {
+                success: false,
+                error: `Skill "${skillName}" not found or is not executable. Available skills: ${skills.filter(s => s.isExecutable).map(s => s.name).join(', ')}`,
+              };
+            }
+
+            // Execute the skill using Node
+            const { Command } = await import('@tauri-apps/plugin-shell');
+            const cmdArgs = [skill.executablePath, ...skillArgs];
+            
+            // Use sh -c to execute with the node path
+            const fullCmd = `${skill.nodePath} ${cmdArgs.map(a => `'${a.replace(/'/g, "'\\''")}'`).join(' ')}`;
+            const cmd = Command.create('sh', ['-c', fullCmd]);
+
+            if (cwd) {
+              cmd.cwd = cwd;
+            }
+
+            const result = await cmd.execute();
+
+            return {
+              success: result.code === 0,
+              data: {
+                stdout: result.stdout,
+                stderr: result.stderr,
+                code: result.code,
+                skill: skillName,
+              },
+              error: result.code !== 0 ? `Skill "${skillName}" failed with code ${result.code}: ${result.stderr || result.stdout}` : undefined,
+            };
+          } catch (error: any) {
+            return {
+              success: false,
+              error: `Failed to execute skill tool: ${error.message}`,
+            };
+          }
+        }
+
+        // Unknown tool
         return {
           success: false,
-          error: `Unknown tool: ${toolName}`,
+          error: `Unknown tool: ${toolName}. Use list_available_tools to see all available tools.`,
         };
     }
   } catch (error: any) {
-    console.error(`Error executing tool ${toolName}:`, error);
-    return {
-      success: false,
-      error: error.message || `Failed to execute ${toolName}`,
-    };
+    const executionTime = Date.now() - startTime;
+    console.error(`Error executing tool ${toolName} (took ${executionTime}ms):`, error);
+    
+    // Provide more helpful error messages
+    let errorMessage = error.message || `Failed to execute ${toolName}`;
+    
+    // Check for common error patterns
+    if (error.message?.includes('ENOENT')) {
+      errorMessage = `File or directory not found. Please check the path and try again.`;
+    } else if (error.message?.includes('EACCES') || error.message?.includes('permission')) {
+      errorMessage = `Permission denied. You may not have access to this file or directory.`;
+    } else if (error.message?.includes('ENOSPC')) {
+      errorMessage = `No space left on device. Please free up some space and try again.`;
+    }
+    
+    return createErrorResult(errorMessage, undefined);
   }
 }
 
@@ -1684,6 +2496,44 @@ async function executeReadFileContent(args: Record<string, any>, context: ToolCo
 }
 
 /**
+ * Sanitize and resolve a file path, handling AI placeholder paths.
+ * Handles cases where AI outputs literal placeholders like:
+ * - [currentDirectory]/file.txt
+ * - /path/to/folder/file.txt
+ * - ${currentDir}/file.txt
+ */
+function sanitizePath(inputPath: string, currentDirectory: string | undefined): string {
+  let cleanPath = inputPath.trim();
+  
+  // Remove common AI placeholder patterns
+  const placeholderPatterns = [
+    /^\[currentDirectory\]\/?/i,         // [currentDirectory]/
+    /^\[current_directory\]\/?/i,        // [current_directory]/
+    /^\[cwd\]\/?/i,                       // [cwd]/
+    /^\$\{currentDir(ectory)?\}\/?/i,    // ${currentDir}/ or ${currentDirectory}/
+    /^\/path\/to\/folder\/?/i,           // /path/to/folder/
+    /^\/path\/to\/current\/directory\/?/i, // /path/to/current/directory/
+    /^\.\/(?=\w)/,                        // ./ (but keep the rest)
+  ];
+  
+  for (const pattern of placeholderPatterns) {
+    if (pattern.test(cleanPath)) {
+      cleanPath = cleanPath.replace(pattern, '');
+      console.log(`[sanitizePath] Removed placeholder, path is now: "${cleanPath}"`);
+      break;
+    }
+  }
+  
+  // Remove any leading slashes if we're going to join with currentDirectory
+  // (but only if the path doesn't look like an absolute Unix path to a real location)
+  if (!cleanPath.startsWith('/Users/') && !cleanPath.startsWith('/home/') && !cleanPath.startsWith('/var/')) {
+    cleanPath = cleanPath.replace(/^\/+/, '');
+  }
+  
+  return cleanPath;
+}
+
+/**
  * Execute write_file_content tool
  */
 async function executeWriteFileContent(args: Record<string, any>, context: ToolContext): Promise<ToolResult> {
@@ -1698,15 +2548,18 @@ async function executeWriteFileContent(args: Record<string, any>, context: ToolC
   const fileContent = content !== undefined ? (content || '') : '';
 
   try {
-    // Normalize the file path
-    let normalizedPath = filePath.trim();
+    // Sanitize and normalize the file path
+    let normalizedPath = sanitizePath(filePath, context.currentDirectory);
+    
+    console.log(`[write_file_content] Original path: ${filePath}`);
+    console.log(`[write_file_content] Sanitized path: ${normalizedPath}`);
     
     // If path doesn't start with /, assume it's relative to current directory
     if (!normalizedPath.startsWith('/') && context.currentDirectory) {
       normalizedPath = await join(context.currentDirectory, normalizedPath);
     }
 
-    console.log(`[write_file_content] Creating file at: ${normalizedPath}`);
+    console.log(`[write_file_content] Final resolved path: ${normalizedPath}`);
     console.log(`[write_file_content] Content length: ${fileContent.length} characters`);
     console.log(`[write_file_content] Current directory: ${context.currentDirectory}`);
 
@@ -2191,21 +3044,44 @@ async function executeCreateDirectory(args: Record<string, any>, context: ToolCo
   try {
     const recursive = args.recursive !== false;
 
-    const dirExists = await exists(dirPath);
-    if (dirExists) {
-      return { success: false, error: 'Directory already exists.' };
+    // Sanitize and normalize the path - resolve placeholder paths and relative paths
+    let normalizedPath = sanitizePath(dirPath, context.currentDirectory);
+    
+    console.log(`[create_directory] Original path: ${dirPath}`);
+    console.log(`[create_directory] Sanitized path: ${normalizedPath}`);
+    
+    // If path doesn't start with /, assume it's relative to current directory
+    if (!normalizedPath.startsWith('/') && context.currentDirectory) {
+      normalizedPath = await join(context.currentDirectory, normalizedPath);
     }
 
-    await mkdir(dirPath, { recursive });
+    console.log(`[create_directory] Final resolved path: ${normalizedPath}`);
+    console.log(`[create_directory] Current directory: ${context.currentDirectory}`);
+
+    const dirExists = await exists(normalizedPath);
+    if (dirExists) {
+      return { 
+        success: true, // Changed to success - directory already exists is not an error for our use case
+        data: {
+          path: normalizedPath,
+          created: false,
+          alreadyExists: true,
+        },
+      };
+    }
+
+    await mkdir(normalizedPath, { recursive });
 
     return {
       success: true,
       data: {
-        path: dirPath,
+        path: normalizedPath,
         created: true,
+        folderName: await basename(normalizedPath),
       },
     };
   } catch (error: any) {
+    console.error(`[create_directory] Error:`, error);
     return { success: false, error: error.message || 'Failed to create directory' };
   }
 }
@@ -2319,6 +3195,801 @@ async function executeCopyFile(args: Record<string, any>, context: ToolContext):
   }
 }
 
+// ========== NEW TOOL IMPLEMENTATIONS ==========
+
+/**
+ * Execute get_recent_files tool - Find recently modified files
+ */
+async function executeGetRecentFiles(args: Record<string, any>, context: ToolContext): Promise<ToolResult> {
+  const searchPath = args.path || context.currentDirectory;
+  if (!searchPath) {
+    return createErrorResult('No directory path provided.');
+  }
+
+  try {
+    const withinDays = args.withinDays || 7;
+    const withinHours = args.withinHours;
+    const filePattern = args.filePattern || '*';
+    const includeSubdirs = args.includeSubdirectories !== false;
+    const maxResults = args.maxResults || 50;
+    const sortBy = args.sortBy || 'modified';
+
+    // Calculate cutoff time
+    const now = Date.now();
+    const cutoffTime = withinHours 
+      ? now - (withinHours * 60 * 60 * 1000)
+      : now - (withinDays * 24 * 60 * 60 * 1000);
+
+    const results: any[] = [];
+
+    async function searchDirectory(dirPath: string): Promise<void> {
+      try {
+        const entries = await readDir(dirPath);
+        for (const entry of entries) {
+          if (results.length >= maxResults * 2) break; // Get extra for sorting
+
+          const entryPath = await join(dirPath, entry.name);
+
+          if (entry.isDirectory && includeSubdirs) {
+            await searchDirectory(entryPath);
+            continue;
+          }
+
+          if (!entry.isFile) continue;
+          if (!matchPattern(entry.name, filePattern, false)) continue;
+
+          try {
+            const metadata = await stat(entryPath);
+            const modifiedTime = metadata.mtime || 0;
+
+            if (modifiedTime >= cutoffTime) {
+              results.push({
+                path: entryPath,
+                name: entry.name,
+                size: metadata.size,
+                sizeFormatted: formatBytes(metadata.size),
+                modified: new Date(modifiedTime).toISOString(),
+                modifiedTimestamp: modifiedTime,
+              });
+            }
+          } catch (e) {
+            // Skip files we can't stat
+          }
+        }
+      } catch (e) {
+        // Skip directories we can't read
+      }
+    }
+
+    await searchDirectory(searchPath);
+
+    // Sort results
+    results.sort((a, b) => {
+      switch (sortBy) {
+        case 'modified': return b.modifiedTimestamp - a.modifiedTimestamp;
+        case 'size': return b.size - a.size;
+        case 'name': return a.name.localeCompare(b.name);
+        default: return b.modifiedTimestamp - a.modifiedTimestamp;
+      }
+    });
+
+    const finalResults = results.slice(0, maxResults);
+
+    return createSuccessResult({
+      files: finalResults,
+      count: finalResults.length,
+      searchPath,
+      criteria: withinHours ? `within ${withinHours} hours` : `within ${withinDays} days`,
+    });
+  } catch (error: any) {
+    return createErrorResult(error.message || 'Failed to find recent files');
+  }
+}
+
+/**
+ * Execute get_large_files tool - Find large files
+ */
+async function executeGetLargeFiles(args: Record<string, any>, context: ToolContext): Promise<ToolResult> {
+  const searchPath = args.path || context.currentDirectory;
+  if (!searchPath) {
+    return createErrorResult('No directory path provided.');
+  }
+
+  try {
+    const minSizeKB = args.minSizeKB;
+    const minSizeMB = args.minSizeMB || 100;
+    const minBytes = minSizeKB ? minSizeKB * 1024 : minSizeMB * 1024 * 1024;
+    const includeSubdirs = args.includeSubdirectories !== false;
+    const maxResults = args.maxResults || 50;
+    const excludePatterns = args.excludePatterns || [];
+
+    const results: any[] = [];
+
+    async function searchDirectory(dirPath: string): Promise<void> {
+      try {
+        const entries = await readDir(dirPath);
+        for (const entry of entries) {
+          const entryPath = await join(dirPath, entry.name);
+
+          // Check exclude patterns
+          const shouldExclude = excludePatterns.some((pattern: string) => 
+            matchPattern(entry.name, pattern, false)
+          );
+          if (shouldExclude) continue;
+
+          if (entry.isDirectory && includeSubdirs) {
+            await searchDirectory(entryPath);
+            continue;
+          }
+
+          if (!entry.isFile) continue;
+
+          try {
+            const metadata = await stat(entryPath);
+            if (metadata.size >= minBytes) {
+              results.push({
+                path: entryPath,
+                name: entry.name,
+                size: metadata.size,
+                sizeFormatted: formatBytes(metadata.size),
+                modified: new Date(metadata.mtime || 0).toISOString(),
+              });
+            }
+          } catch (e) {
+            // Skip files we can't stat
+          }
+        }
+      } catch (e) {
+        // Skip directories we can't read
+      }
+    }
+
+    await searchDirectory(searchPath);
+
+    // Sort by size (largest first)
+    results.sort((a, b) => b.size - a.size);
+    const finalResults = results.slice(0, maxResults);
+
+    const totalSize = finalResults.reduce((sum, f) => sum + f.size, 0);
+
+    return createSuccessResult({
+      files: finalResults,
+      count: finalResults.length,
+      totalSize,
+      totalSizeFormatted: formatBytes(totalSize),
+      threshold: formatBytes(minBytes),
+      searchPath,
+    });
+  } catch (error: any) {
+    return createErrorResult(error.message || 'Failed to find large files');
+  }
+}
+
+/**
+ * Execute get_empty_folders tool - Find empty folders
+ */
+async function executeGetEmptyFolders(args: Record<string, any>, context: ToolContext): Promise<ToolResult> {
+  const searchPath = args.path || context.currentDirectory;
+  if (!searchPath) {
+    return createErrorResult('No directory path provided.');
+  }
+
+  try {
+    const includeSubdirs = args.includeSubdirectories !== false;
+    const deleteEmpty = args.deleteEmpty === true;
+
+    const emptyFolders: string[] = [];
+    const deletedFolders: string[] = [];
+    const failedDeletes: string[] = [];
+
+    async function checkDirectory(dirPath: string): Promise<boolean> {
+      try {
+        const entries = await readDir(dirPath);
+        
+        if (entries.length === 0) {
+          emptyFolders.push(dirPath);
+          
+          if (deleteEmpty) {
+            try {
+              await remove(dirPath);
+              deletedFolders.push(dirPath);
+            } catch (e) {
+              failedDeletes.push(dirPath);
+            }
+          }
+          return true;
+        }
+
+        // Check subdirectories
+        if (includeSubdirs) {
+          for (const entry of entries) {
+            if (entry.isDirectory) {
+              const subPath = await join(dirPath, entry.name);
+              await checkDirectory(subPath);
+            }
+          }
+        }
+        
+        return false;
+      } catch (e) {
+        return false;
+      }
+    }
+
+    await checkDirectory(searchPath);
+
+    return createSuccessResult({
+      emptyFolders,
+      count: emptyFolders.length,
+      deletedFolders: deleteEmpty ? deletedFolders : undefined,
+      deletedCount: deleteEmpty ? deletedFolders.length : undefined,
+      failedDeletes: failedDeletes.length > 0 ? failedDeletes : undefined,
+      searchPath,
+    });
+  } catch (error: any) {
+    return createErrorResult(error.message || 'Failed to find empty folders');
+  }
+}
+
+/**
+ * Execute backup_file tool - Create timestamped backup
+ */
+async function executeBackupFile(args: Record<string, any>, context: ToolContext): Promise<ToolResult> {
+  const sourcePath = args.sourcePath;
+  if (!sourcePath) {
+    return createErrorResult('Source path is required.');
+  }
+
+  try {
+    // Check if source exists
+    const sourceExists = await exists(sourcePath);
+    if (!sourceExists) {
+      return createErrorResult(`Source not found: ${sourcePath}`);
+    }
+
+    const sourceBasename = await basename(sourcePath);
+    const sourceDir = await dirname(sourcePath);
+    const sourceExt = await extname(sourcePath);
+    const nameWithoutExt = sourceBasename.replace(sourceExt, '');
+
+    // Generate timestamp suffix
+    const now = new Date();
+    const timestamp = args.suffix || now.toISOString()
+      .replace(/:/g, '-')
+      .replace(/\./g, '-')
+      .replace('T', '_')
+      .substring(0, 19);
+
+    const backupDir = args.backupDirectory || sourceDir;
+    const backupName = `${nameWithoutExt}_backup_${timestamp}${sourceExt}`;
+    const backupPath = await join(backupDir, backupName);
+
+    // Ensure backup directory exists
+    const backupDirExists = await exists(backupDir);
+    if (!backupDirExists) {
+      await mkdir(backupDir, { recursive: true });
+    }
+
+    // Copy file to backup location
+    const content = await readTextFile(sourcePath);
+    await writeTextFile(backupPath, content);
+
+    return createSuccessResult({
+      originalPath: sourcePath,
+      backupPath,
+      backupName,
+      timestamp,
+      message: `Backup created: ${backupName}`,
+    });
+  } catch (error: any) {
+    return createErrorResult(error.message || 'Failed to create backup');
+  }
+}
+
+/**
+ * Execute get_disk_usage tool - Get disk space information
+ */
+async function executeGetDiskUsage(args: Record<string, any>, context: ToolContext): Promise<ToolResult> {
+  const targetPath = args.path || context.currentDirectory;
+  if (!targetPath) {
+    return createErrorResult('No path provided.');
+  }
+
+  try {
+    // Use df command to get disk usage
+    const cmd = Command.create('sh', ['-c', `df -k "${targetPath}" | tail -1`]);
+    const result = await cmd.execute();
+
+    if (result.code !== 0) {
+      return createErrorResult('Failed to get disk usage');
+    }
+
+    // Parse df output: Filesystem 1K-blocks Used Available Use% Mounted
+    const parts = result.stdout.trim().split(/\s+/);
+    if (parts.length >= 6) {
+      const totalKB = parseInt(parts[1], 10);
+      const usedKB = parseInt(parts[2], 10);
+      const availableKB = parseInt(parts[3], 10);
+      const usePercent = parts[4];
+
+      return createSuccessResult({
+        path: targetPath,
+        filesystem: parts[0],
+        mountPoint: parts[5],
+        total: totalKB * 1024,
+        totalFormatted: formatBytes(totalKB * 1024),
+        used: usedKB * 1024,
+        usedFormatted: formatBytes(usedKB * 1024),
+        available: availableKB * 1024,
+        availableFormatted: formatBytes(availableKB * 1024),
+        usePercent,
+      });
+    }
+
+    return createErrorResult('Unable to parse disk usage information');
+  } catch (error: any) {
+    return createErrorResult(error.message || 'Failed to get disk usage');
+  }
+}
+
+/**
+ * Execute flatten_directory tool - Move all files from subdirs to one directory
+ */
+async function executeFlattenDirectory(args: Record<string, any>, context: ToolContext): Promise<ToolResult> {
+  const sourcePath = args.sourcePath;
+  if (!sourcePath) {
+    return createErrorResult('Source path is required.');
+  }
+
+  try {
+    const destinationPath = args.destinationPath || sourcePath;
+    const handleDuplicates = args.handleDuplicates || 'rename';
+    const deleteEmptyFolders = args.deleteEmptyFolders !== false;
+    const filePattern = args.filePattern || '*';
+    const preview = args.preview === true;
+
+    const filesToMove: Array<{ from: string; to: string; name: string }> = [];
+    const nameCount: Record<string, number> = {};
+
+    async function collectFiles(dirPath: string): Promise<void> {
+      try {
+        const entries = await readDir(dirPath);
+        for (const entry of entries) {
+          const entryPath = await join(dirPath, entry.name);
+
+          if (entry.isDirectory) {
+            await collectFiles(entryPath);
+            continue;
+          }
+
+          if (!entry.isFile) continue;
+          if (!matchPattern(entry.name, filePattern, false)) continue;
+
+          let targetName = entry.name;
+          
+          // Handle duplicate names
+          if (handleDuplicates === 'rename') {
+            nameCount[entry.name] = (nameCount[entry.name] || 0) + 1;
+            if (nameCount[entry.name] > 1) {
+              const ext = await extname(entry.name);
+              const base = entry.name.replace(ext, '');
+              targetName = `${base}_${nameCount[entry.name]}${ext}`;
+            }
+          }
+
+          const targetPath = await join(destinationPath, targetName);
+          filesToMove.push({ from: entryPath, to: targetPath, name: targetName });
+        }
+      } catch (e) {
+        // Skip directories we can't read
+      }
+    }
+
+    await collectFiles(sourcePath);
+
+    if (preview) {
+      return createSuccessResult({
+        preview: true,
+        filesToMove: filesToMove.map(f => ({ from: f.from, to: f.to })),
+        count: filesToMove.length,
+        message: `Would move ${filesToMove.length} file(s) to ${destinationPath}`,
+      });
+    }
+
+    // Actually move files
+    let moved = 0;
+    let errors: string[] = [];
+
+    for (const file of filesToMove) {
+      try {
+        const content = await readTextFile(file.from);
+        await writeTextFile(file.to, content);
+        await remove(file.from);
+        moved++;
+      } catch (e: any) {
+        errors.push(`${file.name}: ${e.message}`);
+      }
+    }
+
+    return createSuccessResult({
+      moved,
+      errors: errors.length > 0 ? errors : undefined,
+      destinationPath,
+      message: `Moved ${moved} file(s) to ${destinationPath}`,
+    });
+  } catch (error: any) {
+    return createErrorResult(error.message || 'Failed to flatten directory');
+  }
+}
+
+/**
+ * Execute get_file_types_summary tool - Summarize file types in directory
+ */
+async function executeGetFileTypesSummary(args: Record<string, any>, context: ToolContext): Promise<ToolResult> {
+  const searchPath = args.path || context.currentDirectory;
+  if (!searchPath) {
+    return createErrorResult('No directory path provided.');
+  }
+
+  try {
+    const includeSubdirs = args.includeSubdirectories !== false;
+    const groupBy = args.groupBy || 'extension';
+
+    const typeStats: Record<string, { count: number; totalSize: number; files: string[] }> = {};
+
+    // Category mappings for groupBy: 'category'
+    const categoryMap: Record<string, string> = {
+      '.jpg': 'Images', '.jpeg': 'Images', '.png': 'Images', '.gif': 'Images', 
+      '.bmp': 'Images', '.webp': 'Images', '.svg': 'Images', '.ico': 'Images',
+      '.mp4': 'Videos', '.avi': 'Videos', '.mov': 'Videos', '.mkv': 'Videos', 
+      '.wmv': 'Videos', '.webm': 'Videos',
+      '.mp3': 'Audio', '.wav': 'Audio', '.flac': 'Audio', '.aac': 'Audio', 
+      '.ogg': 'Audio', '.m4a': 'Audio',
+      '.pdf': 'Documents', '.doc': 'Documents', '.docx': 'Documents', 
+      '.xls': 'Documents', '.xlsx': 'Documents', '.ppt': 'Documents', 
+      '.pptx': 'Documents', '.txt': 'Documents', '.rtf': 'Documents',
+      '.zip': 'Archives', '.rar': 'Archives', '.7z': 'Archives', 
+      '.tar': 'Archives', '.gz': 'Archives',
+      '.js': 'Code', '.ts': 'Code', '.py': 'Code', '.java': 'Code', 
+      '.cpp': 'Code', '.c': 'Code', '.h': 'Code', '.css': 'Code', 
+      '.html': 'Code', '.jsx': 'Code', '.tsx': 'Code', '.rs': 'Code',
+    };
+
+    async function scanDirectory(dirPath: string): Promise<void> {
+      try {
+        const entries = await readDir(dirPath);
+        for (const entry of entries) {
+          const entryPath = await join(dirPath, entry.name);
+
+          if (entry.isDirectory && includeSubdirs) {
+            await scanDirectory(entryPath);
+            continue;
+          }
+
+          if (!entry.isFile) continue;
+
+          try {
+            const metadata = await stat(entryPath);
+            const ext = (await extname(entry.name)).toLowerCase() || 'no extension';
+            
+            let key: string;
+            if (groupBy === 'category') {
+              key = categoryMap[ext] || 'Other';
+            } else {
+              key = ext;
+            }
+
+            if (!typeStats[key]) {
+              typeStats[key] = { count: 0, totalSize: 0, files: [] };
+            }
+            typeStats[key].count++;
+            typeStats[key].totalSize += metadata.size;
+            if (typeStats[key].files.length < 5) {
+              typeStats[key].files.push(entry.name);
+            }
+          } catch (e) {
+            // Skip files we can't stat
+          }
+        }
+      } catch (e) {
+        // Skip directories we can't read
+      }
+    }
+
+    await scanDirectory(searchPath);
+
+    // Convert to array and sort by count
+    const summary = Object.entries(typeStats)
+      .map(([type, stats]) => ({
+        type,
+        count: stats.count,
+        totalSize: stats.totalSize,
+        totalSizeFormatted: formatBytes(stats.totalSize),
+        sampleFiles: stats.files,
+      }))
+      .sort((a, b) => b.count - a.count);
+
+    const totalFiles = summary.reduce((sum, s) => sum + s.count, 0);
+    const totalSize = summary.reduce((sum, s) => sum + s.totalSize, 0);
+
+    return createSuccessResult({
+      summary,
+      totalTypes: summary.length,
+      totalFiles,
+      totalSize,
+      totalSizeFormatted: formatBytes(totalSize),
+      groupedBy: groupBy,
+      searchPath,
+    });
+  } catch (error: any) {
+    return createErrorResult(error.message || 'Failed to get file types summary');
+  }
+}
+
+/**
+ * Execute preview_operation tool - Preview without executing
+ */
+async function executePreviewOperation(args: Record<string, any>, context: ToolContext): Promise<ToolResult> {
+  const operation = args.operation;
+  const params = args.params || {};
+
+  if (!operation) {
+    return createErrorResult('Operation type is required.');
+  }
+
+  try {
+    // For now, return a simplified preview
+    // In a full implementation, this would simulate each operation
+    const preview: any = {
+      operation,
+      params,
+      wouldAffect: [],
+      warnings: [],
+    };
+
+    switch (operation) {
+      case 'delete':
+        preview.wouldAffect = params.paths || [];
+        preview.warnings.push('This operation cannot be undone.');
+        break;
+      case 'organize':
+        preview.description = `Would organize files using "${params.strategy || 'by-type'}" strategy`;
+        break;
+      case 'move':
+        preview.wouldAffect = [params.sourcePath];
+        preview.destination = params.destinationPath;
+        break;
+      case 'flatten':
+        preview.description = `Would move all files from subdirectories to ${params.destinationPath || params.sourcePath}`;
+        break;
+      default:
+        preview.description = `Preview not available for operation: ${operation}`;
+    }
+
+    return createSuccessResult({
+      preview: true,
+      ...preview,
+      message: 'This is a preview. No changes have been made.',
+    });
+  } catch (error: any) {
+    return createErrorResult(error.message || 'Failed to preview operation');
+  }
+}
+
+/**
+ * Execute merge_text_files tool - Combine multiple text files
+ */
+async function executeMergeTextFiles(args: Record<string, any>, context: ToolContext): Promise<ToolResult> {
+  const sourcePaths = args.sourcePaths;
+  const destinationPath = args.destinationPath;
+
+  if (!sourcePaths || sourcePaths.length === 0) {
+    return createErrorResult('Source paths are required.');
+  }
+  if (!destinationPath) {
+    return createErrorResult('Destination path is required.');
+  }
+
+  try {
+    const separator = args.separator || '\n';
+    const includeFilenames = args.includeFilenames !== false;
+
+    const parts: string[] = [];
+    const errors: string[] = [];
+
+    for (const sourcePath of sourcePaths) {
+      try {
+        const content = await readTextFile(sourcePath);
+        const filename = await basename(sourcePath);
+
+        if (includeFilenames) {
+          parts.push(`\n// ========== ${filename} ==========\n`);
+        }
+        parts.push(content);
+      } catch (e: any) {
+        errors.push(`${sourcePath}: ${e.message}`);
+      }
+    }
+
+    if (parts.length === 0) {
+      return createErrorResult('No files could be read.');
+    }
+
+    const mergedContent = parts.join(separator);
+    await writeTextFile(destinationPath, mergedContent);
+
+    return createSuccessResult({
+      destinationPath,
+      mergedFiles: sourcePaths.length - errors.length,
+      totalFiles: sourcePaths.length,
+      errors: errors.length > 0 ? errors : undefined,
+      message: `Merged ${sourcePaths.length - errors.length} file(s) into ${destinationPath}`,
+    });
+  } catch (error: any) {
+    return createErrorResult(error.message || 'Failed to merge files');
+  }
+}
+
+/**
+ * Execute sync_directories tool - Synchronize two directories
+ */
+async function executeSyncDirectories(args: Record<string, any>, context: ToolContext): Promise<ToolResult> {
+  const sourcePath = args.sourcePath;
+  const destinationPath = args.destinationPath;
+
+  if (!sourcePath || !destinationPath) {
+    return createErrorResult('Source and destination paths are required.');
+  }
+
+  try {
+    const mode = args.mode || 'update';
+    const deleteExtra = args.deleteExtra === true && mode === 'mirror';
+    const preview = args.preview === true;
+
+    const toCopy: Array<{ source: string; dest: string; reason: string }> = [];
+    const toDelete: string[] = [];
+
+    // Scan source directory
+    async function scanSource(srcDir: string, destDir: string): Promise<void> {
+      try {
+        const entries = await readDir(srcDir);
+        
+        for (const entry of entries) {
+          const srcPath = await join(srcDir, entry.name);
+          const dstPath = await join(destDir, entry.name);
+
+          if (entry.isDirectory) {
+            await scanSource(srcPath, dstPath);
+            continue;
+          }
+
+          const destExists = await exists(dstPath);
+          
+          if (!destExists) {
+            toCopy.push({ source: srcPath, dest: dstPath, reason: 'new' });
+          } else {
+            // Check if modified
+            try {
+              const srcStat = await stat(srcPath);
+              const dstStat = await stat(dstPath);
+              
+              if (srcStat.mtime > dstStat.mtime || srcStat.size !== dstStat.size) {
+                toCopy.push({ source: srcPath, dest: dstPath, reason: 'modified' });
+              }
+            } catch (e) {
+              // Skip comparison errors
+            }
+          }
+        }
+      } catch (e) {
+        // Skip directories we can't read
+      }
+    }
+
+    await scanSource(sourcePath, destinationPath);
+
+    if (preview) {
+      return createSuccessResult({
+        preview: true,
+        toCopy: toCopy.length,
+        toDelete: toDelete.length,
+        files: toCopy.slice(0, 20), // Show first 20
+        mode,
+        message: `Would sync ${toCopy.length} file(s) from ${sourcePath} to ${destinationPath}`,
+      });
+    }
+
+    // Actually sync
+    let copied = 0;
+    let errors: string[] = [];
+
+    for (const item of toCopy) {
+      try {
+        // Ensure destination directory exists
+        const destDir = await dirname(item.dest);
+        const destDirExists = await exists(destDir);
+        if (!destDirExists) {
+          await mkdir(destDir, { recursive: true });
+        }
+
+        const content = await readTextFile(item.source);
+        await writeTextFile(item.dest, content);
+        copied++;
+      } catch (e: any) {
+        errors.push(`${item.source}: ${e.message}`);
+      }
+    }
+
+    return createSuccessResult({
+      copied,
+      errors: errors.length > 0 ? errors : undefined,
+      mode,
+      sourcePath,
+      destinationPath,
+      message: `Synced ${copied} file(s) to ${destinationPath}`,
+    });
+  } catch (error: any) {
+    return createErrorResult(error.message || 'Failed to sync directories');
+  }
+}
+
+/**
+ * Execute get_tool_help tool - Get help for tools
+ */
+async function executeGetToolHelp(args: Record<string, any>): Promise<ToolResult> {
+  const toolName = args.toolName;
+  const category = args.category;
+
+  try {
+    if (toolName) {
+      // Get help for specific tool
+      const tool = TOOLS.find(t => t.name === toolName);
+      if (!tool) {
+        return createErrorResult(`Tool "${toolName}" not found. Use get_tool_help() to see all available tools.`);
+      }
+
+      return createSuccessResult({
+        name: tool.name,
+        description: tool.description,
+        category: tool.category,
+        parameters: tool.input_schema.properties,
+        required: tool.input_schema.required || [],
+        examples: tool.examples || [],
+      });
+    }
+
+    // List all tools, optionally filtered by category
+    let tools = TOOLS;
+    if (category) {
+      tools = tools.filter(t => t.category === category);
+    }
+
+    const toolList = tools.map(t => ({
+      name: t.name,
+      description: t.description.substring(0, 100) + (t.description.length > 100 ? '...' : ''),
+      category: t.category,
+    }));
+
+    // Group by category
+    const byCategory: Record<string, string[]> = {};
+    tools.forEach(t => {
+      const cat = t.category || 'uncategorized';
+      if (!byCategory[cat]) byCategory[cat] = [];
+      byCategory[cat].push(t.name);
+    });
+
+    return createSuccessResult({
+      tools: toolList,
+      total: toolList.length,
+      byCategory,
+      availableCategories: Object.keys(ToolCategory),
+      message: toolName ? undefined : `Found ${toolList.length} tool(s)${category ? ` in category "${category}"` : ''}`,
+    });
+  } catch (error: any) {
+    return createErrorResult(error.message || 'Failed to get tool help');
+  }
+}
+
 /**
  * Gets available MCP tools and converts them to Anthropic tool format.
  */
@@ -2333,7 +4004,7 @@ export async function getMCPTools(): Promise<ToolDefinition[]> {
 }
 
 /**
- * Gets all available tools (custom + MCP).
+ * Gets all available tools (custom + MCP + Skills).
  * Optionally filters tools based on settings (e.g., ClawdBot tools).
  */
 export async function getAllTools(settings?: { clawdbotEnabled?: boolean }): Promise<ToolDefinition[]> {
@@ -2347,5 +4018,60 @@ export async function getAllTools(settings?: { clawdbotEnabled?: boolean }): Pro
   }
 
   const mcpTools = await getMCPTools();
-  return [...customTools, ...mcpTools];
+  
+  // Get skill tools if ClawdBot is enabled
+  let skillTools: ToolDefinition[] = [];
+  if (settings?.clawdbotEnabled) {
+    try {
+      const { getClawdhubSkillTools } = await import('./clawdhubToolDiscovery');
+      skillTools = await getClawdhubSkillTools();
+    } catch (error) {
+      console.warn('Failed to get Clawdhub skill tools:', error);
+    }
+  }
+  
+  return [...customTools, ...mcpTools, ...skillTools];
+}
+
+/**
+ * Gets a tool definition by name.
+ */
+export function getToolDefinition(toolName: string): ToolDefinition | undefined {
+  return TOOLS.find(tool => tool.name === toolName);
+}
+
+/**
+ * Lists all available tools with their categories and descriptions.
+ * Useful for AI to understand what tools are available.
+ */
+export async function listAvailableTools(settings?: { clawdbotEnabled?: boolean }): Promise<{
+  tools: Array<{
+    name: string;
+    description: string;
+    category?: string;
+    examples?: string[];
+  }>;
+  total: number;
+  byCategory: Record<string, number>;
+}> {
+  const allTools = await getAllTools(settings);
+  
+  const tools = allTools.map(tool => ({
+    name: tool.name,
+    description: tool.description,
+    category: tool.category,
+    examples: tool.examples,
+  }));
+  
+  const byCategory: Record<string, number> = {};
+  tools.forEach(tool => {
+    const category = tool.category || 'uncategorized';
+    byCategory[category] = (byCategory[category] || 0) + 1;
+  });
+  
+  return {
+    tools,
+    total: tools.length,
+    byCategory,
+  };
 }

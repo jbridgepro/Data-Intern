@@ -169,12 +169,18 @@ export class PromptBuilder {
             prompt += `Current working directory: ${currentDirectory}\n\n`;
         }
 
+        // Detect composite folder+file requests (e.g., "make folder X and add document Y inside")
+        const isCompositeRequest = this.isCompositeCreationRequest(command);
+        
         // Detect if user wants to create documents/files (not folders)
         const wantsDocuments = /(?:create|make|generate)\s+(?:two|three|four|five|\d+)?\s*(?:document|documents|file|files|\.docx|\.txt|\.md)/i.test(command);
         const hasSpecificFileNames = /(?:called|named|titled|with name|with the name|one that says|that says|the first|the second)\s+["']?([^"']+)["']?/i.test(command);
         const mentionsDocuments = /(?:document|documents|\.docx|\.txt|\.md|text file)/i.test(command);
 
-        if ((wantsDocuments || mentionsDocuments || hasSpecificFileNames) && !isConfirmation && !isRejection) {
+        // Handle composite folder+file requests specially
+        if (isCompositeRequest && !isConfirmation && !isRejection) {
+            prompt += this.generateCompositeCreationPrompt(command, currentDirectory);
+        } else if ((wantsDocuments || mentionsDocuments || hasSpecificFileNames) && !isConfirmation && !isRejection) {
             prompt += this.generateFileCreationPrompt(command);
         }
 
@@ -225,23 +231,19 @@ export class PromptBuilder {
                 const hasSpecificNames = /(?:called|named|titled|with name|with the name)\s+["']?([^"']+)["']?/i.test(lastMessage);
                 const mentionsDocuments = /(?:document|documents|docx|txt|file|files)/i.test(lastMessage);
                 if (hasSpecificNames || mentionsDocuments) {
-                    prompt += `\\n=== ACTION REQUIRED: USER CONFIRMED FILE CREATION ===\\n`;
-                    prompt += `The user said "yes" to creating files. EXECUTE IMMEDIATELY - NO MORE QUESTIONS.\\n\\n`;
-                    prompt += `YOU MUST:\\n`;
-                    prompt += `1. Extract ALL file names from: "${lastMessage}"\\n`;
-                    prompt += `2. For EACH file, IMMEDIATELY call 'write_file_content' tool (use tool_use, NOT text):\\n`;
-                    prompt += `   - path: [currentDirectory]/[filename].docx (add .docx if no extension)\\n`;
-                    prompt += `   - content: "" (empty string)\\n`;
-                    prompt += `   - createDirectories: true\\n`;
-                    prompt += `   - overwrite: false\\n`;
-                    prompt += `3. Call 'write_file_content' MULTIPLE TIMES (once per file)\\n`;
-                    prompt += `4. DO NOT write any text response until AFTER tools execute\\n`;
-                    prompt += `5. After execution, report: "Created [X] file(s): [list names]"\\n\\n`;
-                    prompt += `FORBIDDEN:\\n`;
-                    prompt += `- Do NOT ask for confirmation again\\n`;
-                    prompt += `- Do NOT show JSON or tool parameters\\n`;
-                    prompt += `- Do NOT use 'folder_creation_tab'\\n\\n`;
-                    prompt += `EXECUTE THE TOOLS NOW USING tool_use.\\n\\n`;
+                    prompt += `\n=== ACTION REQUIRED: USER CONFIRMED FILE CREATION ===\n`;
+                    prompt += `The user said "yes" to creating files. EXECUTE IMMEDIATELY - NO MORE QUESTIONS.\n\n`;
+                    prompt += `YOU MUST:\n`;
+                    prompt += `1. Extract ALL file names from: "${lastMessage}"\n`;
+                    prompt += `2. For EACH file, IMMEDIATELY call 'write_file_content' tool:\n`;
+                    prompt += `   - path: Use a RELATIVE path like "filename.docx" - the system will resolve it to the current directory automatically\n`;
+                    prompt += `   - content: "" (empty string)\n`;
+                    prompt += `   - createDirectories: true\n`;
+                    prompt += `   - overwrite: false\n`;
+                    prompt += `3. Call 'write_file_content' MULTIPLE TIMES (once per file)\n`;
+                    prompt += `4. DO NOT write any text response until AFTER tools execute\n`;
+                    prompt += `5. After execution, report: "Created [X] file(s): [list names]"\n\n`;
+                    prompt += `EXECUTE THE TOOLS NOW.\n\n`;
                 } else {
                     prompt += `- Use 'file_creation_tab' to create files with patterns\n`;
                 }
@@ -266,8 +268,9 @@ export class PromptBuilder {
         prompt += `1. Extract ALL file names from: "${command}"\n`;
         prompt += `   - Pattern: "one that says, X, and the other one is, Y" = TWO files: X and Y\n`;
         prompt += `   - Pattern: "the first document should be called A, the second is B" = TWO files: A and B\n`;
-        prompt += `2. For EACH file name, IMMEDIATELY call 'write_file_content' tool (use tool_use, not text):\n`;
-        prompt += `   - path: [currentDirectory]/[filename].docx (add .docx if no extension provided)\n`;
+        prompt += `2. For EACH file name, IMMEDIATELY call 'write_file_content' tool:\n`;
+        prompt += `   - path: Use a RELATIVE path like "filename.docx" - the system will automatically resolve it to the current working directory\n`;
+        prompt += `   - NEVER use placeholder text like "[currentDirectory]" - just use the filename directly\n`;
         prompt += `   - content: "" (empty string, unless user specified content)\n`;
         prompt += `   - createDirectories: true\n`;
         prompt += `   - overwrite: false\n`;
@@ -279,7 +282,8 @@ export class PromptBuilder {
         prompt += `- Do NOT show JSON blocks, tool parameters, or technical details\n`;
         prompt += `- Do NOT ask "Please confirm" or "Would you like me to proceed"\n`;
         prompt += `- Do NOT use 'folder_creation_tab' (that's for folders only)\n`;
-        prompt += `- Do NOT describe the steps - just execute the tools\n\n`;
+        prompt += `- Do NOT describe the steps - just execute the tools\n`;
+        prompt += `- Do NOT use placeholder text like "[currentDirectory]" or "/path/to/" in the path\n\n`;
         prompt += `START CALLING THE TOOLS NOW USING tool_use - NO TEXT RESPONSE UNTIL AFTER EXECUTION.\n\n`;
         return prompt;
     }
@@ -305,5 +309,154 @@ export class PromptBuilder {
         if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(2)} KB`;
         if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
         return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+    }
+
+    /**
+     * Detects if the command is a composite request (folder + file inside).
+     * Examples:
+     * - "make a folder that is called X and add a document inside called Y"
+     * - "make a folder called X and add a document inside called Y"
+     * - "create folder X with a file called Y inside"
+     */
+    private static isCompositeCreationRequest(command: string): boolean {
+        const lower = command.toLowerCase();
+        
+        // Check for folder creation followed by file creation with "inside/in/within"
+        const hasFolderKeyword = /(?:folder|directory)/.test(lower);
+        const hasFileKeyword = /(?:document|file)/.test(lower);
+        const hasHierarchy = /(?:inside|in\s+it|within|in\s+the\s+folder|into\s+it|put\s+.+\s+in)/.test(lower);
+        
+        // Also check for "and add/put" pattern which implies hierarchy
+        const hasAndAdd = /folder.*(?:and\s+(?:add|put|create)).*(?:document|file)/i.test(lower);
+        
+        return hasFolderKeyword && hasFileKeyword && (hasHierarchy || hasAndAdd);
+    }
+
+    /**
+     * Detects if the file type is ambiguous and needs clarification.
+     * Returns true if user said "document", "file", etc. without specifying extension.
+     */
+    private static needsFileTypeClarification(command: string): boolean {
+        const lower = command.toLowerCase();
+        
+        // Check if extension is explicitly specified
+        const hasExplicitExtension = /\.(txt|docx|doc|pdf|md|rtf|xlsx|xls|csv|py|js|ts|sql|json|xml|html|css)(?:\s|$|,)/i.test(command);
+        if (hasExplicitExtension) return false;
+        
+        // Check for clear file type indicators (no clarification needed)
+        const clearTypes = [
+            /text\s*file/i,           // "text file" → .txt
+            /word\s*(?:document|doc)/i, // "Word document" → .docx
+            /markdown\s*(?:file)?/i,  // "markdown file" → .md
+            /sql\s*file/i,            // "SQL file" → .sql
+            /python\s*(?:file|script)/i, // "Python file" → .py
+            /javascript\s*(?:file|script)/i, // "JavaScript file" → .js
+            /typescript\s*(?:file|script)/i, // "TypeScript file" → .ts
+            /excel\s*(?:file|spreadsheet)/i, // "Excel file" → .xlsx
+            /csv\s*file/i,            // "CSV file" → .csv
+            /json\s*file/i,           // "JSON file" → .json
+            /html\s*(?:file|page)/i,  // "HTML file" → .html
+            /readme/i,                // "README" → .md
+        ];
+        
+        if (clearTypes.some(pattern => pattern.test(command))) return false;
+        
+        // These terms are ambiguous and need clarification
+        const ambiguousTerms = [
+            /(?:create|make|add|put)\s+(?:a\s+)?document/i,  // "create a document"
+            /(?:create|make|add|put)\s+(?:a\s+)?file\s+(?:called|named)/i, // "create a file called"
+            /(?:create|make|add|put)\s+(?:a\s+)?note/i,     // "create a note"
+            /document\s+(?:called|named|inside)/i,          // "document called X"
+            /file\s+(?:called|named)\s+[^.]+(?:\s|$)/i,     // "file called X" (no extension)
+        ];
+        
+        return ambiguousTerms.some(pattern => pattern.test(command));
+    }
+
+    /**
+     * Generates prompt for composite folder+file creation requests.
+     */
+    private static generateCompositeCreationPrompt(command: string, currentDirectory: string): string {
+        const needsClarification = this.needsFileTypeClarification(command);
+        
+        let prompt = '';
+        prompt += `\n\n=== COMPOSITE FOLDER + FILE REQUEST ===\n`;
+        prompt += `The user wants to create a FOLDER and put a FILE INSIDE it.\n\n`;
+        
+        if (needsClarification) {
+            // File type is ambiguous - ask for clarification
+            prompt += `\n⚠️ **STOP - CLARIFICATION REQUIRED** ⚠️\n\n`;
+            prompt += `The user said "document" or "file" but did NOT specify what type (txt, docx, md, etc.).\n\n`;
+            prompt += `**YOU MUST NOT CALL ANY TOOLS YET.**\n\n`;
+            prompt += `Instead, respond with ONLY this question (customize the folder/file names):\n\n`;
+            prompt += `---\n`;
+            prompt += `I'll create the folder "[folder name]" for you.\n\n`;
+            prompt += `What type of file would you like for "[file name]"?\n`;
+            prompt += `- **.txt** - Plain text\n`;
+            prompt += `- **.docx** - Word document\n`;
+            prompt += `- **.md** - Markdown\n`;
+            prompt += `- Or tell me another format\n`;
+            prompt += `---\n\n`;
+            prompt += `**CRITICAL**: Do NOT use tool_use. Do NOT create any files. Just ask the question above.\n`;
+            prompt += `After the user responds with the file type, THEN create the folder and file.\n\n`;
+        } else {
+            // File type is clear - proceed with execution
+            prompt += `STEP 1 - Create the folder FIRST:\n`;
+            prompt += `- Use 'create_directory' tool with the folder name\n`;
+            prompt += `- path: Use RELATIVE path like "FolderName"\n\n`;
+            prompt += `STEP 2 - Create the file INSIDE the folder:\n`;
+            prompt += `- Use 'write_file_content' tool with path INSIDE the folder\n`;
+            prompt += `- path: "FolderName/filename.ext" (relative path including folder)\n\n`;
+            prompt += `IMPORTANT RULES:\n`;
+            prompt += `- A "folder" is NOT a file - do NOT create "folder.docx"\n`;
+            prompt += `- "inside" means the file path must include the folder\n`;
+            prompt += `- Use RELATIVE paths only - resolves to: ${currentDirectory || 'current directory'}\n`;
+            prompt += `- Execute BOTH tools in sequence: folder first, then file inside\n\n`;
+        }
+        
+        return prompt;
+    }
+    
+    /**
+     * Generates prompt for file creation that may need clarification.
+     */
+    private static generateFileCreationPrompt(command: string): string {
+        const needsClarification = this.needsFileTypeClarification(command);
+        
+        let prompt = '';
+        
+        if (needsClarification) {
+            // File type is ambiguous - ask for clarification
+            prompt += `\n\n⚠️ **STOP - CLARIFICATION REQUIRED** ⚠️\n\n`;
+            prompt += `The user said "document" or "file" but did NOT specify what type (txt, docx, md, etc.).\n\n`;
+            prompt += `**YOU MUST NOT CALL ANY TOOLS YET.**\n\n`;
+            prompt += `Instead, respond with ONLY this question:\n\n`;
+            prompt += `---\n`;
+            prompt += `What type of file would you like to create?\n`;
+            prompt += `- **.txt** - Plain text\n`;
+            prompt += `- **.docx** - Word document\n`;
+            prompt += `- **.md** - Markdown\n`;
+            prompt += `- Or tell me another format\n`;
+            prompt += `---\n\n`;
+            prompt += `**CRITICAL**: Do NOT use tool_use. Do NOT create any files. Just ask the question above.\n`;
+            prompt += `After the user responds with the file type, THEN create the file.\n\n`;
+        } else {
+            // File type is clear - proceed with execution
+            prompt += `\n\n=== FILE CREATION REQUEST ===\n`;
+            prompt += `The user wants to create FILE(S). This is NON-DESTRUCTIVE.\n\n`;
+            prompt += `EXECUTION STEPS:\n`;
+            prompt += `1. Extract file name(s) from the command\n`;
+            prompt += `2. For EACH file, call 'write_file_content' tool:\n`;
+            prompt += `   - path: Use RELATIVE path like "filename.ext"\n`;
+            prompt += `   - content: "" (empty string, unless user specified content)\n`;
+            prompt += `   - createDirectories: true\n`;
+            prompt += `3. Report results: "Created [X] file(s): [list names]"\n\n`;
+            prompt += `RULES:\n`;
+            prompt += `- Use RELATIVE paths only\n`;
+            prompt += `- NEVER use placeholder text like "[currentDirectory]"\n`;
+            prompt += `- Execute immediately - no confirmation needed for file creation\n\n`;
+        }
+        
+        return prompt;
     }
 }

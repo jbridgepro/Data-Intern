@@ -59,6 +59,9 @@ export interface VoiceSettings {
   allowInterruptions: boolean;
   voicePersona?: 'professional' | 'friendly' | 'concise' | 'robot';
   wakeWord?: string;
+  // Microphone sensitivity (1-10, lower = less sensitive, higher = more sensitive)
+  // Lower values filter out more ambient noise but require louder speech
+  micSensitivity?: number; // Default: 5
   // Faster-Whisper specific settings
   whisperModelSize?: 'tiny' | 'base' | 'small' | 'medium' | 'large-v2' | 'large-v3';
   whisperDevice?: 'cpu' | 'cuda';

@@ -114,6 +114,7 @@ export const AIFileAssistantSession = ({
   const voiceTranscriptHandlerRef = useRef<((text: string) => void) | null>(null);
   const lastSentMessageRef = useRef<{ text: string; timestamp: number } | null>(null);
   const showVoiceToTextRef = useRef(false);
+  const pendingTranscriptRef = useRef<{ text: string; timestamp: number; timeoutId: NodeJS.Timeout | null } | null>(null);
 
   // Local state for UI toggles and non-persistent data (moved up to avoid initialization order issues)
   const [showSettings, setShowSettings] = useState(false);
@@ -265,6 +266,7 @@ export const AIFileAssistantSession = ({
   }, [addMessage]);
 
   // Define handleVoiceTranscript after handleSendMessage
+  // This handler accumulates transcripts and only sends when user has clearly finished speaking
   const handleVoiceTranscript = useCallback((text: string) => {
     const trimmedText = text.trim();
     if (!trimmedText) {
@@ -272,33 +274,200 @@ export const AIFileAssistantSession = ({
       return;
     }
 
-    console.log('[Voice] Inserting transcript into chat input:', trimmedText);
+    console.log('[Voice] Received transcript:', trimmedText);
 
-    // Always insert the transcribed text into the chat input
-    // This ensures the user can see and edit the text before sending
-    setInputValue(trimmedText);
-    setVoiceInputActive(true);
-    
-    // Auto-send logic for natural conversation
-    // If in immersive voice mode, send immediately for snappy response
-    if (showVoiceMode) {
-       handleSendMessage(trimmedText);
-       // Clear input locally since it's sent
-       setInputValue('');
-       setVoiceInputActive(false);
-    } else {
-       // For normal mode, just insert the text and let user manually send
-       // This prevents accidental duplicate sends
-       setTimeout(() => {
-          setVoiceInputActive(false);
-       }, 500);
+    // Clear any pending transcript timeout
+    if (pendingTranscriptRef.current?.timeoutId) {
+      clearTimeout(pendingTranscriptRef.current.timeoutId);
+      pendingTranscriptRef.current.timeoutId = null;
     }
+
+    const now = Date.now();
+    
+    // Detect incomplete sentences (likely not finished speaking)
+    // Be aggressive - prefer waiting for more input over sending partial messages
+    const looksIncomplete = (t: string): boolean => {
+      const text = t.trim().toLowerCase();
+      
+      // Very short transcripts are almost certainly incomplete
+      if (text.length < 15) return true;
+      
+      // Count words - single or two word sentences are usually incomplete
+      const wordCount = text.split(/\s+/).filter(w => w.length > 0).length;
+      if (wordCount < 3) return true;
+      
+      // Ends with common incomplete indicators
+      if (/\.\.\.$/.test(text)) return true; // Ends with ...
+      if (/,\s*$/.test(text)) return true; // Ends with comma
+      
+      // Contains filler words that suggest it might be incomplete
+      if (/^(um|uh|so|and|but|or|well|like|okay|ok|h,|right)\b/i.test(text)) return true;
+      
+      // Common incomplete starting phrases (user is likely saying more)
+      if (/^(i want to|i need to|i would like|i'd like|can you|could you|please|let me|what about|how about|tell me|show me)\b/i.test(text) && wordCount < 5) return true;
+      
+      // Ends with prepositions/conjunctions (more likely to come)
+      if (/\s(to|for|with|about|from|in|on|at|by|of|and|or|but|the|a|an)\s*$/i.test(text)) return true;
+      
+      // Ends with "I" or "you" alone (sentence cut off)
+      if (/\s(i|you)\s*$/i.test(text)) return true;
+      
+      // Very short sentences ending in punctuation might be transcription artifacts
+      // e.g., "H, right." is likely not a complete thought
+      if (text.length < 20 && /[.,!?]$/.test(text)) {
+        // Check if it looks like a real complete sentence
+        // Real sentences typically have a subject and verb
+        if (!/\b(is|are|was|were|have|has|had|do|does|did|will|would|can|could|should|might|must|want|need|like|know|think|see|go|come|make|get|take)\b/i.test(text)) {
+          return true; // Doesn't have a verb, probably incomplete
+        }
+      }
+      
+      return false;
+    };
+
+    // Check if this looks like a continuation of the previous thought
+    const timeSinceLast = pendingTranscriptRef.current 
+      ? now - pendingTranscriptRef.current.timestamp 
+      : Infinity;
+    
+    // If within 8 seconds and there's a pending transcript, accumulate them
+    // This gives users time to pause and think between phrases
+    if (pendingTranscriptRef.current && timeSinceLast < 8000) {
+      const prevText = pendingTranscriptRef.current.text;
+      
+      // Check if new text is a refinement (starts similarly) or a continuation
+      const isRefinement = trimmedText.toLowerCase().startsWith(prevText.toLowerCase().substring(0, Math.min(10, prevText.length)));
+      
+      if (isRefinement) {
+        // New text is a more complete version - replace
+        console.log('[Voice] Replacing with more complete version');
+        pendingTranscriptRef.current.text = trimmedText;
+      } else {
+        // New text is different - might be a continuation, accumulate with space
+        // But only if the previous one looked incomplete
+        if (looksIncomplete(prevText)) {
+          console.log('[Voice] Accumulating as continuation');
+          pendingTranscriptRef.current.text = prevText + ' ' + trimmedText;
+        } else {
+          // Previous looked complete, this is a new sentence
+          console.log('[Voice] New sentence detected');
+          pendingTranscriptRef.current.text = trimmedText;
+        }
+      }
+      pendingTranscriptRef.current.timestamp = now;
+    } else {
+      // New transcript (no pending or too much time passed)
+      pendingTranscriptRef.current = {
+        text: trimmedText,
+        timestamp: now,
+        timeoutId: null
+      };
+    }
+
+    // Update the input value immediately so user can see it
+    setInputValue(pendingTranscriptRef.current.text);
+    setVoiceInputActive(true);
+
+    // Determine debounce time based on whether transcript looks complete
+    const currentText = pendingTranscriptRef.current.text;
+    const incomplete = looksIncomplete(currentText);
+    const endsWithPunctuation = /[.!?]$/.test(currentText);
+    const wordCount = currentText.split(/\s+/).filter(w => w.length > 0).length;
+    
+    // Longer debounce for incomplete sentences
+    // For complete-looking sentences with punctuation, still wait a bit to catch continuations
+    // Minimum 2.5s even for "complete" sentences, up to 5s for incomplete ones
+    let debounceTime: number;
+    if (incomplete) {
+      debounceTime = 5000; // 5 seconds for incomplete
+    } else if (wordCount < 5) {
+      debounceTime = 4000; // 4 seconds for short but "complete" sentences
+    } else if (endsWithPunctuation) {
+      debounceTime = 2500; // 2.5 seconds for longer complete sentences
+    } else {
+      debounceTime = 4000; // 4 seconds for longer sentences without punctuation
+    }
+    
+    console.log(`[Voice] Debouncing for ${debounceTime}ms (incomplete: ${incomplete}, words: ${wordCount})`);
+
+    // Debounce: Wait for silence before processing
+    pendingTranscriptRef.current.timeoutId = setTimeout(() => {
+      const finalText = pendingTranscriptRef.current?.text.trim();
+      if (!finalText) {
+        pendingTranscriptRef.current = null;
+        setVoiceInputActive(false);
+        return;
+      }
+
+      console.log('[Voice] Processing final transcript after debounce:', finalText);
+
+      // Validate minimum length
+      if (finalText.length < 5) {
+        console.log('[Voice] Transcript too short, keeping in buffer');
+        // Don't clear - keep accumulating
+        setVoiceInputActive(false);
+        return;
+      }
+
+      // For normal mode (not voice mode), just insert the text
+      // User must manually send by clicking the send button or pressing Enter
+      // This prevents any auto-sending of partial transcripts
+      if (!showVoiceMode) {
+        console.log('[Voice] Text inserted into input, user must manually send');
+        setVoiceInputActive(false);
+        // Keep the pending transcript in case more comes
+        // Only clear after user actually sends
+        return;
+      }
+
+      // Auto-send logic ONLY for immersive voice mode
+      if (showVoiceMode) {
+        // Additional validation for voice mode - be VERY conservative
+        // Require minimum length of 25 characters to avoid sending transcription artifacts
+        const MIN_VOICE_SEND_LENGTH = 25;
+        if (finalText.length < MIN_VOICE_SEND_LENGTH) {
+          console.log(`[Voice] Voice mode: Transcript too short (${finalText.length} < ${MIN_VOICE_SEND_LENGTH}), waiting for more`);
+          setVoiceInputActive(false);
+          return;
+        }
+        
+        // Check if it looks incomplete
+        if (looksIncomplete(finalText)) {
+          console.log('[Voice] Voice mode: Transcript looks incomplete, waiting for more');
+          setVoiceInputActive(false);
+          return;
+        }
+        
+        // Final check: require at least 4 words for voice mode
+        const wordCount = finalText.split(/\s+/).filter(w => w.length > 0).length;
+        if (wordCount < 4) {
+          console.log(`[Voice] Voice mode: Not enough words (${wordCount} < 4), waiting for more`);
+          setVoiceInputActive(false);
+          return;
+        }
+        
+        console.log('[Voice] Voice mode: Sending complete message:', finalText);
+        handleSendMessage(finalText);
+        setInputValue('');
+        setVoiceInputActive(false);
+        pendingTranscriptRef.current = null;
+      }
+    }, debounceTime);
   }, [handleSendMessage, showVoiceMode]);
 
   // Update the ref when handler changes
   useEffect(() => {
     voiceTranscriptHandlerRef.current = handleVoiceTranscript;
   }, [handleVoiceTranscript]);
+
+  // Cleanup pending transcript timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (pendingTranscriptRef.current?.timeoutId) {
+        clearTimeout(pendingTranscriptRef.current.timeoutId);
+      }
+    };
+  }, []);
 
   // Update agent name based on task understanding or implementation plan
   useEffect(() => {

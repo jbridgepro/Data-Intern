@@ -10,7 +10,15 @@ import Anthropic from '@anthropic-ai/sdk';
 import type { AISettings, FileOperation, DirectoryAnalysis } from '../types';
 import { getAllTools, executeTool, type ToolContext, type ToolResult } from './toolsRegistry';
 import { executeMCPTool, isMCPTool, parseMCPToolName } from './mcpIntegration';
-import { isFileCreationRequest, parseFileCreationRequest } from './fileCreationFallback';
+import { 
+  isFileCreationRequest, 
+  parseFileCreationRequest,
+  isCompositeCreationRequest,
+  parseCompositeCreationRequest,
+  isFolderCreationRequest,
+  parseFolderCreationRequest,
+  needsFileTypeClarification,
+} from './fileCreationFallback';
 import { toolOrchestrator } from './toolOrchestrator';
 import { generateSystemPrompt } from './aiGuidelines';
 import { getClawdhubSkillsContext } from './clawdhubToolDiscovery';
@@ -609,17 +617,113 @@ async function processCommandWithAnthropicProvider(
       iteration++;
     }
 
-    // Direct tool fallback: if user requested file creation but AI returned text only, execute ourselves
-    if (isFileCreationRequest(command)) {
+    // ========== DIRECT CREATION FALLBACK (Anthropic) ==========
+    // Handles cases where the AI didn't properly call tools for folder/file creation
+    // BUT: Skip fallback if file type clarification is needed - let AI ask the user
+    const executedToolsCountAnthropic = toolExecutions.length;
+    const requiresClarificationAnthropic = needsFileTypeClarification(command);
+    
+    if (requiresClarificationAnthropic) {
+      console.log('[Anthropic Fallback] File type clarification needed - skipping auto-execution');
+      // Don't auto-execute - the AI should ask the user what file type they want
+    }
+    // Check for composite folder+file requests first (e.g., "make folder X and add document Y inside")
+    else if (isCompositeCreationRequest(command)) {
+      const createdFolders = toolExecutions.filter((e) => e.tool === 'create_directory' || e.tool === 'folder_creation_tab');
+      const createdFiles = toolExecutions.filter((e) => e.tool === 'write_file_content');
+      
+      if ((createdFolders.length === 0 || createdFiles.length === 0) && context.currentDirectory) {
+        console.log('[Anthropic Fallback] Composite creation request detected, executing directly...');
+        const parsed = parseCompositeCreationRequest(command);
+        const createdItems: string[] = [];
+        const errors: string[] = [];
+        
+        for (const folder of parsed.folders) {
+          const folderPath = `${context.currentDirectory}/${folder.folderName}`;
+          const folderRes = await executeTool('create_directory', { path: folderPath }, context);
+          const folderExec: ToolExecutionInfo = {
+            tool: 'create_directory',
+            description: `Create folder: ${folder.folderName}`,
+            params: { path: folderPath },
+            status: folderRes.success ? 'success' : 'error',
+            result: folderRes,
+          };
+          toolExecutions.push(folderExec);
+          
+          if (folderRes.success) {
+            createdItems.push(`📁 ${folder.folderName}`);
+            
+            for (const file of folder.filesInside) {
+              const filePath = `${folderPath}/${file.fileName}`;
+              const fileRes = await executeTool('write_file_content', 
+                { path: filePath, content: file.content || '', createDirectories: true }, 
+                context
+              );
+              const fileExec: ToolExecutionInfo = {
+                tool: 'write_file_content',
+                description: `Create file: ${file.fileName}`,
+                params: { path: filePath },
+                status: fileRes.success ? 'success' : 'error',
+                result: fileRes,
+              };
+              toolExecutions.push(fileExec);
+              
+              if (fileRes.success) {
+                createdItems.push(`  📄 ${file.fileName}`);
+              } else if (fileRes.error) {
+                errors.push(fileRes.error);
+              }
+            }
+          } else if (folderRes.error) {
+            errors.push(folderRes.error);
+          }
+        }
+        
+        if (createdItems.length > 0) {
+          finalResponse = `Done! I created:\n${createdItems.join('\n')}`;
+          if (errors.length > 0) finalResponse += `\n\n⚠️ Some errors: ${errors.join('; ')}`;
+        }
+      }
+    }
+    // Check for folder-only creation requests (folders don't need type clarification)
+    else if (isFolderCreationRequest(command) && !isCompositeCreationRequest(command)) {
+      const createdFolders = toolExecutions.filter((e) => e.tool === 'create_directory' || e.tool === 'folder_creation_tab');
+      
+      if (createdFolders.length === 0 && context.currentDirectory) {
+        console.log('[Anthropic Fallback] Folder creation request detected, executing directly...');
+        const folder = parseFolderCreationRequest(command);
+        if (folder) {
+          const folderPath = `${context.currentDirectory}/${folder.folderName}`;
+          const res = await executeTool('create_directory', { path: folderPath }, context);
+          const exec: ToolExecutionInfo = {
+            tool: 'create_directory',
+            description: `Create folder: ${folder.folderName}`,
+            params: { path: folderPath },
+            status: res.success ? 'success' : 'error',
+            result: res,
+          };
+          toolExecutions.push(exec);
+          
+          if (res.success) {
+            finalResponse = `Done! I created the folder: 📁 ${folder.folderName}`;
+          } else {
+            finalResponse = `I encountered an error creating the folder: ${res.error}`;
+          }
+        }
+      }
+    }
+    // Check for file-only creation requests (only if type is clear)
+    else if (isFileCreationRequest(command)) {
       const wrote = toolExecutions.filter((e) => e.tool === 'write_file_content');
       if (wrote.length === 0 && context.currentDirectory) {
+        console.log('[Anthropic Fallback] File creation request detected, executing directly...');
         const items = parseFileCreationRequest(command);
         if (items.length > 0) {
           const created: string[] = [];
           const errors: string[] = [];
           for (const item of items) {
             const params = {
-              path: item.fileName,
+              path: `${context.currentDirectory}/${item.fileName}`,
               content: item.content || '',
               createDirectories: true,
               overwrite: false,
@@ -643,6 +747,40 @@ async function processCommandWithAnthropicProvider(
           } else {
             finalResponse = `I attempted to create the files but encountered errors: ${errors.join('; ')}.`;
           }
+        }
+      }
+    }
+    
+    // If we executed fallback tools and there's no response yet, generate one
+    if (toolExecutions.length > executedToolsCountAnthropic && (!finalResponse || finalResponse.trim().length === 0)) {
+      finalResponse = 'Done! I completed the operation.';
+    }
+
+    // ========== CLARIFICATION OVERRIDE (Anthropic) ==========
+    // If clarification was needed but the AI didn't ask (it just claimed to create files),
+    // override the response with a clarification prompt.
+    // Trigger when: no tools executed OR all tools failed
+    const allToolsFailedAnthropic = toolExecutions.length > 0 && toolExecutions.every(t => t.status === 'error');
+    const noSuccessfulToolsAnthropic = toolExecutions.length === 0 || allToolsFailedAnthropic;
+    
+    if (requiresClarificationAnthropic && noSuccessfulToolsAnthropic) {
+      const alreadyAskingAnthropic = /what\s+(?:type|kind|format)\s+(?:of\s+)?(?:file|document)/i.test(finalResponse);
+      
+      if (!alreadyAskingAnthropic) {
+        console.log('[Anthropic Fallback] Clarification needed and no successful tools. Forcing clarification prompt.');
+        
+        // Parse the request to get folder and file names for the clarification message
+        if (isCompositeCreationRequest(command)) {
+          const parsed = parseCompositeCreationRequest(command);
+          if (parsed.folders.length > 0) {
+            const folder = parsed.folders[0];
+            const fileName = folder.filesInside[0]?.fileName?.replace(/\.[^.]+$/, '') || 'the document';
+            finalResponse = `I'll create the folder "${folder.folderName}" for you.\n\nWhat type of file would you like for "${fileName}"?\n- **.txt** - Plain text\n- **.docx** - Word document\n- **.md** - Markdown\n- Or tell me another format`;
+          } else {
+            finalResponse = `What type of file would you like to create?\n- **.txt** - Plain text\n- **.docx** - Word document\n- **.md** - Markdown\n- Or tell me another format`;
+          }
+        } else {
+          finalResponse = `What type of file would you like to create?\n- **.txt** - Plain text\n- **.docx** - Word document\n- **.md** - Markdown\n- Or tell me another format`;
         }
       }
     }

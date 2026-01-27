@@ -35,8 +35,10 @@ export class AudioRecorder {
   private animationFrameId: number | null = null;
 
   // Adjusted defaults for more natural conversation
-  private vadThreshold: number = 0.02;
-  private vadSilenceDuration: number = 1200; // 1.2s silence to trigger "end of thought"
+  // Higher threshold = less sensitive (reduces false positives from ambient noise)
+  // Default set high to avoid triggering on ambient noise - users can lower in settings
+  private vadThreshold: number = 0.12; // Higher default to filter ambient noise
+  private vadSilenceDuration: number = 2000; // 2s silence to trigger "end of thought"
   private lastVoiceActivityTime: number = 0;
   private isVoiceActive: boolean = false;
 
@@ -248,24 +250,37 @@ export class AudioRecorder {
     }
 
     try {
+      // Minimum audio size constant - 3KB is approximately 0.2 seconds of audio at 16kbps
+      // Very small audio blobs often fail to decode properly
+      const MINIMUM_AUDIO_SIZE = 3072; // 3KB
+      
       // Combine all audio chunks
       const audioBlob = new Blob(this.audioChunks, { type: this.mediaRecorder.mimeType || 'audio/webm' });
 
-      // Validate blob size - increased minimum to 2KB for more reliable decoding
-      // Very small audio blobs often fail to decode properly
-      if (audioBlob.size < 2048) {
-        console.debug(`Audio blob is too small (${audioBlob.size} bytes), skipping conversion. Minimum: 2048 bytes`);
+      // Validate blob size - increased minimum to 3KB for more reliable decoding
+      if (audioBlob.size < MINIMUM_AUDIO_SIZE) {
+        console.debug(`Audio blob is too small (${audioBlob.size} bytes), skipping conversion. Minimum: ${MINIMUM_AUDIO_SIZE} bytes`);
         return null;
       }
 
       // Validate that we have actual audio data (not just empty chunks)
       let totalChunkSize = 0;
+      let nonEmptyChunks = 0;
       for (const chunk of this.audioChunks) {
-        totalChunkSize += chunk.size;
+        if (chunk.size > 0) {
+          totalChunkSize += chunk.size;
+          nonEmptyChunks++;
+        }
       }
       
-      if (totalChunkSize < 2048) {
-        console.debug(`Total chunk size is too small (${totalChunkSize} bytes), skipping conversion`);
+      if (totalChunkSize < MINIMUM_AUDIO_SIZE) {
+        console.debug(`Total chunk size is too small (${totalChunkSize} bytes from ${nonEmptyChunks} chunks), skipping conversion. Minimum: ${MINIMUM_AUDIO_SIZE} bytes`);
+        return null;
+      }
+      
+      // Also check that we have at least a few non-empty chunks
+      if (nonEmptyChunks < 2) {
+        console.debug(`Not enough non-empty chunks (${nonEmptyChunks}), skipping conversion`);
         return null;
       }
 
@@ -275,14 +290,17 @@ export class AudioRecorder {
         wavBase64 = await this.convertToWav(audioBlob);
       } catch (conversionError: any) {
         // If conversion fails, it might be because the audio is too short or corrupted
-        // Log the error but don't throw - just return null
-        console.warn('Audio conversion failed during flush:', conversionError.message || conversionError);
+        // This is expected for very short audio segments, so use debug level instead of warn
+        const isDecodingError = conversionError.message?.includes('Decoding failed') || 
+                                conversionError.message?.includes('EncodingError') ||
+                                conversionError.name === 'EncodingError';
         
-        // If it's a decoding error, the audio might be too short or in an unsupported format
-        // This is common when flushing very short audio segments
-        if (conversionError.message?.includes('Decoding failed') || 
-            conversionError.message?.includes('EncodingError')) {
+        if (isDecodingError) {
+          // Decoding errors are common for short audio segments - use debug level
           console.debug('Audio decoding failed - likely too short or unsupported format. This is normal for very brief audio segments.');
+        } else {
+          // Other errors are less common - use warn level
+          console.warn('Audio conversion failed during flush:', conversionError.message || conversionError);
         }
         
         return null;
@@ -302,7 +320,17 @@ export class AudioRecorder {
       return wavBase64;
     } catch (error: any) {
       // Catch any other unexpected errors
-      console.error('Error flushing audio:', error);
+      // Only log as error if it's not a decoding error (which is expected for short audio)
+      const isDecodingError = error.message?.includes('Decoding failed') || 
+                             error.message?.includes('EncodingError') ||
+                             error.name === 'EncodingError';
+      
+      if (isDecodingError) {
+        console.debug('Audio decoding error during flush (expected for short segments):', error.message || error);
+      } else {
+        console.warn('Unexpected error flushing audio:', error.message || error);
+      }
+      
       // Don't clear chunks on error - they might still be valid for the next attempt
       return null;
     }
