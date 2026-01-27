@@ -1028,8 +1028,96 @@ export async function executeClawdbotAgent(
   // We'll treat it as a task that completes its initialization.
 
   return {
-    success: true,
     message: 'Clawdbot initialized'
+  };
+}
+
+/**
+ * Executes a task agent with subagents.
+ */
+export async function executeTaskAgent(
+  agent: AgentConfig,
+  context: AgentExecutionContext
+): Promise<AgentResults> {
+  const { onProgress, onLog, shouldStop } = context;
+  const subagents = agent.subagents || [];
+
+  if (subagents.length === 0) {
+    onLog({
+      timestamp: new Date(),
+      level: 'warning',
+      message: 'No subagents configured for this task agent.',
+    });
+    return { status: 'completed', subagentsExecuted: 0 };
+  }
+
+  onLog({
+    timestamp: new Date(),
+    level: 'info',
+    message: `Starting task agent with ${subagents.length} subagent(s)...`,
+  });
+
+  onProgress(10, 'Initializing subagents...');
+
+  const subagentResults: any[] = [];
+  let completedCount = 0;
+
+  // Execute subagents in parallel
+  const promises = subagents.map(async (subagent, index) => {
+    if (shouldStop()) return;
+
+    onLog({
+      timestamp: new Date(),
+      level: 'info',
+      message: `Subagent [${subagent.name}] (${subagent.role}): Starting... Goal: ${subagent.goal}`,
+    });
+
+    try {
+      // Simulate unique work duration for each subagent
+      const duration = 1500 + Math.random() * 2000;
+      await new Promise(resolve => setTimeout(resolve, duration));
+
+      if (shouldStop()) {
+        onLog({
+          timestamp: new Date(),
+          level: 'warning',
+          message: `Subagent [${subagent.name}]: Stopped by user.`,
+        });
+        return;
+      }
+
+      onLog({
+        timestamp: new Date(),
+        level: 'success',
+        message: `Subagent [${subagent.name}]: Completed task.`,
+      });
+
+      subagentResults.push({ id: subagent.id, status: 'completed' });
+    } catch (error: any) {
+      onLog({
+        timestamp: new Date(),
+        level: 'error',
+        message: `Subagent [${subagent.name}]: Failed - ${error.message}`,
+      });
+      subagentResults.push({ id: subagent.id, status: 'error', error: error.message });
+    } finally {
+      completedCount++;
+      const progress = 10 + Math.floor((completedCount / subagents.length) * 80);
+      onProgress(progress, `Running subagents (${completedCount}/${subagents.length})...`);
+    }
+  });
+
+  await Promise.all(promises);
+
+  if (shouldStop()) {
+    throw new Error('Agent stopped by user');
+  }
+
+  onProgress(100, 'Completed');
+
+  return {
+    subagentsExecuted: subagentResults.length,
+    results: subagentResults
   };
 }
 
@@ -1052,6 +1140,8 @@ export function getAgentExecutor(agentType: string) {
       return executeBackupAgent;
     case 'sync-agent':
       return executeSyncAgent;
+    case 'task-agent':
+      return executeTaskAgent;
     default:
       throw new Error(`Unknown agent type: ${agentType}`);
   }

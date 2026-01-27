@@ -93,6 +93,8 @@ class VoiceServiceHandler(BaseHTTPRequestHandler):
             data = json.loads(body.decode('utf-8'))
             audio_data = data.get('audio')
             language = data.get('language', 'en')
+            if language and '-' in language:
+                language = language.split('-')[0]
             model_size = data.get('model_size', 'base')
             device = data.get('device', 'cpu')
             compute_type = data.get('compute_type', 'int8')
@@ -159,8 +161,22 @@ class VoiceServiceHandler(BaseHTTPRequestHandler):
                 if os.path.exists(tmp_path):
                     os.unlink(tmp_path)
                     
+        except json.JSONDecodeError as e:
+            self.send_error(400, f"Invalid JSON in request: {str(e)}")
+        except base64.binascii.Error as e:
+            self.send_error(400, f"Invalid base64 audio data: {str(e)}")
+        except ImportError as e:
+            self.send_error(500, f"Whisper model not available: {str(e)}. Please ensure faster-whisper is installed.")
         except Exception as e:
-            self.send_error(500, f"Transcription error: {str(e)}")
+            error_msg = str(e)
+            # Provide more helpful error messages
+            if "model" in error_msg.lower() and ("not found" in error_msg.lower() or "load" in error_msg.lower()):
+                error_msg = f"Whisper model error: {error_msg}. The model may still be loading or not installed correctly."
+            elif "cuda" in error_msg.lower() or "gpu" in error_msg.lower():
+                error_msg = f"GPU/CUDA error: {error_msg}. Try using CPU device instead."
+            elif "memory" in error_msg.lower():
+                error_msg = f"Memory error: {error_msg}. Try using a smaller model size or reducing audio length."
+            self.send_error(500, f"Transcription error: {error_msg}")
     
     def handle_synthesize(self, body: bytes):
         """Handle text-to-speech synthesis using Piper."""
@@ -360,7 +376,25 @@ class VoiceServiceHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         """Override to reduce logging noise."""
         # Only log errors
-        if 'error' in format.lower() or args[0].startswith('5'):
+        is_error = 'error' in format.lower()
+        
+        # Check if status code indicates error (4xx or 5xx)
+        if args and len(args) > 0:
+            status_arg = args[0]
+            # Handle case where status code is first arg (log_error)
+            if isinstance(status_arg, int):
+                if status_arg >= 400:
+                    is_error = True
+            # Handle case where status code is second arg (log_request)
+            elif len(args) > 1:
+                try:
+                    code = int(args[1])
+                    if code >= 400:
+                        is_error = True
+                except (ValueError, TypeError):
+                    pass
+        
+        if is_error:
             super().log_message(format, *args)
 
 

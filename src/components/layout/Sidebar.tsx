@@ -111,7 +111,7 @@ export const Sidebar = ({
   // Navigation items with categories and metadata
   const navItems: NavItem[] = [
     { id: "mapper", label: "File Mapper", icon: FolderTree, category: "file-operations", description: "Map and visualize file structures", shortcut: "1" },
-    { id: "copy", label: "File Copy", icon: Copy, category: "file-operations", description: "Copy files and directories", shortcut: "2" },
+    { id: "copy", label: "Copy / Move", icon: Copy, category: "file-operations", description: "Copy files and directories", shortcut: "2" },
     { id: "folder", label: "Folder Creation", icon: FolderPlus, category: "file-operations", description: "Create folder structures", shortcut: "3" },
     { id: "empty", label: "File Creation", icon: FilePlus, category: "file-operations", description: "Create empty files", shortcut: "4" },
     { id: "terminal", label: "Terminal", icon: Terminal, category: "tools", description: "Integrated terminal", shortcut: "5" },
@@ -218,7 +218,7 @@ export const Sidebar = ({
   }, [recentItems, activeTab]);
 
   return (
-    <div className="w-64 border-r border-slate-200/50 dark:border-slate-800/50 flex flex-col h-full glass transition-colors duration-300 relative z-10 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm">
+    <div className="w-full h-full flex flex-col glass transition-colors duration-300 relative z-10 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm">
       {/* Header Section */}
       <div className="p-4 border-b border-slate-200/50 dark:border-slate-800/50">
         <div className="flex items-center justify-between mb-4">

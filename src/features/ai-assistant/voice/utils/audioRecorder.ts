@@ -29,9 +29,14 @@ export class AudioRecorder {
   private dataArray: Uint8Array | null = null;
   private audioLevelCallback: AudioLevelCallback | null = null;
   private voiceActivityCallback: VoiceActivityCallback | null = null;
+
+  private vadSilenceCallback: (() => void) | null = null;
+  private vadVoiceStartCallback: (() => void) | null = null;
   private animationFrameId: number | null = null;
-  private vadThreshold: number = 0.02; // Voice activity detection threshold
-  private vadSilenceDuration: number = 1000; // Milliseconds of silence before considering speech ended
+
+  // Adjusted defaults for more natural conversation
+  private vadThreshold: number = 0.02;
+  private vadSilenceDuration: number = 1200; // 1.2s silence to trigger "end of thought"
   private lastVoiceActivityTime: number = 0;
   private isVoiceActive: boolean = false;
 
@@ -47,6 +52,20 @@ export class AudioRecorder {
    */
   setVoiceActivityCallback(callback: VoiceActivityCallback | null): void {
     this.voiceActivityCallback = callback;
+  }
+
+  /**
+   * Sets callback for when silence is detected (end of speech).
+   */
+  setSilenceDetectionCallback(callback: () => void): void {
+    this.vadSilenceCallback = callback;
+  }
+
+  /**
+   * Sets callback for when voice starts.
+   */
+  setVoiceStartCallback(callback: () => void): void {
+    this.vadVoiceStartCallback = callback;
   }
 
   /**
@@ -102,8 +121,8 @@ export class AudioRecorder {
       const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
         ? 'audio/webm;codecs=opus'
         : MediaRecorder.isTypeSupported('audio/webm')
-        ? 'audio/webm'
-        : 'audio/mp4';
+          ? 'audio/webm'
+          : 'audio/mp4';
 
       this.mediaRecorder = new MediaRecorder(this.stream, {
         mimeType,
@@ -126,7 +145,7 @@ export class AudioRecorder {
       this.isRecording = true;
     } catch (error: any) {
       console.error('Error starting audio recording:', error);
-      
+
       // Provide more specific error messages
       let errorMessage = 'Failed to access microphone.';
       if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
@@ -140,7 +159,7 @@ export class AudioRecorder {
       } else if (error.message) {
         errorMessage = `Microphone error: ${error.message}`;
       }
-      
+
       throw new Error(errorMessage);
     }
   }
@@ -158,7 +177,7 @@ export class AudioRecorder {
       }
 
       this.analyser.getByteFrequencyData(this.dataArray);
-      
+
       // Calculate average audio level
       let sum = 0;
       for (let i = 0; i < this.dataArray.length; i++) {
@@ -179,17 +198,17 @@ export class AudioRecorder {
         this.lastVoiceActivityTime = currentTime;
         if (!this.isVoiceActive) {
           this.isVoiceActive = true;
-          if (this.voiceActivityCallback) {
-            this.voiceActivityCallback(true);
-          }
+          // Voice started
+          if (this.voiceActivityCallback) this.voiceActivityCallback(true);
+          if (this.vadVoiceStartCallback) this.vadVoiceStartCallback();
         }
       } else {
         // Check if we've been silent long enough
         if (this.isVoiceActive && (currentTime - this.lastVoiceActivityTime) > this.vadSilenceDuration) {
           this.isVoiceActive = false;
-          if (this.voiceActivityCallback) {
-            this.voiceActivityCallback(false);
-          }
+          // Voice ended (Silence detected)
+          if (this.voiceActivityCallback) this.voiceActivityCallback(false);
+          if (this.vadSilenceCallback) this.vadSilenceCallback();
         }
       }
 
@@ -202,33 +221,182 @@ export class AudioRecorder {
   /**
    * Stops recording and returns audio as base64-encoded WAV.
    */
+  /**
+   * Flushes currently recorded audio and returns it as base64-encoded WAV.
+   * Does NOT stop recording.
+   */
+  async flushAudio(): Promise<string | null> {
+    if (!this.mediaRecorder || !this.isRecording) {
+      return null;
+    }
+
+    // Force flush current data
+    try {
+      this.mediaRecorder.requestData();
+    } catch (error) {
+      console.warn('Failed to request data from MediaRecorder:', error);
+      return null;
+    }
+
+    // Give more time for the dataavailable event to fire and push to chunks
+    // Increased from 100ms to 200ms for more reliable data collection
+    await new Promise(resolve => setTimeout(resolve, 200));
+
+    if (this.audioChunks.length === 0) {
+      console.debug('No audio chunks available for flushing');
+      return null;
+    }
+
+    try {
+      // Combine all audio chunks
+      const audioBlob = new Blob(this.audioChunks, { type: this.mediaRecorder.mimeType || 'audio/webm' });
+
+      // Validate blob size - increased minimum to 2KB for more reliable decoding
+      // Very small audio blobs often fail to decode properly
+      if (audioBlob.size < 2048) {
+        console.debug(`Audio blob is too small (${audioBlob.size} bytes), skipping conversion. Minimum: 2048 bytes`);
+        return null;
+      }
+
+      // Validate that we have actual audio data (not just empty chunks)
+      let totalChunkSize = 0;
+      for (const chunk of this.audioChunks) {
+        totalChunkSize += chunk.size;
+      }
+      
+      if (totalChunkSize < 2048) {
+        console.debug(`Total chunk size is too small (${totalChunkSize} bytes), skipping conversion`);
+        return null;
+      }
+
+      // Convert to WAV format with better error handling
+      let wavBase64: string;
+      try {
+        wavBase64 = await this.convertToWav(audioBlob);
+      } catch (conversionError: any) {
+        // If conversion fails, it might be because the audio is too short or corrupted
+        // Log the error but don't throw - just return null
+        console.warn('Audio conversion failed during flush:', conversionError.message || conversionError);
+        
+        // If it's a decoding error, the audio might be too short or in an unsupported format
+        // This is common when flushing very short audio segments
+        if (conversionError.message?.includes('Decoding failed') || 
+            conversionError.message?.includes('EncodingError')) {
+          console.debug('Audio decoding failed - likely too short or unsupported format. This is normal for very brief audio segments.');
+        }
+        
+        return null;
+      }
+      
+      // Only clear chunks after successful conversion
+      // Keep a small buffer of recent chunks to avoid losing data
+      // Clear all but the last few chunks to maintain continuity
+      if (this.audioChunks.length > 3) {
+        // Keep the last 2 chunks for continuity
+        this.audioChunks = this.audioChunks.slice(-2);
+      } else {
+        // If we have few chunks, clear them all
+        this.audioChunks = [];
+      }
+      
+      return wavBase64;
+    } catch (error: any) {
+      // Catch any other unexpected errors
+      console.error('Error flushing audio:', error);
+      // Don't clear chunks on error - they might still be valid for the next attempt
+      return null;
+    }
+  }
+
+  /**
+   * Stops recording and returns audio as base64-encoded WAV.
+   */
   async stopRecording(): Promise<string> {
     return new Promise((resolve, reject) => {
       if (!this.mediaRecorder || !this.isRecording) {
-        reject(new Error('Not currently recording'));
+        // If not recording but we have data, try to return it
+        if (this.audioChunks.length > 0) {
+          const blob = new Blob(this.audioChunks, { type: 'audio/webm' });
+          // Validate blob before conversion
+          if (blob.size < 1024) {
+            console.warn('Audio data is too short, returning empty string');
+            this.cleanup();
+            resolve('');
+            return;
+          }
+          this.convertToWav(blob)
+            .then((result) => {
+              this.cleanup();
+              resolve(result);
+            })
+            .catch((error) => {
+              this.cleanup();
+              console.error('Failed to convert audio on stop:', error);
+              // Resolve with empty string instead of rejecting to prevent crashes
+              resolve('');
+            });
+          return;
+        }
+        this.cleanup();
+        resolve(''); // Just resolve empty if nothing
         return;
       }
 
+      // Set up stop handler before stopping
       this.mediaRecorder.onstop = async () => {
         try {
+          // Wait a bit for any final data to arrive
+          await new Promise(resolve => setTimeout(resolve, 100));
+
+          // Check if we have any chunks
+          if (this.audioChunks.length === 0) {
+            console.warn('No audio chunks recorded');
+            this.cleanup();
+            resolve('');
+            return;
+          }
+
           // Combine all audio chunks
           const audioBlob = new Blob(this.audioChunks, { type: this.mediaRecorder?.mimeType || 'audio/webm' });
-          
+
+          // Validate blob size
+          if (audioBlob.size < 1024) {
+            console.warn('Audio blob is too small, returning empty string');
+            this.cleanup();
+            resolve('');
+            return;
+          }
+
           // Convert to WAV format
           const wavBase64 = await this.convertToWav(audioBlob);
-          
+
           // Clean up
           this.cleanup();
-          
+
           resolve(wavBase64);
-        } catch (error) {
+        } catch (error: any) {
+          console.error('Error during stop recording:', error);
           this.cleanup();
-          reject(error);
+          // Resolve with empty string instead of rejecting to prevent crashes
+          resolve('');
         }
       };
 
-      this.mediaRecorder.stop();
-      this.isRecording = false;
+      // Handle errors during stop
+      this.mediaRecorder.onerror = (event: any) => {
+        console.error('MediaRecorder error during stop:', event.error);
+        this.cleanup();
+        resolve(''); // Resolve with empty instead of rejecting
+      };
+
+      try {
+        this.mediaRecorder.stop();
+        this.isRecording = false;
+      } catch (error: any) {
+        console.error('Error stopping MediaRecorder:', error);
+        this.cleanup();
+        resolve(''); // Resolve with empty instead of rejecting
+      }
     });
   }
 
@@ -237,34 +405,100 @@ export class AudioRecorder {
    */
   private async convertToWav(audioBlob: Blob): Promise<string> {
     return new Promise((resolve, reject) => {
+      // Validate blob
+      if (!audioBlob || audioBlob.size === 0) {
+        reject(new Error('Audio blob is empty or invalid'));
+        return;
+      }
+
+      // Check minimum size (at least 1KB for valid audio)
+      if (audioBlob.size < 1024) {
+        reject(new Error('Audio data is too short to be valid'));
+        return;
+      }
+
       // Create audio context
       const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
       const fileReader = new FileReader();
 
       fileReader.onload = async (e) => {
         try {
-          // Decode audio data
-          const audioBuffer = await audioContext.decodeAudioData(e.target?.result as ArrayBuffer);
+          const arrayBuffer = e.target?.result as ArrayBuffer;
           
+          // Validate array buffer
+          if (!arrayBuffer || arrayBuffer.byteLength === 0) {
+            reject(new Error('Failed to read audio data'));
+            return;
+          }
+
+          // Decode audio data with better error handling
+          let audioBuffer: AudioBuffer;
+          try {
+            // Use cloneArrayBuffer to avoid "ArrayBuffer is detached" errors
+            const clonedBuffer = arrayBuffer.slice(0);
+            audioBuffer = await audioContext.decodeAudioData(clonedBuffer);
+          } catch (decodeError: any) {
+            // Provide more specific error message
+            if (decodeError.name === 'EncodingError' || decodeError.message?.includes('Decoding failed')) {
+              // This often happens with very short audio segments or unsupported formats
+              // It's not necessarily an error - just means this audio segment can't be decoded
+              reject(new Error(`Audio decoding failed: The audio format may not be supported or the audio segment is too short. Original error: ${decodeError.message}`));
+            } else {
+              reject(new Error(`Audio decoding failed: ${decodeError.message || 'Unknown error'}`));
+            }
+            return;
+          }
+
+          // Validate decoded audio buffer
+          if (!audioBuffer || audioBuffer.length === 0) {
+            reject(new Error('Decoded audio buffer is empty'));
+            return;
+          }
+
           // Convert to WAV
           const wav = this.audioBufferToWav(audioBuffer);
           const wavBlob = new Blob([wav], { type: 'audio/wav' });
-          
+
           // Convert to base64
           const reader = new FileReader();
           reader.onloadend = () => {
-            const base64 = (reader.result as string).split(',')[1];
+            const result = reader.result as string;
+            if (!result) {
+              reject(new Error('Failed to convert WAV to base64'));
+              return;
+            }
+            const base64 = result.split(',')[1];
+            if (!base64) {
+              reject(new Error('Failed to extract base64 data'));
+              return;
+            }
             resolve(base64);
           };
-          reader.onerror = reject;
+          reader.onerror = (error) => {
+            reject(new Error(`Failed to read WAV blob: ${error}`));
+          };
           reader.readAsDataURL(wavBlob);
-        } catch (error) {
-          reject(error);
+        } catch (error: any) {
+          reject(new Error(`Error processing audio: ${error.message || 'Unknown error'}`));
+        } finally {
+          // Clean up audio context
+          try {
+            await audioContext.close();
+          } catch (closeError) {
+            // Ignore close errors
+          }
         }
       };
 
-      fileReader.onerror = reject;
-      fileReader.readAsArrayBuffer(audioBlob);
+      fileReader.onerror = (error) => {
+        reject(new Error(`Failed to read audio blob: ${error}`));
+      };
+      
+      try {
+        fileReader.readAsArrayBuffer(audioBlob);
+      } catch (error: any) {
+        reject(new Error(`Failed to start reading audio blob: ${error.message || 'Unknown error'}`));
+      }
     });
   }
 
@@ -365,8 +599,8 @@ export class AudioRecorder {
    * Checks if audio recording is available.
    */
   static isAvailable(): boolean {
-    return typeof navigator !== 'undefined' && 
-           !!navigator.mediaDevices && 
-           !!navigator.mediaDevices.getUserMedia;
+    return typeof navigator !== 'undefined' &&
+      !!navigator.mediaDevices &&
+      !!navigator.mediaDevices.getUserMedia;
   }
 }

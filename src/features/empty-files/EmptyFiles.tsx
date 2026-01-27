@@ -163,9 +163,10 @@ export const EmptyFiles = () => {
     }
   };
 
-  const addExtension = () => {
-    if (newExtension && !config.extensions.includes(newExtension)) {
-      const cleanExt = newExtension.replace(/^\./, "");
+  const addExtension = (ext?: string) => {
+    const targetExt = ext || newExtension;
+    if (targetExt && !config.extensions.includes(targetExt)) {
+      const cleanExt = targetExt.replace(/^\./, "");
       setConfig((prev) => ({
         ...prev,
         extensions: [...prev.extensions, cleanExt],

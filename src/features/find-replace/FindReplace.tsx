@@ -31,7 +31,7 @@ export const FindReplace = () => {
     wholeWord: false,
     includePattern: "",
     excludePattern: "",
-    target: "content"
+    target: "all"
   });
 
   const [results, setResults] = useState<FileResult[]>([]);
@@ -217,7 +217,28 @@ export const FindReplace = () => {
     setReplacePreview(null);
   };
 
+  const handleSelectAllMatches = useCallback(() => {
+      const allIds = new Set<string>();
+      results.forEach((res) => {
+        res.matches.forEach((m) => {
+          allIds.add(`${res.path}:${m.line}:${m.matchIndex}`);
+        });
+      });
+      setSelectedMatches(allIds);
+  }, [results]);
+
+  const handleClearSelection = useCallback(() => {
+      setSelectedMatches(new Set());
+  }, []);
+
   const handleReplaceAll = useCallback(() => {
+      // Use logic similar to select all if nothing is explicitly selected?
+      // Or usually "Replace All" implies replacing everything found, regardless of selection.
+      // But typically "Replace All" means "Replace everything in the result set".
+      // Let's stick to current logic which auto-selects all if needed in `handleReplaceAll` implementation above?
+      // Wait, line 220 `handleReplaceAll` logic currently selects all then opens confirm.
+      // So this is consistent.
+      
       const allIds = new Set<string>();
       results.forEach((res) => {
         res.matches.forEach((m) => {
@@ -285,6 +306,7 @@ export const FindReplace = () => {
             }}
             selectedMatches={selectedMatches}
             searchQuery={searchQuery}
+            replaceQuery={replaceQuery}
             focusedMatchIndex={focusedMatchIndex}
         />
         
@@ -323,6 +345,9 @@ export const FindReplace = () => {
         onReplaceAll={handleReplaceAll}
         onReplaceSelected={handleReplaceClick}
         onStop={() => abortControllerRef.current?.abort()}
+        
+        onSelectAll={handleSelectAllMatches}
+        onClearSelection={handleClearSelection}
         
         resultCount={results.reduce((acc, r) => acc + r.matches.length, 0)}
         selectedCount={selectedMatches.size}

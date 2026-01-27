@@ -18,8 +18,10 @@ import {
   Loader2,
   Sparkles,
   AlertCircle,
+  Eye,
 } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
+import { SkillDetailDialog } from "./SkillDetailDialog";
 
 interface PluginInfo {
   name: string;
@@ -35,6 +37,8 @@ interface PluginInfo {
   };
   origin?: string;
   enabled?: boolean;
+  status?: string;
+  id?: string;
 }
 
 interface Skill extends PluginInfo {
@@ -51,6 +55,7 @@ export const SkillBrowser = ({ viewMode = "all" }: SkillBrowserProps) => {
   const [isLoading, setIsLoading] = useState(false);
   const [installing, setInstalling] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [selectedSkill, setSelectedSkill] = useState<Skill | null>(null);
   const { toast } = useToast();
 
   const fetchSkills = async () => {
@@ -59,8 +64,10 @@ export const SkillBrowser = ({ viewMode = "all" }: SkillBrowserProps) => {
       // Define absolute paths - use Node 22 from nvm to run ClawdBot
       const NODE22_PATH = "/Users/koo1j/.nvm/versions/node/v22.22.0/bin/node";
       const CLAWDBOT_GLOBAL_PATH = "/usr/local/bin/clawdbot";
-      const CLAWDBOT_NVM_PATH = "/Users/koo1j/.nvm/versions/node/v22.22.0/bin/clawdbot";
-      const CLAWDHUB_PATH = "/Users/koo1j/.nvm/versions/node/v22.22.0/bin/clawdhub";
+      const CLAWDBOT_NVM_PATH =
+        "/Users/koo1j/.nvm/versions/node/v22.22.0/bin/clawdbot";
+      const CLAWDHUB_PATH =
+        "/Users/koo1j/.nvm/versions/node/v22.22.0/bin/clawdhub";
 
       // Fetch both local/bundled plugins AND registry skills
 
@@ -130,17 +137,21 @@ export const SkillBrowser = ({ viewMode = "all" }: SkillBrowserProps) => {
                 line.trim().length > 0 && !line.startsWith("Now using node"),
             )
             .map((line) => {
-              // Simple regex to grab the first word as name, checking for double spaces
-              // Example: "self-improving-agent  v1.0.1  just now  Captures learnings..."
+              // Parse text output: "name  version  time  description"
+              // Split by multiple spaces (2 or more)
               const parts = line.split(/\s{2,}/);
               if (parts.length >= 2) {
                 const name = parts[0].trim();
-                const description = parts.slice(3).join(" ").trim(); // Description is roughly the 4th part usually, or 3rd if time is merged
-                // Let's rely on description being the last big chunk
+                // Description is everything after the first 3 parts (name, version, time)
+                // Join all remaining parts to get the full description
+                const description =
+                  parts.slice(3).join(" ").trim() ||
+                  parts[parts.length - 1]?.trim() ||
+                  "";
 
                 return {
                   name,
-                  description: parts[parts.length - 1] || "",
+                  description: description, // Use full description
                   installed: false,
                   status: "available" as const,
                   source: "registry",
@@ -156,7 +167,23 @@ export const SkillBrowser = ({ viewMode = "all" }: SkillBrowserProps) => {
         console.error("Registry fetch failed", e);
       }
 
-      // 3. Merge Lists
+      // 3.5 Fetch User Installed Skills (Directory Listing)
+      let userInstalledSkills: string[] = [];
+      try {
+        const cmd = Command.create("sh", ["-c", "ls -1 $HOME/clawd/skills"]);
+        const output = await cmd.execute();
+        if (output.code === 0) {
+          userInstalledSkills = output.stdout
+            .split("\n")
+            .map((s) => s.trim())
+            .filter((s) => s.length > 0);
+          console.log("User installed skills found:", userInstalledSkills);
+        }
+      } catch (e) {
+        console.error("Failed to list user skills", e);
+      }
+
+      // 4. Merge Lists
       // Create a map of all skills by name and by id
       const skillMapByName = new Map<string, Skill>();
       const skillMapById = new Map<string, Skill>();
@@ -182,7 +209,7 @@ export const SkillBrowser = ({ viewMode = "all" }: SkillBrowserProps) => {
         // 3. If it's not bundled, it's user-installed and should be marked as installed
         // 4. Also check if enabled flag is set
         // 5. Check if status is "loaded" (which means it's active/installed)
-        const enabled = p.enabled === true || p.enabled === "true";
+        const enabled = p.enabled === true || (p.enabled as any) === "true";
         const loaded = p.status === "loaded" || p.status === "enabled";
         const isInstalled = isBundled
           ? enabled || loaded // Bundled plugins: installed if enabled or loaded
@@ -198,10 +225,10 @@ export const SkillBrowser = ({ viewMode = "all" }: SkillBrowserProps) => {
 
         // Use plugin name or id as the key
         const skillName = p.name || pluginId;
-        
+
         const mergedSkill: Skill = {
           ...(existing || {}), // Keep registry info if useful (like description if local missing)
-          ...p,
+          ...p, // Include all plugin fields (version, toolNames, hookNames, etc.)
           name: skillName, // Use the plugin name
           description: p.description || existing?.description || "", // Prefer local description, fallback to registry
           installed: !!isInstalled,
@@ -211,7 +238,7 @@ export const SkillBrowser = ({ viewMode = "all" }: SkillBrowserProps) => {
               ? "installed"
               : existing?.status || "available",
         };
-        
+
         // Debug log for installed skills
         if (isInstalled) {
           console.log("Found installed skill:", {
@@ -233,6 +260,35 @@ export const SkillBrowser = ({ viewMode = "all" }: SkillBrowserProps) => {
         }
       });
 
+      // 5. Merge User Installed Skills (from file system)
+      userInstalledSkills.forEach((skillName) => {
+        const existing =
+          skillMapByName.get(skillName) ||
+          skillMapById.get(skillName.toLowerCase());
+
+        if (existing) {
+          // If it exists in registry or local plugins, mark as installed
+          existing.installed = true;
+          existing.status = "installed";
+          // Re-set to ensure map is updated if reference changed (though object mutation should work, sets are safer)
+          skillMapByName.set(existing.name, existing);
+        } else {
+          // New skill found in directory but not in registry or local plugins
+          // This usually shouldn't happen for standard skills but possible for custom ones
+          const newSkill: Skill = {
+            name: skillName,
+            description: "Locally installed skill",
+            installed: true,
+            status: "installed",
+            source: "local-fs",
+            // Add other required fields with defaults
+            emoji: "📦",
+          };
+          skillMapByName.set(skillName, newSkill);
+          skillMapById.set(skillName.toLowerCase(), newSkill);
+        }
+      });
+
       const mergedSkills = Array.from(skillMapByName.values());
 
       // Debug logging
@@ -248,10 +304,15 @@ export const SkillBrowser = ({ viewMode = "all" }: SkillBrowserProps) => {
         installedNames: installedSkills.map((s) => s.name),
         localPluginsCount: localPlugins.length,
         enabledLocalPluginsCount: enabledLocalPlugins.length,
-        enabledLocalPluginNames: enabledLocalPlugins.map((p) => p.name || (p as any).id),
-        sampleLocalPlugin: localPlugins.find((p) => p.enabled || p.status === "loaded"),
+        enabledLocalPluginNames: enabledLocalPlugins.map(
+          (p) => p.name || (p as any).id,
+        ),
+        sampleLocalPlugin: localPlugins.find(
+          (p) => p.enabled || p.status === "loaded",
+        ),
         sampleMergedSkill: mergedSkills.find((s) => s.installed),
         allMergedSkillNames: mergedSkills.map((s) => s.name),
+        userInstalledSkills,
       });
 
       // Fallback if completely empty
@@ -337,7 +398,8 @@ export const SkillBrowser = ({ viewMode = "all" }: SkillBrowserProps) => {
 
       // Strategy: Use Node 22 to run ClawdHub
       const NODE22_PATH = "/Users/koo1j/.nvm/versions/node/v22.22.0/bin/node";
-      const CLAWDHUB_PATH = "/Users/koo1j/.nvm/versions/node/v22.22.0/bin/clawdhub";
+      const CLAWDHUB_PATH =
+        "/Users/koo1j/.nvm/versions/node/v22.22.0/bin/clawdhub";
 
       // We also need to ensure the target directory exists, but clawdhub might handle it.
       // We'll use the absolute path to clawdhub and $HOME for target.
@@ -457,7 +519,11 @@ export const SkillBrowser = ({ viewMode = "all" }: SkillBrowserProps) => {
             </div>
           ) : (
             filteredSkills.map((skill) => (
-              <Card key={skill.name} className="flex flex-col">
+              <Card
+                key={skill.name}
+                className="flex flex-col cursor-pointer hover:shadow-md transition-shadow"
+                onClick={() => setSelectedSkill(skill)}
+              >
                 <CardHeader className="pb-2">
                   <div className="flex justify-between items-start">
                     <div className="flex items-center gap-2">
@@ -468,6 +534,7 @@ export const SkillBrowser = ({ viewMode = "all" }: SkillBrowserProps) => {
                           <a
                             href={skill.homepage}
                             target="_blank"
+                            onClick={(e) => e.stopPropagation()}
                             className="text-xs text-blue-500 hover:underline"
                           >
                             Docs
@@ -521,32 +588,53 @@ export const SkillBrowser = ({ viewMode = "all" }: SkillBrowserProps) => {
                   )}
                 </CardHeader>
                 <CardContent className="pt-0 mt-auto">
-                  <Button
-                    className="w-full"
-                    variant={
-                      skill.status === "installed" ? "outline" : "default"
-                    }
-                    onClick={() => handleInstall(skill)}
-                    disabled={
-                      skill.status === "installed" || installing === skill.name
-                    }
-                  >
-                    {installing === skill.name ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                    ) : skill.status === "installed" ? (
-                      "Manage"
-                    ) : (
-                      <>
-                        <Download className="w-4 h-4 mr-2" /> Install
-                      </>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="flex-1"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSelectedSkill(skill);
+                      }}
+                    >
+                      <Eye className="w-4 h-4 mr-2" />
+                      View Details
+                    </Button>
+                    {skill.status !== "installed" && (
+                      <Button
+                        className="flex-1"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleInstall(skill);
+                        }}
+                        disabled={installing === skill.name}
+                      >
+                        {installing === skill.name ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <>
+                            <Download className="w-4 h-4 mr-2" /> Install
+                          </>
+                        )}
+                      </Button>
                     )}
-                  </Button>
+                  </div>
                 </CardContent>
               </Card>
             ))
           )}
         </div>
       </ScrollArea>
+
+      {/* Skill Detail Dialog */}
+      {selectedSkill && (
+        <SkillDetailDialog
+          skill={selectedSkill}
+          onClose={() => setSelectedSkill(null)}
+          onRefresh={fetchSkills}
+        />
+      )}
     </div>
   );
 };

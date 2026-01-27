@@ -38,6 +38,24 @@ export const AgentSelectionProvider = ({ children }: { children: ReactNode }) =>
         description: 'New AI Agent',
         enabled: true,
         autoStart: false,
+        subagents: [
+          {
+            id: `sub-${Math.random().toString(36).substr(2, 9)}`,
+            name: "Research Specialist",
+            role: "Researcher",
+            goal: "Analyze requirements and gather context",
+            model: "claude-3-sonnet",
+            tools: ["web_search", "read_file"]
+          },
+          {
+            id: `sub-${Math.random().toString(36).substr(2, 9)}`,
+            name: "Code Architect",
+            role: "Architect",
+            goal: "Design the solution structure",
+            model: "claude-3-opus",
+            tools: ["list_dir", "view_file"]
+          }
+        ]
     };
     
     console.log('[AgentSelectionContext] Creating new agent:', newAgent);

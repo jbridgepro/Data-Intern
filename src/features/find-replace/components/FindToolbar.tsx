@@ -46,8 +46,8 @@ interface FindToolbarProps {
   excludePattern: string;
   onExcludePatternChange: (val: string) => void;
 
-  target: 'content' | 'filename' | 'folder';
-  onTargetChange: (val: 'content' | 'filename' | 'folder') => void;
+  target: 'content' | 'filename' | 'folder' | 'all';
+  onTargetChange: (val: 'content' | 'filename' | 'folder' | 'all') => void;
 
   isSearching: boolean;
 }
@@ -214,6 +214,12 @@ export const FindToolbar = ({
                  <div className="flex items-center gap-2">
                    <Folder className="h-3.5 w-3.5 opacity-70" />
                    <span>Folder Name</span>
+                 </div>
+               </SelectItem>
+               <SelectItem value="all">
+                 <div className="flex items-center gap-2 font-medium">
+                   <Search className="h-3.5 w-3.5 text-blue-500" />
+                   <span>All</span>
                  </div>
                </SelectItem>
              </SelectContent>

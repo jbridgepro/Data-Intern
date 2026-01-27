@@ -4,7 +4,10 @@
  * Voice settings configuration panel.
  */
 
-import { X, Volume2, Mic, Settings2 } from "lucide-react";
+import { X, Volume2, Mic, Settings2, Play, Loader2 } from "lucide-react";
+import { useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { useToast } from "@/components/ui/use-toast";
 import {
   Card,
   CardContent,
@@ -48,6 +51,229 @@ export const VoiceSettingsPanel = ({
   onClose,
   serviceManager,
 }: VoiceSettingsPanelProps) => {
+  const [isTestingVoice, setIsTestingVoice] = useState(false);
+  const { toast } = useToast();
+
+  /**
+   * Tests the selected voice by playing a sample phrase.
+   */
+  const testVoice = async () => {
+    console.log("Test voice button clicked", { settings });
+    setIsTestingVoice(true);
+    
+    const testText = "Hello! This is a test of the selected voice. How does it sound?";
+    const speed = settings.voiceSpeed || 1.0;
+    const volume = settings.volume || 100;
+
+    // If provider is not faster-whisper, use browser TTS directly
+    if (settings.provider !== "faster-whisper") {
+      console.log("Using browser TTS for test (provider is not faster-whisper)");
+      fallbackToBrowserTTS(testText, speed, volume);
+      toast({
+        title: "Voice test",
+        description: "Playing test audio using browser text-to-speech...",
+      });
+      setIsTestingVoice(false);
+      return;
+    }
+
+    try {
+      const serviceUrl = settings.voiceServiceUrl || "http://127.0.0.1:8765";
+      // Handle custom voice - if it's "__custom__", we need to get the actual custom value
+      let voice = settings.piperVoice || "en_US-lessac-medium";
+      if (voice === "__custom__") {
+        // If custom is selected but no custom value entered, use default
+        voice = "en_US-lessac-medium";
+        toast({
+          title: "Using default voice",
+          description: "Please enter a custom voice name or select a voice from the list.",
+          variant: "default",
+        });
+      }
+
+      console.log("Testing voice with settings:", {
+        serviceUrl,
+        voice,
+        speed,
+        volume,
+      });
+
+      const result = await invoke<{
+        success: boolean;
+        audio?: string;
+        format?: string;
+        error?: string;
+      }>("synthesize_speech", {
+        text: testText,
+        voice: voice,
+        speed: speed,
+        serviceUrl: serviceUrl,
+      });
+
+      console.log("Voice synthesis result:", {
+        success: result.success,
+        hasAudio: !!result.audio,
+        error: result.error,
+        format: result.format,
+      });
+
+      // Check if error indicates missing voice model
+      if (!result.success && result.error) {
+        const errorMessage = result.error;
+        const isHTMLResponse = errorMessage.includes('<!DOCTYPE HTML>') || errorMessage.includes('<html');
+        const isVoiceNotFound = isHTMLResponse ||
+                              errorMessage.includes('not found') || 
+                              errorMessage.includes('404') ||
+                              errorMessage.includes('Voice model');
+        
+        if (isVoiceNotFound) {
+          // Extract error message from HTML if present
+          let extractedMessage = errorMessage;
+          if (isHTMLResponse) {
+            const match = errorMessage.match(/<p>Message: ([^<]+)<\/p>/);
+            if (match) {
+              extractedMessage = match[1];
+            } else {
+              // Fallback: try to extract any text between <p> tags
+              const fallbackMatch = errorMessage.match(/<p>([^<]+)<\/p>/);
+              if (fallbackMatch) {
+                extractedMessage = fallbackMatch[1];
+              }
+            }
+          }
+          
+          toast({
+            title: "Voice model not found",
+            description: extractedMessage || `The voice model '${voice}' is not available. Please download it and place it in the voices directory, or use browser TTS instead.`,
+            variant: "destructive",
+          });
+          return;
+        }
+        
+        // Other errors
+        toast({
+          title: "Voice synthesis failed",
+          description: errorMessage || "An unknown error occurred during voice synthesis.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      if (result.success && result.audio) {
+        // Decode base64 audio and play it
+        try {
+          await playAudioFromBase64(result.audio, volume);
+          toast({
+            title: "Voice test",
+            description: "Playing test audio...",
+          });
+        } catch (playError: any) {
+          console.error("Audio playback error:", playError);
+          // Fallback to browser TTS
+          fallbackToBrowserTTS(testText, speed, volume);
+          toast({
+            title: "Using browser TTS",
+            description: "Piper audio playback failed, using browser text-to-speech instead.",
+            variant: "default",
+          });
+        }
+      } else {
+        const errorMsg = result.error || "Could not synthesize speech. Make sure the voice service is running and the voice model is available.";
+        console.error("Voice synthesis failed:", errorMsg);
+        
+        // Fallback to browser TTS if service is unavailable
+        if (errorMsg.includes("connect") || errorMsg.includes("Failed to connect") || errorMsg.includes("Cannot connect")) {
+          fallbackToBrowserTTS(testText, speed, volume);
+          toast({
+            title: "Using browser TTS",
+            description: "Voice service unavailable. Using browser text-to-speech for testing.",
+            variant: "default",
+          });
+        } else {
+          toast({
+            title: "Voice test failed",
+            description: errorMsg,
+            variant: "destructive",
+          });
+        }
+      }
+    } catch (error: any) {
+      console.error("Voice test error:", error);
+      const errorMessage = error?.message || error?.toString() || "Failed to test voice. Please check your voice service connection.";
+      
+      // Always fallback to browser TTS on error
+      try {
+        fallbackToBrowserTTS(testText, speed, volume);
+        toast({
+          title: "Using browser TTS",
+          description: "Voice service error. Using browser text-to-speech for testing.",
+          variant: "default",
+        });
+      } catch (fallbackError) {
+        toast({
+          title: "Voice test error",
+          description: errorMessage,
+          variant: "destructive",
+        });
+      }
+    } finally {
+      setIsTestingVoice(false);
+    }
+  };
+
+  /**
+   * Fallback to browser TTS for testing.
+   */
+  const fallbackToBrowserTTS = (text: string, speed: number, volume: number) => {
+    if (typeof window !== "undefined" && "speechSynthesis" in window) {
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.rate = speed;
+      utterance.volume = Math.max(0, Math.min(1, volume / 100));
+      window.speechSynthesis.speak(utterance);
+    }
+  };
+
+  /**
+   * Plays audio from base64-encoded WAV data.
+   */
+  const playAudioFromBase64 = async (audioBase64: string, volume: number): Promise<void> => {
+    return new Promise((resolve, reject) => {
+      try {
+        // Decode base64 to binary
+        const binaryString = atob(audioBase64);
+        const bytes = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+          bytes[i] = binaryString.charCodeAt(i);
+        }
+
+        // Create blob and audio element
+        const blob = new Blob([bytes], { type: "audio/wav" });
+        const url = URL.createObjectURL(blob);
+        const audio = new Audio(url);
+        
+        // Set volume (0.0 to 1.0)
+        audio.volume = Math.max(0, Math.min(1, volume / 100));
+
+        audio.onended = () => {
+          URL.revokeObjectURL(url);
+          resolve();
+        };
+
+        audio.onerror = (error) => {
+          URL.revokeObjectURL(url);
+          reject(new Error("Failed to play audio"));
+        };
+
+        audio.play().catch((error) => {
+          URL.revokeObjectURL(url);
+          reject(error);
+        });
+      } catch (error) {
+        reject(error);
+      }
+    });
+  };
+
   return (
     <div className="w-96 border-l border-slate-200/50 dark:border-slate-800/50 flex flex-col h-full bg-slate-50 dark:bg-slate-900/50">
       <Card className="rounded-none border-0 border-b h-full flex flex-col">
@@ -240,20 +466,205 @@ export const VoiceSettingsPanel = ({
                     </div>
 
                     <div>
-                      <Label htmlFor="piper-voice">Piper Voice Model</Label>
-                      <input
-                        id="piper-voice"
-                        type="text"
-                        value={settings.piperVoice || "en_US-lessac-medium"}
-                        onChange={(e) =>
-                          onUpdate({ piperVoice: e.target.value })
+                      <div className="flex items-center justify-between mb-2">
+                        <Label htmlFor="piper-voice">AI Voice (Piper TTS)</Label>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            testVoice();
+                          }}
+                          disabled={isTestingVoice}
+                          className="h-7 text-xs"
+                        >
+                          {isTestingVoice ? (
+                            <>
+                              <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                              Testing...
+                            </>
+                          ) : (
+                            <>
+                              <Play className="h-3 w-3 mr-1" />
+                              Test Voice
+                            </>
+                          )}
+                        </Button>
+                      </div>
+                      <Select
+                        value={
+                          settings.piperVoice &&
+                          ![
+                            "en_US-lessac-medium",
+                            "en_US-lessac-high",
+                            "en_US-amy-medium",
+                            "en_US-amy-high",
+                            "en_US-ryan-medium",
+                            "en_US-ryan-high",
+                            "en_GB-alba-medium",
+                            "en_GB-alba-high",
+                            "en_GB-northern_english_male-medium",
+                            "en_GB-semaine-medium",
+                            "en_GB-semaine-high",
+                            "es_ES-sharvard-medium",
+                            "es_ES-sharvard-high",
+                            "fr_FR-siwis-medium",
+                            "fr_FR-siwis-high",
+                            "de_DE-thorsten-medium",
+                            "de_DE-thorsten-high",
+                            "it_IT-riccardo-medium",
+                            "it_IT-riccardo-high",
+                            "ja_JP-natsumi-medium",
+                            "ja_JP-natsumi-high",
+                            "zh_CN-huayan-medium",
+                            "zh_CN-huayan-high",
+                          ].includes(settings.piperVoice)
+                            ? "__custom__"
+                            : settings.piperVoice || "en_US-lessac-medium"
                         }
-                        className="mt-1 w-full px-3 py-2 border border-slate-300 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-900 text-sm"
-                        placeholder="en_US-lessac-medium"
-                      />
+                        onValueChange={(value) => {
+                          if (value === "__custom__") {
+                            // Don't update yet, just show the input
+                            onUpdate({ piperVoice: "__custom__" });
+                          } else {
+                            onUpdate({ piperVoice: value });
+                          }
+                        }}
+                      >
+                        <SelectTrigger id="piper-voice" className="mt-1">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="en_US-lessac-medium">
+                            English (US) - Lessac Medium (Default)
+                          </SelectItem>
+                          <SelectItem value="en_US-lessac-high">
+                            English (US) - Lessac High Quality
+                          </SelectItem>
+                          <SelectItem value="en_US-amy-medium">
+                            English (US) - Amy Medium (Female)
+                          </SelectItem>
+                          <SelectItem value="en_US-amy-high">
+                            English (US) - Amy High Quality (Female)
+                          </SelectItem>
+                          <SelectItem value="en_US-ryan-medium">
+                            English (US) - Ryan Medium (Male)
+                          </SelectItem>
+                          <SelectItem value="en_US-ryan-high">
+                            English (US) - Ryan High Quality (Male)
+                          </SelectItem>
+                          <SelectItem value="en_GB-alba-medium">
+                            English (UK) - Alba Medium
+                          </SelectItem>
+                          <SelectItem value="en_GB-alba-high">
+                            English (UK) - Alba High Quality
+                          </SelectItem>
+                          <SelectItem value="en_GB-northern_english_male-medium">
+                            English (UK) - Northern English Male
+                          </SelectItem>
+                          <SelectItem value="en_GB-semaine-medium">
+                            English (UK) - Semaine Medium
+                          </SelectItem>
+                          <SelectItem value="en_GB-semaine-high">
+                            English (UK) - Semaine High Quality
+                          </SelectItem>
+                          <SelectItem value="es_ES-sharvard-medium">
+                            Spanish (Spain) - Sharvard Medium
+                          </SelectItem>
+                          <SelectItem value="es_ES-sharvard-high">
+                            Spanish (Spain) - Sharvard High Quality
+                          </SelectItem>
+                          <SelectItem value="fr_FR-siwis-medium">
+                            French - Siwis Medium
+                          </SelectItem>
+                          <SelectItem value="fr_FR-siwis-high">
+                            French - Siwis High Quality
+                          </SelectItem>
+                          <SelectItem value="de_DE-thorsten-medium">
+                            German - Thorsten Medium
+                          </SelectItem>
+                          <SelectItem value="de_DE-thorsten-high">
+                            German - Thorsten High Quality
+                          </SelectItem>
+                          <SelectItem value="it_IT-riccardo-medium">
+                            Italian - Riccardo Medium
+                          </SelectItem>
+                          <SelectItem value="it_IT-riccardo-high">
+                            Italian - Riccardo High Quality
+                          </SelectItem>
+                          <SelectItem value="ja_JP-natsumi-medium">
+                            Japanese - Natsumi Medium
+                          </SelectItem>
+                          <SelectItem value="ja_JP-natsumi-high">
+                            Japanese - Natsumi High Quality
+                          </SelectItem>
+                          <SelectItem value="zh_CN-huayan-medium">
+                            Chinese (Simplified) - Huayan Medium
+                          </SelectItem>
+                          <SelectItem value="zh_CN-huayan-high">
+                            Chinese (Simplified) - Huayan High Quality
+                          </SelectItem>
+                          <SelectItem value="__custom__">
+                            Custom Voice...
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
                       <p className="text-xs text-muted-foreground mt-1">
-                        Voice model name (e.g., en_US-lessac-medium)
+                        Select the AI voice for text-to-speech. High quality voices
+                        sound better but use more resources.
                       </p>
+                      {(settings.piperVoice === "__custom__" ||
+                        (settings.piperVoice &&
+                          ![
+                            "en_US-lessac-medium",
+                            "en_US-lessac-high",
+                            "en_US-amy-medium",
+                            "en_US-amy-high",
+                            "en_US-ryan-medium",
+                            "en_US-ryan-high",
+                            "en_GB-alba-medium",
+                            "en_GB-alba-high",
+                            "en_GB-northern_english_male-medium",
+                            "en_GB-semaine-medium",
+                            "en_GB-semaine-high",
+                            "es_ES-sharvard-medium",
+                            "es_ES-sharvard-high",
+                            "fr_FR-siwis-medium",
+                            "fr_FR-siwis-high",
+                            "de_DE-thorsten-medium",
+                            "de_DE-thorsten-high",
+                            "it_IT-riccardo-medium",
+                            "it_IT-riccardo-high",
+                            "ja_JP-natsumi-medium",
+                            "ja_JP-natsumi-high",
+                            "zh_CN-huayan-medium",
+                            "zh_CN-huayan-high",
+                          ].includes(settings.piperVoice))) && (
+                        <div className="mt-2">
+                          <Label htmlFor="piper-voice-custom" className="text-xs">
+                            Custom Voice Name
+                          </Label>
+                          <input
+                            id="piper-voice-custom"
+                            type="text"
+                            value={
+                              settings.piperVoice === "__custom__"
+                                ? ""
+                                : settings.piperVoice || ""
+                            }
+                            onChange={(e) =>
+                              onUpdate({ piperVoice: e.target.value })
+                            }
+                            className="mt-1 w-full px-3 py-2 border border-slate-300 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-900 text-sm"
+                            placeholder="Enter voice name (e.g., en_US-custom-medium)"
+                          />
+                          <p className="text-xs text-muted-foreground mt-1">
+                            Enter the name of your custom Piper voice model
+                          </p>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </>
@@ -263,10 +674,38 @@ export const VoiceSettingsPanel = ({
 
               {/* Voice Output */}
               <div>
-                <Label className="text-base font-semibold mb-3 flex items-center gap-2">
-                  <Volume2 className="h-4 w-4" />
-                  Voice Output
-                </Label>
+                <div className="flex items-center justify-between mb-3">
+                  <Label className="text-base font-semibold flex items-center gap-2">
+                    <Volume2 className="h-4 w-4" />
+                    Voice Output
+                  </Label>
+                  {settings.voiceOutputEnabled && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        testVoice();
+                      }}
+                      disabled={isTestingVoice}
+                      className="h-7 text-xs"
+                    >
+                      {isTestingVoice ? (
+                        <>
+                          <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                          Testing...
+                        </>
+                      ) : (
+                        <>
+                          <Play className="h-3 w-3 mr-1" />
+                          Test
+                        </>
+                      )}
+                    </Button>
+                  )}
+                </div>
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
                     <div className="space-y-0.5">
@@ -288,6 +727,29 @@ export const VoiceSettingsPanel = ({
 
                   {settings.voiceOutputEnabled && (
                     <>
+                      <div>
+                        <Label htmlFor="voice-persona">AI Persona</Label>
+                        <Select
+                          value={settings.voicePersona || 'friendly'}
+                          onValueChange={(value) =>
+                            onUpdate({ voicePersona: value as any })
+                          }
+                        >
+                          <SelectTrigger id="voice-persona" className="mt-1">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="friendly">Friendly (Default)</SelectItem>
+                            <SelectItem value="professional">Professional</SelectItem>
+                            <SelectItem value="concise">Concise</SelectItem>
+                            <SelectItem value="robot">Robot</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Changes the tone of spoken responses
+                        </p>
+                      </div>
+
                       <div>
                         <Label htmlFor="voice-speed">Speech Speed</Label>
                         <div className="mt-2 space-y-2">

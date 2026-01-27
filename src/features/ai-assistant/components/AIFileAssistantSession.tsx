@@ -7,7 +7,6 @@
 
 import { useState, useCallback, useRef, useEffect } from "react";
 import {
-  Bot,
   FolderOpen,
   Settings,
   Sparkles,
@@ -16,18 +15,15 @@ import {
 } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 
 import { useAIFileAssistant } from "../hooks/useAIFileAssistant";
 import { ChatMessage } from "./ChatMessage";
-import { PreviewPanel } from "./PreviewPanel";
 import { PreviewChanges } from "./PreviewChanges";
 import { ToolUsageIndicator } from "./ToolUsageIndicator";
 import { TaskProgressTracker } from "./TaskProgressTracker";
 import { QuickActions } from "./QuickActions";
-import { AgentTools } from "./AgentTools";
 import { SettingsPanel } from "./SettingsPanel";
 import { OperationStatus } from "./OperationStatus";
 import { ChatInput } from "./ChatInput";
@@ -37,14 +33,18 @@ import { ClarificationPanel } from "../voice/components/ClarificationPanel";
 import { ImplementationPlanView } from "../voice/components/ImplementationPlanView";
 import { VoiceSettingsPanel } from "../voice/components/VoiceSettingsPanel";
 import { ExecutionProgress } from "../voice/components/ExecutionProgress";
+import { TaskUnderstanding, type TaskUnderstandingData } from "./TaskUnderstanding";
+import { ResultsSummary, type ResultsSummaryData } from "./ResultsSummary";
 import { useVoiceOutput } from "../voice/hooks/useVoiceOutput";
 import { useVoiceInput } from "../hooks/useVoiceInput";
 import { useToolWidget } from "../hooks/useToolWidget";
-import { extractWidgetFromMessage, updateWidgetFromNaturalLanguage } from "../utils/widgetExtractor";
+import { updateWidgetFromNaturalLanguage } from "../utils/widgetExtractor";
 import { agentService } from "../../agents/services/agentService";
-import { findClawdBotPath } from "../utils/toolsRegistry";
-import type { ChatMessageType, FileOperation, AISettings, AIProvider, ToolWidgetData } from "../types";
+import { useVoiceServiceManager } from "../voice/hooks/useVoiceServiceManager";
+import type { FileOperation, AISettings } from "../types";
 import type { VoiceSettings, ClarificationQuestion, ImplementationPlan } from "../voice/types";
+import { VoiceModeOverlay } from "./VoiceModeOverlay";
+import { useChatContext } from "../../chat/contexts/ChatContext";
 
 interface AIFileAssistantSessionProps {
   sessionId: string;
@@ -55,490 +55,204 @@ interface AIFileAssistantSessionProps {
 }
 
 export const AIFileAssistantSession = ({
-  sessionId,
-  tabName,
-  onRename,
   initialDirectory,
   onDirectoryChange,
 }: AIFileAssistantSessionProps) => {
-  // Load current directory from localStorage if available
-  const [currentDirectory, setCurrentDirectory] = useState<string>(() => {
-    if (initialDirectory) return initialDirectory;
-    const saved = localStorage.getItem('ai-assistant-current-directory');
-    return saved || '';
-  });
-  const [messages, setMessages] = useState<ChatMessageType[]>(() => {
-    // Load messages for this session from localStorage
+  // Consume unified chat context
+  const { activeSession, sendMessage, setInputValue, activeAgentId, addMessage: contextAddMessage } = useChatContext();
+  
+  // Other state needed for UI - MOVED UP
+  const [currentDirectory, setCurrentDirectory] = useState(initialDirectory || '');
+
+  // Voice Settings State
+  const [voiceSettings, setVoiceSettingsState] = useState<VoiceSettings>(() => {
     try {
-      const saved = localStorage.getItem(`ai-assistant-messages-${sessionId}`);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed.map((msg: any) => ({
-            ...msg,
-            timestamp: new Date(msg.timestamp),
-          }));
-        }
-      }
-    } catch (error) {
-      console.error('Failed to load messages:', error);
+      const saved = localStorage.getItem('voice-settings');
+      return saved ? JSON.parse(saved) : {
+        provider: 'faster-whisper',
+        activationMode: 'push-to-talk',
+        voiceOutputEnabled: true,
+        voiceSpeed: 1.0,
+        volume: 100,
+        updateFrequency: 'milestones',
+        language: 'en',
+        showTranscription: true,
+        autoPunctuation: true,
+        noiseCancellation: true,
+        allowInterruptions: true,
+        voicePersona: 'friendly'
+      };
+    } catch (e) {
+      return {
+        provider: 'faster-whisper',
+        activationMode: 'push-to-talk',
+        voiceOutputEnabled: true,
+        voiceSpeed: 1.0,
+        volume: 100,
+        updateFrequency: 'milestones',
+        language: 'en',
+        showTranscription: true,
+        autoPunctuation: true,
+        noiseCancellation: true,
+        allowInterruptions: true,
+        voicePersona: 'friendly'
+      };
     }
-    return [
-      {
-        id: 'welcome',
-        role: 'assistant',
-        content: 'Hi! I can help you organize files, find duplicates, analyze directories, and more. What would you like to do?',
-        timestamp: new Date(),
-      },
-    ];
   });
-  const [inputValue, setInputValue] = useState('');
-  const [isProcessing, setIsProcessing] = useState(false);
+
+  const setVoiceSettings = (update: VoiceSettings | ((prev: VoiceSettings) => VoiceSettings)) => {
+    setVoiceSettingsState(prev => {
+       const next = typeof update === 'function' ? (update as any)(prev) : update;
+       localStorage.setItem('voice-settings', JSON.stringify(next));
+       return next;
+    });
+  };
+
+  // Refs
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const scrollAreaRef = useRef<HTMLDivElement>(null);
+  const voiceTranscriptHandlerRef = useRef<((text: string) => void) | null>(null);
+  const lastSentMessageRef = useRef<{ text: string; timestamp: number } | null>(null);
+  const showVoiceToTextRef = useRef(false);
+
+  // Local state for UI toggles and non-persistent data (moved up to avoid initialization order issues)
   const [showSettings, setShowSettings] = useState(false);
-  const [previewOperation, setPreviewOperation] = useState<FileOperation | null>(null);
-  const [activeOperation, setActiveOperation] = useState<string | null>(null);
   const [showVoiceSettings, setShowVoiceSettings] = useState(false);
   const [showVoiceToText, setShowVoiceToText] = useState(false);
-  const [clarificationQuestions, setClarificationQuestions] = useState<ClarificationQuestion[]>([]);
-  const [implementationPlan, setImplementationPlan] = useState<ImplementationPlan | null>(null);
-  const [awaitingApproval, setAwaitingApproval] = useState(false);
-  const [voiceInputActive, setVoiceInputActive] = useState(false);
-  const [currentReasoningSteps, setCurrentReasoningSteps] = useState<any[]>([]);
-  const [currentToolExecutions, setCurrentToolExecutions] = useState<any[]>([]);
-  const [taskStartTime, setTaskStartTime] = useState<number | null>(null);
+  const [showVoiceMode, setShowVoiceMode] = useState(false);
 
-  // Widget management
-  const {
-    widgets,
-    createWidget,
-    updateWidget,
-    removeWidget,
-    confirmWidget,
-    navigateToTool,
-    getWidgetsForMessage,
-  } = useToolWidget({
-    onNavigateToTool: (toolName, params) => {
-      // Navigation is handled via sessionStorage and custom event
-      console.log('Navigating to tool:', toolName, params);
-    },
-  });
-  const voiceTranscriptHandlerRef = useRef<((text: string) => void) | null>(null);
-  const scrollAreaRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const abortControllerRef = useRef<AbortController | null>(null);
-
-  // Save messages to localStorage when they change
+  // Keep ref in sync with state
   useEffect(() => {
-    try {
-      localStorage.setItem(`ai-assistant-messages-${sessionId}`, JSON.stringify(messages));
-    } catch (error) {
-      console.error('Failed to save messages:', error);
-    }
-  }, [messages, sessionId]);
+    showVoiceToTextRef.current = showVoiceToText;
+  }, [showVoiceToText]);
 
-  // Update directory in parent when it changes (only when directory actually changes)
-  const prevDirectoryRef = useRef<string>('');
-  const onDirectoryChangeRef = useRef(onDirectoryChange);
+  // Voice Hooks
+  const { speak, stopSpeaking } = useVoiceOutput(voiceSettings);
   
-  useEffect(() => {
-    onDirectoryChangeRef.current = onDirectoryChange;
-  }, [onDirectoryChange]);
-  
-  useEffect(() => {
-    if (onDirectoryChangeRef.current && currentDirectory && currentDirectory !== prevDirectoryRef.current) {
-      prevDirectoryRef.current = currentDirectory;
-      onDirectoryChangeRef.current(currentDirectory);
-    }
-  }, [currentDirectory]);
-
-  // Voice settings
-  const [voiceSettings, setVoiceSettings] = useState<VoiceSettings>(() => {
-    const saved = localStorage.getItem('ai-assistant-voice-settings');
-    return saved ? JSON.parse(saved) : {
-      provider: 'browser-stt',
-      activationMode: 'push-to-talk',
-      voiceOutputEnabled: true,
-      voiceSpeed: 1.0,
-      volume: 85,
-      updateFrequency: 'milestones',
-      language: 'en-US',
-      showTranscription: true,
-      autoPunctuation: true,
-      noiseCancellation: true,
-      allowInterruptions: true,
-    };
-  });
-
-  // Voice output hook
-  const { speak, stopSpeaking, speakProgress } = useVoiceOutput(voiceSettings);
-
-  const {
-    settings,
-    updateSettings,
-    analyzeDirectory,
-    organizeFiles,
-    renameFiles,
-    findDuplicates,
-    generateWorkflow,
-    executeOperation,
-    processUserCommand: processCommandWithAI,
-  } = useAIFileAssistant(currentDirectory);
-
-  // Check Ollama connection when provider is Ollama
-  const [ollamaConnectionStatus, setOllamaConnectionStatus] = useState<{
-    checking: boolean;
-    connected: boolean | null;
-    error: string | null;
-  }>({ checking: false, connected: null, error: null });
-
-  // ClawdBot status
-  const [clawdbotStatus, setClawdbotStatus] = useState<{
-    checking: boolean;
-    available: boolean | null;
-    error: string | null;
-  }>({ checking: false, available: null, error: null });
-
-  useEffect(() => {
-    if (settings.provider === 'ollama') {
-      // Check connection when provider changes to Ollama
-      const checkConnection = async () => {
-        setOllamaConnectionStatus({ checking: true, connected: null, error: null });
-        try {
-          const { checkOllamaConnection } = await import('../utils/ollamaService');
-          const isConnected = await checkOllamaConnection(settings.ollamaBaseUrl || 'http://localhost:11434');
-          setOllamaConnectionStatus({ 
-            checking: false, 
-            connected: isConnected, 
-            error: isConnected ? null : 'Cannot connect to Ollama. Make sure Ollama is running.' 
-          });
-        } catch (error: any) {
-          setOllamaConnectionStatus({ 
-            checking: false, 
-            connected: false, 
-            error: error.message || 'Failed to check Ollama connection' 
-          });
-        }
-      };
-      
-      checkConnection();
-    } else {
-      // Reset status when not using Ollama
-      setOllamaConnectionStatus({ checking: false, connected: null, error: null });
-    }
-  }, [settings.provider, settings.ollamaBaseUrl]);
-
-  // Check ClawdBot availability when enabled
-  useEffect(() => {
-    if (settings.clawdbotEnabled) {
-      const checkClawdBot = async () => {
-        setClawdbotStatus({ checking: true, available: null, error: null });
-        try {
-          // Use the helper function from toolsRegistry to find ClawdBot
-          const clawdbotInfo = await findClawdBotPath();
-          
-          if (clawdbotInfo) {
-            setClawdbotStatus({ 
-              checking: false, 
-              available: true, 
-              error: null 
-            });
-          } else {
-            setClawdbotStatus({ 
-              checking: false, 
-              available: false, 
-              error: 'ClawdBot CLI not found. Make sure it is installed and in your PATH, or install it with: npm install -g clawdbot' 
-            });
-          }
-        } catch (error: any) {
-          setClawdbotStatus({ 
-            checking: false, 
-            available: false, 
-            error: error.message || 'ClawdBot CLI not available' 
-          });
-        }
-      };
-      
-      checkClawdBot();
-    } else {
-      setClawdbotStatus({ checking: false, available: null, error: null });
-    }
-  }, [settings.clawdbotEnabled]);
-
-  // Voice input hook - will be initialized with a wrapper function
-  // We'll update the handler after handleSendMessage is defined
-  const voiceTranscriptWrapper = useCallback((text: string) => {
-    if (voiceTranscriptHandlerRef.current) {
+  const handleTranscript = useCallback((text: string) => {
+    // Only process transcripts from useVoiceInput if VoiceToTextPanel is NOT open
+    // This prevents duplicate processing when both systems are active
+    // Use ref to avoid dependency on state that might not be initialized yet
+    if (!showVoiceToTextRef.current && voiceTranscriptHandlerRef.current) {
       voiceTranscriptHandlerRef.current(text);
     }
   }, []);
 
-  const {
-    isListening: voiceListening,
-    transcribing: voiceTranscribing,
-    toggleListening: toggleVoiceListening,
-    isAvailable: voiceAvailable,
-  } = useVoiceInput(voiceSettings, voiceTranscriptWrapper);
+  // Only initialize useVoiceInput when VoiceToTextPanel is closed
+  // This prevents duplicate voice processing
+  const { isListening, toggleListening, startListening, stopListening, transcribing: voiceTranscribing } = useVoiceInput(
+    voiceSettings, 
+    showVoiceToText ? () => {} : handleTranscript // Disable when panel is open
+  );
+  
+  // Map voice variables for compatibility
+  const voiceInputActive = isListening;
+  const toggleVoiceListening = toggleListening;
+  const setVoiceInputActive = (active: boolean) => active ? startListening() : stopListening();
+  const voiceListening = isListening;
 
-  // Auto-scroll to bottom when new messages arrive
-  useEffect(() => {
-    if (scrollAreaRef.current) {
-      const scrollContainer = scrollAreaRef.current.querySelector('[data-radix-scroll-area-viewport]');
-      if (scrollContainer) {
-        scrollContainer.scrollTop = scrollContainer.scrollHeight;
+  // AI Assistant Hook
+  const { 
+    settings, 
+    updateSettings,
+    executeOperation
+  } = useAIFileAssistant(currentDirectory);
+  
+  // Mock statuses that are no longer returned by the hook
+  const ollamaConnectionStatus = { connected: true, isConnected: true, model: settings.ollamaModel || 'unknown' }; 
+  const clawdbotStatus = { running: false, isRunning: false, available: false, error: null };
+
+  // Other state needed for UI
+  // currentDirectory is already declared above
+  const [setIsProcessing] = useState<any>(null); // Dummy setter since processing is in context now
+  const [activeOperation, setActiveOperation] = useState<'analyzing' | 'organizing' | 'executing' | null>(null);
+  const [previewOperation, setPreviewOperation] = useState<FileOperation | null>(null);
+  
+  // Tool Execution State
+  const [taskUnderstanding, setTaskUnderstanding] = useState<TaskUnderstandingData | null>(null);
+  const [implementationPlan, setImplementationPlan] = useState<ImplementationPlan | null>(null);
+  const [executionResults, setExecutionResults] = useState<ResultsSummaryData | null>(null);
+  const [awaitingApproval, setAwaitingApproval] = useState(false);
+  const [clarificationQuestions, setClarificationQuestions] = useState<ClarificationQuestion[]>([]);
+  const [taskStartTime, setTaskStartTime] = useState<number | null>(null);
+  const [currentToolExecutions] = useState<any[]>([]);
+  const [currentReasoningSteps] = useState<any[]>([]);
+
+  // Helpers/Adapters
+  const addMessage = useCallback((role: 'user' | 'assistant' | 'system', content: string) => {
+    if (activeAgentId) {
+      contextAddMessage(activeAgentId, {
+        id: Date.now().toString(),
+        role: role as any,
+        content,
+        timestamp: new Date()
+      });
+    }
+  }, [activeAgentId, contextAddMessage]);
+
+  const handleSendMessage = useCallback(async (content?: string) => {
+    const textToSend = content || activeSession?.inputValue || '';
+    if (!textToSend.trim()) return;
+    
+    // Prevent duplicate sends within 2 seconds
+    const now = Date.now();
+    if (lastSentMessageRef.current) {
+      const timeSinceLastSend = now - lastSentMessageRef.current.timestamp;
+      if (timeSinceLastSend < 2000 && lastSentMessageRef.current.text === textToSend.trim()) {
+        console.log('[Chat] Duplicate message prevented:', textToSend);
+        return;
       }
     }
-  }, [messages]);
+    
+    // Record this send
+    lastSentMessageRef.current = {
+      text: textToSend.trim(),
+      timestamp: now
+    };
+    
+    await sendMessage(textToSend);
+  }, [activeSession?.inputValue, sendMessage]);
 
-  const handleSelectDirectory = async () => {
+  const handleSelectDirectory = useCallback(async () => {
     try {
       const selected = await open({
         directory: true,
         multiple: false,
+        defaultPath: currentDirectory || undefined,
       });
       if (selected && typeof selected === 'string') {
         setCurrentDirectory(selected);
-        // Store in localStorage for agents to use
-        localStorage.setItem('ai-assistant-current-directory', selected);
-        addMessage('assistant', `Working directory set to: ${selected}`);
+        if (onDirectoryChange) onDirectoryChange(selected);
       }
-    } catch (error) {
-      console.error('Failed to select directory:', error);
-      addMessage('assistant', 'Failed to select directory. Please try again.');
+    } catch (err) {
+      console.error('Failed to select directory', err);
     }
-  };
+  }, [currentDirectory, onDirectoryChange]);
 
-  const addMessage = useCallback((role: 'user' | 'assistant', content: string, metadata?: any): ChatMessageType => {
-    const newMessage: ChatMessageType = {
-      id: Date.now().toString(),
-      role,
-      content,
-      timestamp: new Date(),
-      metadata,
-    };
-    setMessages((prev) => [...prev, newMessage]);
-    return newMessage;
-  }, []);
+  
+  // Tools
+  const { widgets, updateWidget, removeWidget, getWidgetsForMessage, confirmWidget, navigateToTool } = useToolWidget();
+  const voiceServiceManager = useVoiceServiceManager(voiceSettings);
 
-  // Save voice settings
-  useEffect(() => {
-    localStorage.setItem('ai-assistant-voice-settings', JSON.stringify(voiceSettings));
-  }, [voiceSettings]);
 
-  const handleSendMessage = useCallback(async (messageText?: string) => {
-    const userMessage = (messageText || inputValue).trim();
-    if (!userMessage || isProcessing) return;
+  // Redirect to first agent if no active session (should be handled by tabs/context, but safety check)
+  if (!activeSession && activeAgentId) {
+     // Wait for context to sync
+  }
 
-    // Cancel any previous request
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-    }
-    abortControllerRef.current = new AbortController();
+  // Use state from context
+  const messages = activeSession?.messages || [];
+  const inputValue = activeSession?.inputValue || '';
+  const isProcessing = activeSession?.isProcessing || false;
 
-    setInputValue('');
-    addMessage('user', userMessage);
-    setIsProcessing(true);
-    setActiveOperation('processing');
-    setClarificationQuestions([]);
-    setImplementationPlan(null);
-    setAwaitingApproval(false);
-    setCurrentReasoningSteps([]); // Reset reasoning steps
-    setCurrentToolExecutions([]); // Reset tool executions
-    setTaskStartTime(Date.now()); // Track task start time
 
-    try {
-      // First, try AI-powered processing if available
-      let response: { content: string; metadata?: any; operation?: FileOperation };
-      let directoryAnalysis: any = null;
-
-      // Get directory analysis if needed for context
-      const lowerCommand = userMessage.toLowerCase();
-      if (currentDirectory && (lowerCommand.includes('analyze') || lowerCommand.includes('organize') || lowerCommand.includes('what'))) {
-        try {
-          directoryAnalysis = await analyzeDirectory(currentDirectory);
-        } catch (error) {
-          console.warn('Failed to get directory analysis:', error);
-        }
-      }
-
-      // Try AI processing first - check based on provider
-      const isAIConfigured = settings.provider === 'anthropic'
-        ? !!settings.apiKey
-        : settings.provider === 'ollama'; // Ollama doesn't need API key
-
-      if (isAIConfigured) {
-        try {
-          // Build conversation history from previous messages (excluding the current one)
-          const conversationHistory = messages
-            .slice(0, -1) // Exclude the current message we just added
-            .filter(msg => msg.role === 'user' || msg.role === 'assistant')
-            .map(msg => ({
-              role: msg.role,
-              content: msg.content,
-            }));
-          
-          // Pass abort signal and conversation history to the AI processing
-          response = await processCommandWithAI(
-            userMessage, 
-            directoryAnalysis, 
-            abortControllerRef.current?.signal,
-            conversationHistory
-          );
-          
-          // Check if Ollama connection failed
-          if (settings.provider === 'ollama' && response.content?.includes('Cannot connect to Ollama')) {
-            // Show connection error and suggest checking Ollama
-            addMessage('assistant', 
-              '⚠️ **Ollama Connection Issue**\n\n' +
-              'I cannot connect to Ollama. Please check:\n\n' +
-              '1. **Is Ollama running?** Make sure Ollama is installed and running on your system.\n' +
-              '2. **Check the base URL:** Verify the Ollama base URL in settings (default: http://localhost:11434)\n' +
-              '3. **Check the model:** Ensure the selected model (e.g., ' + settings.model + ') is available in Ollama\n\n' +
-              'You can test the connection in Settings → Test Connection.\n\n' +
-              'For now, I\'ll use rule-based processing.',
-              { isError: true }
-            );
-            // Fall back to rule-based
-            response = await processUserCommandFallback(userMessage);
-          }
-          
-          // Check if model doesn't support tools
-          if (settings.provider === 'ollama' && response.metadata?.errorType === 'model_tools_not_supported') {
-            // Don't fall back - show the helpful error message
-            // The error message already contains recommendations
-          }
-        } catch (error: any) {
-          console.warn('AI processing failed:', error);
-          
-          // Provide helpful error message for Ollama
-          if (settings.provider === 'ollama') {
-            const errorMessage = error.message || 'Unknown error';
-            if (errorMessage.includes('fetch failed') || errorMessage.includes('ECONNREFUSED')) {
-              addMessage('assistant', 
-                '⚠️ **Ollama Connection Failed**\n\n' +
-                'Cannot connect to Ollama at ' + (settings.ollamaBaseUrl || 'http://localhost:11434') + '\n\n' +
-                '**Troubleshooting steps:**\n' +
-                '1. Make sure Ollama is installed and running\n' +
-                '2. Verify Ollama is accessible at the configured URL\n' +
-                '3. Check if the model "' + (settings.model || settings.ollamaModel || 'llama3.2:3b') + '" is available\n' +
-                '4. Try testing the connection in Settings\n\n' +
-                'Falling back to rule-based processing for now.',
-                { isError: true }
-              );
-            } else {
-              addMessage('assistant', 
-                '⚠️ **Ollama Error**\n\n' +
-                'Error: ' + errorMessage + '\n\n' +
-                'Falling back to rule-based processing.',
-                { isError: true }
-              );
-            }
-          }
-          
-          // Fall back to rule-based processing
-          response = await processUserCommandFallback(userMessage);
-        }
-      } else {
-        // AI not configured - show helpful message
-        if (settings.provider === 'anthropic') {
-          response = {
-            content: '⚠️ **AI Not Configured**\n\n' +
-              'Please configure your Anthropic API key in Settings to enable AI-powered responses.\n\n' +
-              'For now, I can help with basic file operations using rule-based processing.',
-          };
-        } else {
-          // Shouldn't happen, but just in case
-          response = await processUserCommandFallback(userMessage);
-        }
-      }
-
-      // Store reasoning steps for real-time display
-      if (response.metadata?.reasoningSteps) {
-        setCurrentReasoningSteps(response.metadata.reasoningSteps);
-      }
-
-      // Store tool executions for real-time display
-      if (response.metadata?.toolExecutions) {
-        setCurrentToolExecutions(response.metadata.toolExecutions);
-      }
-      
-      // Add assistant response
-      const assistantMessage = addMessage('assistant', response.content, response.metadata);
-
-      // Extract and create widget if tool operation detected
-      if (assistantMessage && response.metadata?.toolExecutions) {
-        const toolExecutions = response.metadata.toolExecutions || [];
-        const widgetToolNames = ['folder_creation_tab', 'file_creation_tab', 'file_copy_tab', 'find_replace_tab'];
-        
-        for (const execution of toolExecutions) {
-          if (widgetToolNames.includes(execution.tool) && execution.params) {
-            // Create widget from tool execution (more accurate than text extraction)
-            createWidget({
-              toolName: execution.tool,
-              params: execution.params,
-              description: `Execute ${execution.tool.replace('_tab', '').replace(/_/g, ' ')}`,
-              confidence: 0.9, // High confidence since it came from tool execution
-              sourceMessageId: assistantMessage.id,
-            });
-          }
-        }
-      }
-      
-      // Speak the response if voice output is enabled
-      if (voiceSettings.voiceOutputEnabled && response.content) {
-        speak(response.content);
-      }
-      
-      // Display tool executions if any
-      if (response.metadata?.toolExecutions && response.metadata.toolExecutions.length > 0) {
-        // Tool executions are already included in metadata, will be displayed in ChatMessage
-        
-        // If we have tool executions, generate an implementation plan
-        if (response.metadata.toolExecutions.length > 1) {
-          const { generatePlanFromToolExecutions } = await import('../voice/utils/planGenerator');
-          const plan = generatePlanFromToolExecutions(userMessage, response.metadata.toolExecutions);
-          setImplementationPlan(plan);
-          setAwaitingApproval(true);
-          
-          // Speak plan summary
-          if (voiceSettings.voiceOutputEnabled) {
-            speak(
-              `I've created a plan with ${plan.steps.length} steps to ${plan.task}. ` +
-              `Estimated time: ${Math.round(plan.estimatedTotalTime / 60)} minutes. ` +
-              `Please review the plan and say 'approve' to begin, or 'modify' to make changes.`
-            );
-          }
-        }
-      }
-      
-      // Check if AI is asking for clarification
-      if (response.metadata?.clarifications) {
-        setClarificationQuestions(response.metadata.clarifications);
-      }
-
-      // Check if AI generated an implementation plan
-      if (response.metadata?.implementationPlan) {
-        setImplementationPlan(response.metadata.implementationPlan);
-        setAwaitingApproval(true);
-      }
-      
-      if (response.operation) {
-        setPreviewOperation(response.operation);
-      }
-    } catch (error: any) {
-      // Don't show error if request was cancelled
-      if (error.name === 'AbortError' || error.message?.includes('aborted')) {
-        addMessage('assistant', 'Request cancelled.');
-      } else {
-        console.error('Error processing command:', error);
-        addMessage('assistant', 'I encountered an error processing your request. Please try again or rephrase your command.');
-      }
-    } finally {
-      setIsProcessing(false);
-      setActiveOperation(null);
-      setTaskStartTime(null); // Reset task timer
-      abortControllerRef.current = null;
-    }
-  }, [inputValue, isProcessing, currentDirectory, settings, processCommandWithAI, analyzeDirectory, addMessage, voiceSettings, speak]);
+ 
+  // ... rest of the component ...
+  
+  // We need to replace the local 'messages' state with the one from context.
+  // And 'handleSendMessage' should delegate to context.sendMessage.
+  
+  // Let's replace the whole top part of the component logic.
 
   const handleCancelOperation = useCallback(() => {
     if (abortControllerRef.current) {
@@ -565,100 +279,57 @@ export const AIFileAssistantSession = ({
     setInputValue(trimmedText);
     setVoiceInputActive(true);
     
-    // Note: Auto-send is disabled by default to allow user to review/edit the text
-    // If you want to enable auto-send, uncomment the code below:
-    /*
-    // Auto-send if text is complete (only for longer messages)
-    if (trimmedText.length > 10) {
-      setTimeout(() => {
-        handleSendMessage(trimmedText);
-        setVoiceInputActive(false);
-      }, 2000); // 2 second delay to allow user to see the text
+    // Auto-send logic for natural conversation
+    // If in immersive voice mode, send immediately for snappy response
+    if (showVoiceMode) {
+       handleSendMessage(trimmedText);
+       // Clear input locally since it's sent
+       setInputValue('');
+       setVoiceInputActive(false);
     } else {
-      setVoiceInputActive(false);
+       // For normal mode, just insert the text and let user manually send
+       // This prevents accidental duplicate sends
+       setTimeout(() => {
+          setVoiceInputActive(false);
+       }, 500);
     }
-    */
-    
-    // For now, just insert the text and let user manually send
-    setTimeout(() => {
-      setVoiceInputActive(false);
-    }, 500);
-  }, [handleSendMessage]);
+  }, [handleSendMessage, showVoiceMode]);
 
   // Update the ref when handler changes
   useEffect(() => {
     voiceTranscriptHandlerRef.current = handleVoiceTranscript;
   }, [handleVoiceTranscript]);
 
-  // Fallback rule-based command processing
-  const processUserCommandFallback = async (command: string): Promise<{ content: string; metadata?: any; operation?: FileOperation }> => {
-    const lowerCommand = command.toLowerCase();
+  // Update agent name based on task understanding or implementation plan
+  useEffect(() => {
+    if (!activeAgentId) return;
 
-    // Analyze directory
-    if (lowerCommand.includes('analyze') || lowerCommand.includes('what') || lowerCommand.includes('show me')) {
-      if (!currentDirectory) {
-        return { content: 'Please select a directory first.' };
+    // Prioritize implementation plan task name
+    if (implementationPlan?.task) {
+      const currentAgent = agentService.getAgent(activeAgentId);
+      if (currentAgent && currentAgent.name !== implementationPlan.task) {
+        // Update agent name to match the task
+        agentService.updateAgent(activeAgentId, { name: implementationPlan.task });
       }
-      const analysis = await analyzeDirectory(currentDirectory);
-      return {
-        content: analysis.summary,
-        metadata: { analysis },
-      };
+      return;
     }
 
-    // Organize files
-    if (lowerCommand.includes('organize') || lowerCommand.includes('sort')) {
-      if (!currentDirectory) {
-        return { content: 'Please select a directory first.' };
+    // Fallback to initial task understanding intent for faster feedback
+    if (taskUnderstanding?.intent) {
+      const currentAgent = agentService.getAgent(activeAgentId);
+      if (currentAgent && currentAgent.name.startsWith("New Task")) {
+        // Create a short name from the intent
+        const newName = taskUnderstanding.intent.length > 40 
+          ? taskUnderstanding.intent.substring(0, 37) + '...' 
+          : taskUnderstanding.intent;
+          
+        if (currentAgent.name !== newName) {
+          agentService.updateAgent(activeAgentId, { name: newName });
+        }
       }
-      const operation = await organizeFiles(currentDirectory, command);
-      return {
-        content: operation.description,
-        metadata: { operation },
-        operation,
-      };
     }
+  }, [activeAgentId, implementationPlan?.task, taskUnderstanding?.intent]);
 
-    // Find duplicates
-    if (lowerCommand.includes('duplicate') || lowerCommand.includes('find same')) {
-      if (!currentDirectory) {
-        return { content: 'Please select a directory first.' };
-      }
-      const duplicates = await findDuplicates(currentDirectory);
-      return {
-        content: duplicates.summary,
-        metadata: { duplicates },
-      };
-    }
-
-    // Rename files
-    if (lowerCommand.includes('rename') || lowerCommand.includes('name')) {
-      if (!currentDirectory) {
-        return { content: 'Please select a directory first.' };
-      }
-      const operation = await renameFiles(currentDirectory, command);
-      return {
-        content: operation.description,
-        metadata: { operation },
-        operation,
-      };
-    }
-
-    // Default response for unrecognized commands
-    return {
-      content: `I understand you want to "${command}". To help you better, I can:\n\n` +
-        `• Analyze files in a directory\n` +
-        `• Organize files by type, date, or project\n` +
-        `• Find and remove duplicate files\n` +
-        `• Rename files based on patterns\n` +
-        `• Create project structures\n\n` +
-        `Try commands like:\n` +
-        `- "Organize my Downloads folder by file type"\n` +
-        `- "Find all duplicate files"\n` +
-        `- "Analyze what's taking up space"\n\n` +
-        (settings.apiKey ? '' : '💡 Tip: Configure your API key in settings for AI-powered responses!'),
-    };
-  };
 
   const handleQuickAction = async (action: string) => {
     const command = getQuickActionCommand(action);
@@ -740,7 +411,7 @@ export const AIFileAssistantSession = ({
         // Execute step using tool orchestrator
         const result = await toolOrchestrator.executeTool(
           step.tool as any,
-          step.parameters,
+          step.parameters as any,
           step.description
         );
 
@@ -805,8 +476,8 @@ export const AIFileAssistantSession = ({
   }, [voiceInputActive, toggleVoiceListening]);
 
   const handleDictateClick = useCallback(() => {
-    setShowVoiceToText(!showVoiceToText);
-  }, [showVoiceToText]);
+    setShowVoiceMode(prev => !prev);
+  }, []);
 
   return (
     <div className="h-full flex flex-col bg-background text-foreground">
@@ -880,7 +551,20 @@ export const AIFileAssistantSession = ({
 
       <div className="flex-1 flex overflow-hidden">
         {/* Main Chat Area */}
-        <div className={cn("flex-1 flex flex-col min-h-0 overflow-hidden", previewOperation && "mr-96")}>
+        <div className={cn("flex-1 flex flex-col min-h-0 overflow-hidden relative", previewOperation && "mr-96")}>
+          
+          {/* Voice Mode Overlay */}
+          {showVoiceMode && (
+            <VoiceModeOverlay
+              settings={voiceSettings}
+              onClose={() => setShowVoiceMode(false)}
+              onTranscript={(text) => {
+                // Auto-send in voice mode
+                handleSendMessage(text);
+              }}
+            />
+          )}
+
           {/* Clarification Panel */}
           {clarificationQuestions.length > 0 && (
             <div className="px-4">
@@ -1079,6 +763,20 @@ export const AIFileAssistantSession = ({
                   }}
                 />
               ))}
+                {/* Stage 1: Task Understanding */}
+                {taskUnderstanding && !isProcessing && !executionResults && (
+                  <div className="mt-3">
+                    <TaskUnderstanding
+                      understanding={taskUnderstanding}
+                      onConfirm={() => {
+                        // Clear understanding and proceed with execution
+                        setTaskUnderstanding(null);
+                        // The AI will handle execution based on confirmation
+                      }}
+                    />
+                  </div>
+                )}
+
                 {isProcessing && (
                   <>
                     <div className="flex items-center gap-3 text-muted-foreground animate-pulse">
@@ -1109,16 +807,34 @@ export const AIFileAssistantSession = ({
                     {executionProgress && implementationPlan && taskStartTime && (
                       <div className="mt-3">
                         <TaskProgressTracker
-                          taskName={implementationPlan.title || 'Executing Plan'}
+                          taskName={implementationPlan.task || 'Executing Plan'}
                           currentStep={executionProgress.currentStep}
                           totalSteps={implementationPlan.steps.length}
                           currentStage={executionProgress.progress.stage}
                           startTime={taskStartTime}
-                          estimatedDuration={implementationPlan.estimatedDuration}
+                          estimatedDuration={implementationPlan.estimatedTotalTime}
                         />
                       </div>
                     )}
                   </>
+                )}
+
+                {/* Stage 4: Results Summary */}
+                {executionResults && !isProcessing && (
+                  <div className="mt-3">
+                    <ResultsSummary
+                      results={executionResults}
+                      onVerify={() => {
+                        // TODO: Implement verification
+                        console.log('Verify results');
+                      }}
+                      onNextStep={(step) => {
+                        // Clear results and send next step as a message
+                        setExecutionResults(null);
+                        handleSendMessage(step);
+                      }}
+                    />
+                  </div>
                 )}
               </div>
             </ScrollArea>
@@ -1136,8 +852,15 @@ export const AIFileAssistantSession = ({
           <div className="shrink-0 px-5 py-4 border-t border-slate-200/50 dark:border-slate-800/50 bg-white/80 dark:bg-slate-950/80 backdrop-blur-sm">
             <div className="max-w-4xl mx-auto">
               <ChatInput
-              value={inputValue}
-              onChange={setInputValue}
+              value={voiceListening ? (inputValue + (voiceTranscribing ? ' ' + voiceTranscribing : '...')) : inputValue}
+              onChange={(newValue) => {
+                // Determine if the change is from the user typing or the voice transcript being committed
+                // If it's voice transcript updating the value, we don't want to interfere
+                // But if user edits, we update inputValue
+                if (!voiceListening) {
+                   setInputValue(newValue);
+                }
+              }}
               onSend={handleSendMessage}
               onSelectDirectory={(path) => {
                 setCurrentDirectory(path);
@@ -1191,8 +914,9 @@ export const AIFileAssistantSession = ({
         {showVoiceSettings && (
           <VoiceSettingsPanel
             settings={voiceSettings}
-            onUpdate={(updates) => setVoiceSettings(prev => ({ ...prev, ...updates }))}
+            onUpdate={(updates) => setVoiceSettings((prev: VoiceSettings) => ({ ...prev, ...updates }))}
             onClose={() => setShowVoiceSettings(false)}
+            serviceManager={voiceServiceManager}
           />
         )}
 

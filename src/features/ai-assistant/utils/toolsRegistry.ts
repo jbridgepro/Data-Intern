@@ -489,7 +489,7 @@ export const TOOLS: ToolDefinition[] = [
   },
   {
     name: 'write_file_content',
-    description: 'Write or create a text file with specified content. Can create new files or overwrite existing ones. Use this to create configuration files, notes, or any text-based files.',
+    description: 'Write or create a file with specified content and exact name. Can create new files or overwrite existing ones. Use this when the user wants to create SPECIFIC named files/documents (e.g., "create a document called \'Justin\'s Big Plan.docx\'" or "one that says, Justins, New Idea"). IMPORTANT: Use this for documents and files with specific names, NOT for creating folders. For multiple files, call this tool ONCE for each file separately. The path parameter must be the FULL file path including directory and filename with extension. If user doesn\'t specify content, use empty string.',
     input_schema: {
       type: 'object',
       properties: {
@@ -713,6 +713,29 @@ export const TOOLS: ToolDefinition[] = [
       required: ['sourcePath', 'destinationPath'],
     },
   },
+  {
+    name: 'execute_terminal_command',
+    description: 'Executes a command in the terminal. Use this to run CLI tools, scripts, or system commands. WARNING: This tool is powerful. Only run commands that are safe and necessary for the user\'s request.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        command: {
+          type: 'string',
+          description: 'The command to execute (e.g., "ls", "grep", "node", "curl")',
+        },
+        args: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Arguments for the command',
+        },
+        cwd: {
+          type: 'string',
+          description: 'Current working directory for the command. Optional.',
+        },
+      },
+      required: ['command', 'args'],
+    },
+  },
 ];
 
 /**
@@ -727,23 +750,23 @@ export const TOOLS: ToolDefinition[] = [
  */
 export async function findClawdBotPath(): Promise<{ path: string; useNode22: boolean } | null> {
   const { Command } = await import('@tauri-apps/plugin-shell');
-  
+
   // Node 22 path from nvm (required for ClawdBot)
   const NODE22_PATH = '/Users/koo1j/.nvm/versions/node/v22.22.0/bin/node';
   const CLAWDBOT_NVM_PATH = '/Users/koo1j/.nvm/versions/node/v22.22.0/bin/clawdbot';
   const CLAWDBOT_GLOBAL_PATH = '/usr/local/bin/clawdbot';
-  
+
   // Try paths in order of preference:
   // 1. nvm ClawdBot (uses Node 22 automatically)
   // 2. Global ClawdBot with nvm Node 22
   // 3. PATH ClawdBot (may fail if Node < 22)
-  
+
   const pathsToTry = [
     { path: CLAWDBOT_NVM_PATH, useNode22: false, description: 'nvm ClawdBot' },
     { path: CLAWDBOT_GLOBAL_PATH, useNode22: true, description: 'global ClawdBot with Node 22' },
     { path: 'clawdbot', useNode22: false, description: 'PATH ClawdBot' },
   ];
-  
+
   // Try each path until one works
   for (const { path: clawdbotPath, useNode22, description } of pathsToTry) {
     try {
@@ -758,9 +781,9 @@ export async function findClawdBotPath(): Promise<{ path: string; useNode22: boo
         // Use absolute path with sh wrapper
         cmd = Command.create('sh', ['-c', `${clawdbotPath} --version`]);
       }
-      
+
       const result = await cmd.execute();
-      
+
       if (result.code === 0) {
         return { path: clawdbotPath, useNode22 };
       }
@@ -768,7 +791,7 @@ export async function findClawdBotPath(): Promise<{ path: string; useNode22: boo
       // Continue to next path
     }
   }
-  
+
   return null;
 }
 
@@ -779,13 +802,13 @@ export async function findClawdBotPath(): Promise<{ path: string; useNode22: boo
  */
 async function findClawdHubPath(): Promise<string | null> {
   const { Command } = await import('@tauri-apps/plugin-shell');
-  
+
   // Define potential ClawdHub paths (check common nvm locations)
   const CLAWDHUB_PATHS = [
     'clawdhub', // Try PATH first
     '/Users/koo1j/.nvm/versions/node/v22.22.0/bin/clawdhub', // Known nvm path
   ];
-  
+
   // Try each path until one works
   for (const clawdhubPath of CLAWDHUB_PATHS) {
     try {
@@ -797,9 +820,9 @@ async function findClawdHubPath(): Promise<string | null> {
         // Use absolute path with sh wrapper
         cmd = Command.create('sh', ['-c', `${clawdhubPath} --version`]);
       }
-      
+
       const result = await cmd.execute();
-      
+
       if (result.code === 0) {
         return clawdhubPath;
       }
@@ -807,7 +830,7 @@ async function findClawdHubPath(): Promise<string | null> {
       // Continue to next path
     }
   }
-  
+
   return null;
 }
 
@@ -818,14 +841,14 @@ async function findClawdHubPath(): Promise<string | null> {
 async function createClawdBotCommand(args: string[], workDir?: string): Promise<{ cmd: any; path: string } | null> {
   const { Command } = await import('@tauri-apps/plugin-shell');
   const clawdbotInfo = await findClawdBotPath();
-  
+
   if (!clawdbotInfo) {
     return null;
   }
-  
+
   const { path: clawdbotPath, useNode22 } = clawdbotInfo;
   const NODE22_PATH = '/Users/koo1j/.nvm/versions/node/v22.22.0/bin/node';
-  
+
   let cmd;
   if (useNode22 && clawdbotPath !== 'clawdbot') {
     // Use Node 22 from nvm to run ClawdBot
@@ -839,12 +862,12 @@ async function createClawdBotCommand(args: string[], workDir?: string): Promise<
     const escapedArgs = args.map(arg => `'${arg.replace(/'/g, "'\\''")}'`).join(' ');
     cmd = Command.create('sh', ['-c', `${clawdbotPath} ${escapedArgs}`]);
   }
-  
+
   // Set working directory if provided
   if (workDir) {
     cmd.cwd = workDir;
   }
-  
+
   return { cmd, path: clawdbotPath };
 }
 
@@ -1018,7 +1041,7 @@ export async function executeTool(
               error: `Agent with ID "${args.agentId}" not found. Use list_agents to see available agents.`,
             };
           }
-          
+
           if (!agent.enabled) {
             return {
               success: false,
@@ -1058,7 +1081,7 @@ export async function executeTool(
             error: `Agent with ID "${args.agentId}" not found. Use list_agents to see available agents.`,
           };
         }
-        
+
         const stateToStop = agentService.getAgentState(args.agentId);
         if (!stateToStop || (stateToStop.status !== 'running' && stateToStop.status !== 'paused')) {
           return {
@@ -1132,10 +1155,10 @@ export async function executeTool(
               }
             }
           }
-          
+
           agentService.updateAgent(args.agentId, updates);
           const configuredAgent = agentService.getAgent(args.agentId);
-          
+
           return {
             success: true,
             data: {
@@ -1174,10 +1197,10 @@ export async function executeTool(
 
           // Build command arguments
           const cmdArgs = [command, ...commandArgs];
-          
+
           // Use helper function to find and create ClawdBot command
           const cmdResult = await createClawdBotCommand(cmdArgs, workDir);
-          
+
           if (!cmdResult) {
             return {
               success: false,
@@ -1218,14 +1241,14 @@ export async function executeTool(
         try {
           // Use helper function to find and create ClawdBot command
           const cmdResult = await createClawdBotCommand(['plugins', 'list', '--json']);
-          
+
           if (!cmdResult) {
             return {
               success: false,
               error: 'ClawdBot CLI not found. Make sure it is installed and in your PATH, or install it with: npm install -g clawdbot',
             };
           }
-          
+
           // Try to get skills from ClawdBot plugins list
           const result = await cmdResult.cmd.execute();
 
@@ -1234,7 +1257,7 @@ export async function executeTool(
               // Clean ANSI escape codes
               const cleanOutput = result.stdout.replace(/\u001b\[.*?m/g, '');
               const plugins = JSON.parse(cleanOutput);
-              
+
               return {
                 success: true,
                 data: {
@@ -1279,7 +1302,7 @@ export async function executeTool(
 
           // Find ClawdHub path
           const clawdhubPath = await findClawdHubPath();
-          
+
           if (!clawdhubPath) {
             return {
               success: false,
@@ -1295,7 +1318,7 @@ export async function executeTool(
           } else {
             installCmd = Command.create('sh', ['-c', `${clawdhubPath} install "${skillName}" --workdir "$HOME/clawd"`]);
           }
-          
+
           const result = await installCmd.execute();
 
           if (result.code === 0) {
@@ -1363,6 +1386,52 @@ export async function executeTool(
       case 'copy_file':
         return await executeCopyFile(args, context);
 
+      case 'execute_terminal_command':
+        try {
+          const { Command } = await import('@tauri-apps/plugin-shell');
+          const command = args.command as string;
+          const cmdArgs = (args.args as string[]) || [];
+          const cwd = args.cwd || context.currentDirectory || undefined;
+
+          // Create the command
+          // Note: Tauri's shell plugin requires commands to be configured in capabilities
+          // For general usage, we might act as a wrapper around 'sh -c' if allowed,
+          // or rely on specific binary allowlists.
+          // Assuming 'sh' is allowed for flexibility as per previous patterns.
+          let cmd;
+          if (command === 'sh' || command === 'bash') {
+            cmd = Command.create(command, cmdArgs);
+          } else {
+            // Wrap in sh -c for maximum compatibility if direct execution isn't whitelisted for every bin
+            // But let's try direct first if it matches known patterns, otherwise fallback to sh
+            // Actually, the most robust way for arbitrary CLI tools (like node, curl) in this context
+            // is often to interpret the whole thing through sh
+            const fullCmd = `${command} ${cmdArgs.map(a => `'${a.replace(/'/g, "'\\''")}'`).join(' ')}`;
+            cmd = Command.create('sh', ['-c', fullCmd]);
+          }
+
+          if (cwd) {
+            cmd.cwd = cwd;
+          }
+
+          const result = await cmd.execute();
+
+          return {
+            success: result.code === 0,
+            data: {
+              stdout: result.stdout,
+              stderr: result.stderr,
+              code: result.code,
+            },
+            error: result.code !== 0 ? `Command failed with code ${result.code}: ${result.stderr}` : undefined,
+          };
+        } catch (error: any) {
+          return {
+            success: false,
+            error: `Failed to execute command: ${error.message}`
+          };
+        }
+
       default:
         return {
           success: false,
@@ -1384,13 +1453,13 @@ export async function executeTool(
 function matchPattern(filename: string, pattern: string, caseSensitive: boolean = false): boolean {
   const fn = caseSensitive ? filename : filename.toLowerCase();
   const pat = caseSensitive ? pattern : pattern.toLowerCase();
-  
+
   // Convert wildcard pattern to regex
   const regexPattern = pat
     .replace(/\./g, '\\.')
     .replace(/\*/g, '.*')
     .replace(/\?/g, '.');
-  
+
   const regex = new RegExp(`^${regexPattern}$`);
   return regex.test(fn);
 }
@@ -1426,13 +1495,13 @@ async function executeSearchFiles(args: Record<string, any>, context: ToolContex
     async function searchDirectory(dirPath: string): Promise<void> {
       try {
         const entries = await readDir(dirPath);
-        
+
         for (const entry of entries) {
           if (results.length >= maxResults) break;
-          
+
           const entryPath = await join(dirPath, entry.name);
           const matches = matchPattern(entry.name, pattern, caseSensitive);
-          
+
           if (matches) {
             try {
               const metadata = await stat(entryPath);
@@ -1447,7 +1516,7 @@ async function executeSearchFiles(args: Record<string, any>, context: ToolContex
               // Skip files we can't stat
             }
           }
-          
+
           if (includeSubdirs && entry.isDirectory) {
             await searchDirectory(entryPath);
           }
@@ -1492,7 +1561,7 @@ async function executeListDirectoryContents(args: Record<string, any>, context: 
 
     for (const entry of entries) {
       if (items.length >= limit) break;
-      
+
       // Skip hidden files if not requested
       if (!includeHidden && entry.name.startsWith('.')) continue;
 
@@ -1591,7 +1660,7 @@ async function executeReadFileContent(args: Record<string, any>, context: ToolCo
     const encoding = args.encoding || 'utf8';
 
     let content = await readTextFile(filePath, { encoding });
-    
+
     // Limit lines if specified
     if (maxLines > 0) {
       const lines = content.split('\n');
@@ -1620,40 +1689,86 @@ async function executeReadFileContent(args: Record<string, any>, context: ToolCo
 async function executeWriteFileContent(args: Record<string, any>, context: ToolContext): Promise<ToolResult> {
   const filePath = args.path;
   const content = args.content;
-  
-  if (!filePath || content === undefined) {
-    return { success: false, error: 'File path and content are required.' };
+
+  if (!filePath) {
+    return { success: false, error: 'File path is required.' };
   }
 
+  // Content can be empty string, but must be defined
+  const fileContent = content !== undefined ? (content || '') : '';
+
   try {
+    // Normalize the file path
+    let normalizedPath = filePath.trim();
+    
+    // If path doesn't start with /, assume it's relative to current directory
+    if (!normalizedPath.startsWith('/') && context.currentDirectory) {
+      normalizedPath = await join(context.currentDirectory, normalizedPath);
+    }
+
+    console.log(`[write_file_content] Creating file at: ${normalizedPath}`);
+    console.log(`[write_file_content] Content length: ${fileContent.length} characters`);
+    console.log(`[write_file_content] Current directory: ${context.currentDirectory}`);
+
     // Check if file exists
-    const fileExists = await exists(filePath);
-    if (fileExists && !args.overwrite) {
-      return { success: false, error: 'File already exists. Set overwrite=true to overwrite.' };
+    try {
+      const fileExists = await exists(normalizedPath);
+      if (fileExists && !args.overwrite) {
+        return { success: false, error: `File already exists: ${normalizedPath}. Set overwrite=true to overwrite.` };
+      }
+    } catch (existsError: any) {
+      // If exists check fails, continue anyway (might be a new file)
+      console.warn(`[write_file_content] Could not check if file exists:`, existsError);
     }
 
     // Create parent directories if needed
     if (args.createDirectories !== false) {
-      const parentDir = dirname(filePath);
-      const parentExists = await exists(parentDir);
-      if (!parentExists) {
-        await mkdir(parentDir, { recursive: true });
+      try {
+        const parentDir = await dirname(normalizedPath);
+        const parentExists = await exists(parentDir);
+        if (!parentExists) {
+          console.log(`[write_file_content] Creating parent directory: ${parentDir}`);
+          await mkdir(parentDir, { recursive: true });
+        }
+      } catch (dirError: any) {
+        console.warn(`[write_file_content] Could not create parent directory:`, dirError);
+        // Continue anyway - might already exist or might fail later
       }
     }
 
-    await writeTextFile(filePath, content);
+    // Write the file
+    console.log(`[write_file_content] Writing file content...`);
+    try {
+      await writeTextFile(normalizedPath, fileContent);
+      console.log(`[write_file_content] Successfully created file: ${normalizedPath}`);
+    } catch (writeError: any) {
+      console.error(`[write_file_content] Write error:`, writeError);
+      // Try to get more details about the error
+      const errorDetails = writeError?.message || writeError?.toString() || 'Unknown write error';
+      return { 
+        success: false, 
+        error: `Failed to write file: ${errorDetails}. Path: ${normalizedPath}` 
+      };
+    }
 
     return {
       success: true,
       data: {
-        path: filePath,
+        path: normalizedPath,
         written: true,
-        size: content.length,
-        lines: content.split('\n').length,
+        size: fileContent.length,
+        lines: fileContent.split('\n').length,
+        fileName: await basename(normalizedPath),
       },
     };
   } catch (error: any) {
-    return { success: false, error: error.message || 'Failed to write file content' };
+    console.error(`[write_file_content] Error creating file:`, error);
+    const errorMessage = error?.message || error?.toString() || 'Unknown error';
+    const errorStack = error?.stack ? `\nStack: ${error.stack.substring(0, 200)}` : '';
+    return { 
+      success: false, 
+      error: `Failed to write file content: ${errorMessage}${errorStack}. Path: ${filePath}` 
+    };
   }
 }
 
@@ -1733,14 +1848,14 @@ async function executeCalculateDirectorySize(args: Record<string, any>, context:
     async function calculateSize(path: string): Promise<void> {
       try {
         const entries = await readDir(path);
-        
+
         for (const entry of entries) {
           if (!includeHidden && entry.name.startsWith('.')) continue;
 
           const entryPath = await join(path, entry.name);
           try {
             const metadata = await stat(entryPath);
-            
+
             if (metadata.isDirectory) {
               folderCount++;
               await calculateSize(entryPath);
@@ -1799,10 +1914,10 @@ async function executeFileSearchByContent(args: Record<string, any>, context: To
     async function searchDirectory(dirPath: string): Promise<void> {
       try {
         const entries = await readDir(dirPath);
-        
+
         for (const entry of entries) {
           if (results.length >= maxResults) break;
-          
+
           if (entry.isDirectory && includeSubdirs) {
             const entryPath = await join(dirPath, entry.name);
             await searchDirectory(entryPath);
@@ -1815,11 +1930,11 @@ async function executeFileSearchByContent(args: Record<string, any>, context: To
           if (!matchPattern(entry.name, filePattern, false)) continue;
 
           const entryPath = await join(dirPath, entry.name);
-          
+
           try {
             const content = await readTextFile(entryPath);
             const searchContent = caseSensitive ? content : content.toLowerCase();
-            
+
             let found = false;
             let matches: any[] = [];
 
@@ -1883,7 +1998,7 @@ async function executeFileSearchByContent(args: Record<string, any>, context: To
 async function executeCompareDirectories(args: Record<string, any>, context: ToolContext): Promise<ToolResult> {
   const path1 = args.path1;
   const path2 = args.path2;
-  
+
   if (!path1 || !path2) {
     return { success: false, error: 'Both directory paths are required.' };
   }
@@ -1898,14 +2013,14 @@ async function executeCompareDirectories(args: Record<string, any>, context: Too
     async function indexDirectory(path: string, map: Map<string, any>, basePath: string = ''): Promise<void> {
       try {
         const entries = await readDir(path);
-        
+
         for (const entry of entries) {
           const entryPath = await join(path, entry.name);
           const relativePath = basePath ? `${basePath}/${entry.name}` : entry.name;
-          
+
           try {
             const metadata = await stat(entryPath);
-            
+
             if (metadata.isDirectory && includeSubdirs) {
               await indexDirectory(entryPath, map, relativePath);
             } else if (!metadata.isDirectory) {
@@ -1950,7 +2065,7 @@ async function executeCompareDirectories(args: Record<string, any>, context: Too
     // Compare files
     for (const [relPath, info1] of files1.entries()) {
       const info2 = files2.get(relPath);
-      
+
       if (!info2) {
         onlyIn1.push(relPath);
       } else if (info1.size !== info2.size || (compareContent && info1.contentHash !== info2.contentHash)) {
@@ -2010,10 +2125,10 @@ async function executeBatchDelete(args: Record<string, any>, context: ToolContex
     async function findFilesToDelete(dirPath: string): Promise<void> {
       try {
         const entries = await readDir(dirPath);
-        
+
         for (const entry of entries) {
           const entryPath = await join(dirPath, entry.name);
-          
+
           if (entry.isDirectory && includeSubdirs) {
             await findFilesToDelete(entryPath);
             continue;
@@ -2026,7 +2141,7 @@ async function executeBatchDelete(args: Record<string, any>, context: ToolContex
 
           try {
             const metadata = await stat(entryPath);
-            
+
             // Check age filter
             if (olderThanDays) {
               const ageDays = (Date.now() - (metadata.mtime || 0)) / (1000 * 60 * 60 * 24);
@@ -2075,7 +2190,7 @@ async function executeCreateDirectory(args: Record<string, any>, context: ToolCo
 
   try {
     const recursive = args.recursive !== false;
-    
+
     const dirExists = await exists(dirPath);
     if (dirExists) {
       return { success: false, error: 'Directory already exists.' };
@@ -2101,14 +2216,14 @@ async function executeCreateDirectory(args: Record<string, any>, context: ToolCo
 async function executeMoveFile(args: Record<string, any>, context: ToolContext): Promise<ToolResult> {
   const sourcePath = args.sourcePath;
   const destPath = args.destinationPath;
-  
+
   if (!sourcePath || !destPath) {
     return { success: false, error: 'Source and destination paths are required.' };
   }
 
   try {
     const overwrite = args.overwrite === true;
-    
+
     const sourceExists = await exists(sourcePath);
     if (!sourceExists) {
       return { success: false, error: 'Source file does not exist.' };
@@ -2148,7 +2263,7 @@ async function executeMoveFile(args: Record<string, any>, context: ToolContext):
 async function executeCopyFile(args: Record<string, any>, context: ToolContext): Promise<ToolResult> {
   const sourcePath = args.sourcePath;
   const destPath = args.destinationPath;
-  
+
   if (!sourcePath || !destPath) {
     return { success: false, error: 'Source and destination paths are required.' };
   }
@@ -2156,14 +2271,14 @@ async function executeCopyFile(args: Record<string, any>, context: ToolContext):
   try {
     const overwrite = args.overwrite === true;
     const recursive = args.recursive === true;
-    
+
     const sourceExists = await exists(sourcePath);
     if (!sourceExists) {
       return { success: false, error: 'Source file does not exist.' };
     }
 
     const sourceMetadata = await stat(sourcePath);
-    
+
     // For directories, we need recursive copy
     if (sourceMetadata.isDirectory && !recursive) {
       return { success: false, error: 'Cannot copy directory without recursive=true.' };
@@ -2182,7 +2297,7 @@ async function executeCopyFile(args: Record<string, any>, context: ToolContext):
     }
 
     const { copyFile } = await import('@tauri-apps/plugin-fs');
-    
+
     if (sourceMetadata.isDirectory) {
       // For directories, we need to copy recursively
       // This is a simplified version - full recursive copy would need more logic
@@ -2223,14 +2338,14 @@ export async function getMCPTools(): Promise<ToolDefinition[]> {
  */
 export async function getAllTools(settings?: { clawdbotEnabled?: boolean }): Promise<ToolDefinition[]> {
   let customTools = TOOLS;
-  
+
   // Filter ClawdBot tools if not enabled
   if (settings && !settings.clawdbotEnabled) {
-    customTools = customTools.filter(tool => 
+    customTools = customTools.filter(tool =>
       !tool.name.startsWith('clawdbot_') && !tool.name.startsWith('clawdhub_')
     );
   }
-  
+
   const mcpTools = await getMCPTools();
   return [...customTools, ...mcpTools];
 }

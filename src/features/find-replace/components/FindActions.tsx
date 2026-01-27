@@ -9,6 +9,9 @@ interface FindActionsProps {
   onReplaceSelected: () => void;
   onStop: () => void;
   
+  onSelectAll: () => void;
+  onClearSelection: () => void;
+  
   resultCount: number;
   selectedCount: number;
   
@@ -22,6 +25,8 @@ export const FindActions = ({
   onReplaceAll,
   onReplaceSelected,
   onStop,
+  onSelectAll,
+  onClearSelection,
   resultCount,
   selectedCount,
   isSearching,
@@ -56,7 +61,25 @@ export const FindActions = ({
                         <span className="text-muted-foreground">•</span>
                         <span className="font-semibold text-foreground">{selectedCount}</span>
                         <span className="text-muted-foreground">selected</span>
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-5 px-1.5 text-xs text-muted-foreground hover:text-foreground ml-2"
+                            onClick={onClearSelection}
+                        >
+                            Clear
+                        </Button>
                       </>
+                    )}
+                    {selectedCount < resultCount && (
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-5 px-1.5 text-xs text-blue-500 hover:text-blue-600 dark:text-blue-400"
+                            onClick={onSelectAll}
+                        >
+                            Select All
+                        </Button>
                     )}
                  </div>
                ) : (

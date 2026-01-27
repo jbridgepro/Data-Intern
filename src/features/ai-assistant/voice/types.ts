@@ -7,7 +7,7 @@
 /**
  * Voice provider types.
  */
-export type VoiceProvider = 
+export type VoiceProvider =
   | 'openai-realtime'
   | 'gemini-live'
   | 'claude-voice'
@@ -18,7 +18,7 @@ export type VoiceProvider =
 /**
  * Voice activation modes.
  */
-export type VoiceActivationMode = 
+export type VoiceActivationMode =
   | 'push-to-talk'
   | 'continuous'
   | 'voice-activity-detection';
@@ -26,7 +26,7 @@ export type VoiceActivationMode =
 /**
  * Voice output update frequency.
  */
-export type VoiceUpdateFrequency = 
+export type VoiceUpdateFrequency =
   | 'verbose'
   | 'milestones'
   | 'completion-only'
@@ -35,7 +35,7 @@ export type VoiceUpdateFrequency =
 /**
  * Voice recognition state.
  */
-export type VoiceState = 
+export type VoiceState =
   | 'idle'
   | 'listening'
   | 'processing'
@@ -57,6 +57,7 @@ export interface VoiceSettings {
   autoPunctuation: boolean;
   noiseCancellation: boolean;
   allowInterruptions: boolean;
+  voicePersona?: 'professional' | 'friendly' | 'concise' | 'robot';
   wakeWord?: string;
   // Faster-Whisper specific settings
   whisperModelSize?: 'tiny' | 'base' | 'small' | 'medium' | 'large-v2' | 'large-v3';

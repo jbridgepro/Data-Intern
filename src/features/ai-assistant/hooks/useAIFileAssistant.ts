@@ -178,7 +178,8 @@ export const useAIFileAssistant = (currentDirectory: string) => {
     command: string,
     directoryAnalysis: DirectoryAnalysis | null = null,
     abortSignal?: AbortSignal,
-    conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>
+    conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>,
+    voiceContext?: { enabled: boolean; persona?: string }
   ): Promise<{ content: string; operation?: FileOperation; metadata?: any }> => {
     // Check if AI is configured based on provider
     const isAIConfigured = settings.provider === 'anthropic'
@@ -193,7 +194,8 @@ export const useAIFileAssistant = (currentDirectory: string) => {
           directoryAnalysis,
           settings,
           abortSignal,
-          conversationHistory
+          conversationHistory,
+          voiceContext
         );
         return aiResponse;
       } catch (error) {

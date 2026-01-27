@@ -1,18 +1,54 @@
-import { FileCode, X } from "lucide-react";
+/**
+ * File: src/components/panels/EditorsPanel.tsx
+ *
+ * Frontend: Editors Panel component
+ * Displays list of open editor tabs with minimize support
+ */
+
+import { FileCode, X, Minus, ChevronLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import { useEditor } from "@/contexts/EditorContext";
 
 interface EditorsPanelProps {
+  /** Whether the panel is visible */
   isVisible: boolean;
+  /** Callback to close/hide the panel */
   onClose?: () => void;
+  /** Whether the panel is minimized */
+  isMinimized?: boolean;
+  /** Callback to toggle minimize state */
+  onToggleMinimize?: () => void;
 }
 
-export const EditorsPanel = ({ isVisible, onClose }: EditorsPanelProps) => {
+export const EditorsPanel = ({ isVisible, onClose, isMinimized, onToggleMinimize }: EditorsPanelProps) => {
   const { openFiles, activeFileId, activateFile, closeFile } = useEditor();
 
   if (!isVisible) return null;
+
+  // Minimized state - show compact view
+  if (isMinimized) {
+    return (
+      <div className="h-full flex flex-col border-l border-slate-200/50 dark:border-slate-800/50 bg-slate-50 dark:bg-slate-900/50">
+        <div className="flex-1 flex items-center justify-center">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onToggleMinimize}
+            className="flex items-center gap-2"
+            title="Expand Editors Panel"
+          >
+            <ChevronLeft className="h-4 w-4" />
+            <FileCode className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+            {openFiles.length > 0 && (
+              <span className="text-xs text-slate-500">{openFiles.length}</span>
+            )}
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="h-full flex flex-col border-l border-slate-200/50 dark:border-slate-800/50 bg-slate-50 dark:bg-slate-900/50">
@@ -22,11 +58,18 @@ export const EditorsPanel = ({ isVisible, onClose }: EditorsPanelProps) => {
           <FileCode className="h-5 w-5 text-blue-600 dark:text-blue-400" />
           <h2 className="text-lg font-semibold">Editors</h2>
         </div>
-        {onClose && (
-          <Button variant="ghost" size="sm" onClick={onClose}>
-            <X className="h-4 w-4" />
-          </Button>
-        )}
+        <div className="flex items-center gap-1">
+          {onToggleMinimize && (
+            <Button variant="ghost" size="sm" onClick={onToggleMinimize} title="Minimize Panel">
+              <Minus className="h-4 w-4" />
+            </Button>
+          )}
+          {onClose && (
+            <Button variant="ghost" size="sm" onClick={onClose} title="Close Panel">
+              <X className="h-4 w-4" />
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* Tabs */}

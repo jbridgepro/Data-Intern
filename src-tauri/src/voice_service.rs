@@ -103,16 +103,34 @@ pub async fn transcribe_audio(
         compute_type: None,
     };
 
-    let client = reqwest::Client::new();
+    // Create client with timeout
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(60)) // 60 second timeout for transcription
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+
     let response = client
         .post(&format!("{}/transcribe", url))
         .json(&request)
         .send()
         .await
-        .map_err(|e| format!("Failed to connect to voice service: {}", e))?;
+        .map_err(|e| {
+            // Provide more detailed error messages
+            if e.is_timeout() {
+                format!("Transcription timeout: The voice service did not respond within 60 seconds. The Whisper model may still be loading or the audio is too long.")
+            } else if e.is_connect() {
+                format!("Cannot connect to voice service at {}. Make sure the service is running and the Whisper model is loaded.", url)
+            } else {
+                format!("Failed to connect to voice service: {}", e)
+            }
+        })?;
 
     if !response.status().is_success() {
-        let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+        let status = response.status();
+        let error_text = response.text().await.unwrap_or_else(|_| {
+            format!("HTTP {}: Transcription request failed", status.as_u16())
+        });
+        
         return Ok(TranscribeResponse {
             success: false,
             text: None,
@@ -126,7 +144,24 @@ pub async fn transcribe_audio(
     let result: TranscribeResponse = response
         .json()
         .await
-        .map_err(|e| format!("Failed to parse response: {}", e))?;
+        .map_err(|e| {
+            format!("Failed to parse transcription response: {}. The service may have returned invalid JSON.", e)
+        })?;
+
+    // Check if the result itself indicates an error
+    if !result.success {
+        let error_msg = result.error.unwrap_or_else(|| {
+            "Transcription failed: The service returned an error but no error message was provided.".to_string()
+        });
+        return Ok(TranscribeResponse {
+            success: false,
+            text: None,
+            language: None,
+            language_probability: None,
+            segments: None,
+            error: Some(error_msg),
+        });
+    }
 
     Ok(result)
 }

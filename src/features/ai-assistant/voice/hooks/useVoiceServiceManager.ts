@@ -116,15 +116,16 @@ export const useVoiceServiceManager = (settings: VoiceSettings) => {
       // Wait for service to start with retries
       // The service needs time to:
       // 1. Start the HTTP server
-      // 2. Load the Whisper model (first time can take 10-30 seconds)
+      // 2. Load the Whisper model (first time can take 30-120 seconds depending on model size)
       // 3. Initialize Piper
       let isRunning = false;
-      const maxHealthCheckAttempts = 15; // 15 attempts = 30 seconds total
+      const maxHealthCheckAttempts = 60; // 60 attempts = 120 seconds total (2 minutes)
       const healthCheckDelay = 2000; // 2 seconds between checks
+      const totalWaitTime = (maxHealthCheckAttempts * healthCheckDelay) / 1000; // in seconds
 
       for (let attempt = 0; attempt < maxHealthCheckAttempts; attempt++) {
         await new Promise((resolve) => setTimeout(resolve, healthCheckDelay));
-        
+
         isRunning = await checkServiceHealth();
         if (isRunning) {
           setStatus({
@@ -136,27 +137,46 @@ export const useVoiceServiceManager = (settings: VoiceSettings) => {
           startAttemptsRef.current = 0;
           return true;
         }
-        
+
         // Update status to show we're still waiting
         if (attempt < maxHealthCheckAttempts - 1) {
+          const elapsedSeconds = ((attempt + 1) * healthCheckDelay) / 1000;
           setStatus((prev) => ({
             ...prev,
             isStarting: true,
-            error: `Waiting for service to initialize... (${attempt + 1}/${maxHealthCheckAttempts})`,
+            error: `Loading Whisper model... (${Math.round(elapsedSeconds)}s / ${totalWaitTime}s). This may take 1-2 minutes on first run.`,
           }));
         }
       }
 
       // If we get here, service didn't become healthy
+      // Check if process is still running (PID exists)
+      // If process is running, it might just be taking longer to load the model
+      if (pid) {
+        // Process is running but health check failed - model might still be loading
+        // Set status to show it's still loading, not an error
+        setStatus((prev) => ({
+          ...prev,
+          isStarting: false,
+          isRunning: false,
+          error: `Service is starting (PID: ${pid}). Whisper model is still loading - this can take 1-2 minutes on first run. The service will be ready automatically when the model finishes loading.`,
+        }));
+        // Don't throw error - let the service continue loading
+        // The periodic health check will detect when it's ready
+        startAttemptsRef.current = 0;
+        return false;
+      }
+
+      // No PID means process might not have started
       throw new Error(
-        'Service started but health check failed after 30 seconds. ' +
-        'The service may still be loading the Whisper model. ' +
+        `Service health check failed after ${totalWaitTime} seconds. ` +
+        'The service process may not have started, or the Whisper model is still loading (can take 1-2 minutes on first run). ' +
         'Try refreshing the status in a few moments.'
       );
     } catch (error: any) {
       // Extract detailed error message
       let errorMessage = 'Failed to start voice service';
-      
+
       if (error && typeof error === 'string') {
         errorMessage = error;
       } else if (error?.message) {
@@ -164,9 +184,9 @@ export const useVoiceServiceManager = (settings: VoiceSettings) => {
       } else if (error) {
         errorMessage = String(error);
       }
-      
+
       console.error('Voice service start error:', error);
-      
+
       setStatus((prev) => ({
         ...prev,
         isStarting: false,

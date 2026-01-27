@@ -64,7 +64,8 @@ const FileNode = ({
   let isVisible = true;
 
   if (filterExtensions && filterExtensions.length > 0 && !entry.isDirectory) {
-    if (!entry.extension || !filterExtensions.includes(entry.extension)) {
+    const ext = entry.extension ? entry.extension.toLowerCase() : "{no-ext}";
+    if (filterExtensions.includes(ext)) {
       isVisible = false;
     }
   }

@@ -10,8 +10,10 @@ import Anthropic from '@anthropic-ai/sdk';
 import type { AISettings, FileOperation, DirectoryAnalysis } from '../types';
 import { getAllTools, executeTool, type ToolContext, type ToolResult } from './toolsRegistry';
 import { executeMCPTool, isMCPTool, parseMCPToolName } from './mcpIntegration';
+import { isFileCreationRequest, parseFileCreationRequest } from './fileCreationFallback';
 import { toolOrchestrator } from './toolOrchestrator';
 import { generateSystemPrompt } from './aiGuidelines';
+import { getClawdhubSkillsContext } from './clawdhubToolDiscovery';
 import type { ToolExecutionInfo } from '../components/ToolExecutionCard';
 import type { ReasoningStep } from '../components/ReasoningChain';
 import {
@@ -96,7 +98,7 @@ function formatToolResultForUser(toolName: string, toolResult: ToolResult): stri
     case 'analyze_directory':
       if (data.totalFiles !== undefined) {
         const fileTypes = data.fileTypes || [];
-        const imageTypes = fileTypes.filter((ft: any) => 
+        const imageTypes = fileTypes.filter((ft: any) =>
           ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'svg', 'heic', 'heif'].includes(ft.extension?.toLowerCase())
         );
         if (imageTypes.length > 0) {
@@ -119,6 +121,16 @@ function formatToolResultForUser(toolName: string, toolResult: ToolResult): stri
       if (data.filesCreated !== undefined) {
         return `Created ${data.filesCreated} file${data.filesCreated !== 1 ? 's' : ''} successfully.`;
       }
+      break;
+
+    case 'write_file_content':
+      if (data.fileName) {
+        return `Created file: ${data.fileName}.`;
+      } else if (data.path) {
+        const fileName = data.path.split('/').pop() || data.path;
+        return `Created file: ${fileName}.`;
+      }
+      return 'File created successfully.';
       break;
 
     case 'search_files':
@@ -188,7 +200,8 @@ export async function processCommandWithAI(
   directoryAnalysis: DirectoryAnalysis | null,
   settings: AISettings,
   abortSignal?: AbortSignal,
-  conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>
+  conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>,
+  voiceContext?: { enabled: boolean; persona?: string }
 ): Promise<{ content: string; operation?: FileOperation; metadata?: any }> {
   // Route to appropriate provider
   if (settings.provider === 'ollama') {
@@ -198,7 +211,8 @@ export async function processCommandWithAI(
       directoryAnalysis,
       settings,
       abortSignal,
-      conversationHistory
+      conversationHistory,
+      voiceContext
     );
   } else {
     // Default to Anthropic
@@ -208,7 +222,8 @@ export async function processCommandWithAI(
       directoryAnalysis,
       settings,
       abortSignal,
-      conversationHistory
+      conversationHistory,
+      voiceContext
     );
   }
 }
@@ -222,7 +237,8 @@ async function processCommandWithAnthropicProvider(
   directoryAnalysis: DirectoryAnalysis | null,
   settings: AISettings,
   abortSignal?: AbortSignal,
-  conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>
+  conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>,
+  voiceContext?: { enabled: boolean; persona?: string }
 ): Promise<{ content: string; operation?: FileOperation; metadata?: any }> {
   if (!anthropicClient || !settings.apiKey) {
     return {
@@ -242,11 +258,20 @@ async function processCommandWithAnthropicProvider(
     let systemPrompt = settings.systemPrompt;
 
     if (!systemPrompt) {
-      systemPrompt = generateSystemPrompt(tools, { 
+      let skillContext = '';
+      if (settings.clawdbotEnabled) {
+        try {
+          skillContext = await getClawdhubSkillsContext();
+        } catch (e) {
+          console.error("Failed to get skill context", e);
+        }
+      }
+
+      systemPrompt = generateSystemPrompt(tools, {
         clawdbotEnabled: settings.clawdbotEnabled,
         aiName: settings.aiName,
         userName: settings.userName
-      });
+      }, skillContext, voiceContext);
     }
 
     const userPrompt = buildUserPrompt(command, currentDirectory, directoryAnalysis);
@@ -258,7 +283,7 @@ async function processCommandWithAnthropicProvider(
 
     // Build conversation history - include previous messages for context
     const messages: Anthropic.MessageParam[] = [];
-    
+
     // Add conversation history (last 10 messages to avoid token limits)
     if (conversationHistory && conversationHistory.length > 0) {
       const recentHistory = conversationHistory.slice(-10); // Last 10 messages
@@ -269,7 +294,7 @@ async function processCommandWithAnthropicProvider(
         });
       }
     }
-    
+
     // Add current user message
     messages.push({
       role: 'user',
@@ -361,20 +386,28 @@ async function processCommandWithAnthropicProvider(
 
           // Filter out JSON command blocks and technical details from user-facing responses
           let cleanedText = text;
+
+          // Remove ALL JSON blocks (aggressive cleaning)
+          cleanedText = cleanedText.replace(/```json[\s\S]*?```/gi, '');
+          cleanedText = cleanedText.replace(/```[\s\S]*?tool:[\s\S]*?```/gi, '');
+          cleanedText = cleanedText.replace(/tool:\s*\w+[\s\S]*?path:[\s\S]*?content:[\s\S]*?/gi, '');
           
           // Remove JSON code blocks that show tool definitions
           cleanedText = cleanedText.replace(/```json\s*\{[^}]*"tool"[^}]*\}[^`]*```/gi, '');
           cleanedText = cleanedText.replace(/```json\s*\{[\s\S]*?"tool"[\s\S]*?\}[\s\S]*?```/gi, '');
-          
+
           // Remove standalone JSON blocks that look like tool commands
           cleanedText = cleanedText.replace(/\{[\s\S]*?"tool"\s*:\s*"[^"]+"[\s\S]*?\}/g, '');
-          
+          cleanedText = cleanedText.replace(/tool:\s*\w+/gi, '');
+          cleanedText = cleanedText.replace(/path:\s*[^\n]+/gi, '');
+          cleanedText = cleanedText.replace(/content:\s*[^\n]+/gi, '');
+
           // Remove phrases that introduce JSON blocks
           cleanedText = cleanedText.replace(/Here's a (sample )?command block in JSON format:[\s\S]*?```json[\s\S]*?```/gi, '');
           cleanedText = cleanedText.replace(/Here's the JSON (command|format|block):[\s\S]*?```json[\s\S]*?```/gi, '');
           cleanedText = cleanedText.replace(/You can use this JSON:[\s\S]*?```json[\s\S]*?```/gi, '');
           cleanedText = cleanedText.replace(/Here's (an )?example (JSON )?(command|format|block):[\s\S]*?```json[\s\S]*?```/gi, '');
-          
+
           // Remove references to showing JSON
           cleanedText = cleanedText.replace(/I'll show you the JSON (command|format|block)[\s\S]*?```json[\s\S]*?```/gi, '');
           cleanedText = cleanedText.replace(/Here's how to (do|execute) it in JSON:[\s\S]*?```json[\s\S]*?```/gi, '');
@@ -382,18 +415,28 @@ async function processCommandWithAnthropicProvider(
           cleanedText = cleanedText.replace(/We'll need to (use|output|provide) (this|the following) JSON:[\s\S]*?```json[\s\S]*?```/gi, '');
           cleanedText = cleanedText.replace(/The (JSON|command) (format|block|structure) (is|would be|looks like):[\s\S]*?```json[\s\S]*?```/gi, '');
           cleanedText = cleanedText.replace(/In JSON format:[\s\S]*?```json[\s\S]*?```/gi, '');
-          
+
           // Remove any remaining standalone JSON blocks (even without "tool" key)
           cleanedText = cleanedText.replace(/```json\s*\{[\s\S]*?"(foldersCreated|filesProcessed|count|totalFiles|arguments)"[\s\S]*?\}[\s\S]*?```/gi, '');
-          
+
           // Remove phrases that mention JSON without showing it
           cleanedText = cleanedText.replace(/I can (show|provide|give) you the JSON (command|format|block)[\s\S]*?\./gi, '');
           cleanedText = cleanedText.replace(/Here's (a|an) (sample|example) (JSON )?(command|format|block)[\s\S]*?\./gi, '');
           
+          // Remove descriptions of actions instead of executing
+          cleanedText = cleanedText.replace(/I'll help[\s\S]*?(?=I'll|I will|The|Please|Before|Creating|I've|Created|These)/gi, '');
+          cleanedText = cleanedText.replace(/First, let's[\s\S]*?(?=I'll|I will|The|Please|Before|Creating|I've|Created|These)/gi, '');
+          cleanedText = cleanedText.replace(/Let's extract[\s\S]*?(?=I'll|I will|The|Please|Before|Creating|I've|Created|These)/gi, '');
+          cleanedText = cleanedText.replace(/To create these files[\s\S]*?(?=I'll|I will|The|Please|Before|Creating|I've|Created|These)/gi, '');
+          cleanedText = cleanedText.replace(/Here are the steps:[\s\S]*?(?=I'll|I will|The|Please|Before|Creating|I've|Created|These)/gi, '');
+          cleanedText = cleanedText.replace(/I'll write[\s\S]*?(?=I'll|I will|The|Please|Before|Creating|I've|Created|These)/gi, '');
+          cleanedText = cleanedText.replace(/I'll call[\s\S]*?(?=I'll|I will|The|Please|Before|Creating|I've|Created|These)/gi, '');
+          cleanedText = cleanedText.replace(/These two files will be[\s\S]*?(?=I'll|I will|The|Please|Before|Creating|I've|Created|These)/gi, '');
+
           // Clean up multiple newlines
           cleanedText = cleanedText.replace(/\n{3,}/g, '\n\n');
           cleanedText = cleanedText.replace(/^\s*\n/gm, ''); // Remove lines with only whitespace
-          
+
           // Only add to response if there's meaningful content left
           if (cleanedText.trim().length > 0) {
             finalResponse += cleanedText + '\n\n';
@@ -465,7 +508,7 @@ async function processCommandWithAnthropicProvider(
               if (toolName === 'analyze_directory' && typeof toolResult.data === 'object') {
                 const data = toolResult.data as any;
                 if (data.fileTypes) {
-                  const imageTypes = data.fileTypes.filter((ft: any) => 
+                  const imageTypes = data.fileTypes.filter((ft: any) =>
                     ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'svg', 'heic', 'heif'].includes(ft.extension?.toLowerCase())
                   );
                   if (imageTypes.length > 0) {
@@ -494,7 +537,7 @@ async function processCommandWithAnthropicProvider(
             // Extract image count for "how many pictures" questions
             const data = toolResult.data as any;
             if (data.fileTypes) {
-              const imageTypes = data.fileTypes.filter((ft: any) => 
+              const imageTypes = data.fileTypes.filter((ft: any) =>
                 ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'svg', 'heic', 'heif'].includes(ft.extension?.toLowerCase())
               );
               if (imageTypes.length > 0) {
@@ -538,12 +581,70 @@ async function processCommandWithAnthropicProvider(
 
       // Check if we should continue (AI might want to use more tools)
       const lastContent = response.content[response.content.length - 1];
-      if (lastContent.type === 'text') {
+      
+      // If AI only provided text describing actions instead of using tools, force tool execution
+      if (lastContent.type === 'text' && response.content.length === 1) {
+        const textContent = lastContent.text.toLowerCase();
+        const wantsFileCreation = /(?:create|make|generate).*(?:document|file|files)/i.test(command);
+        const describesAction = /(?:I'll|I will|I'm going to|let me|I'll help|first, let's|to create)/i.test(textContent);
+        const showsJson = /(?:json|tool:|path:|content:)/i.test(textContent);
+        
+        // If AI is describing file creation instead of executing, force it to use tools
+        if (wantsFileCreation && (describesAction || showsJson) && toolExecutions.length === 0) {
+          console.warn('[AI] AI described actions instead of executing tools. Forcing tool execution...');
+          // Add a message to force tool execution
+          messages.push({
+            role: 'user',
+            content: 'You described what you would do, but you need to ACTUALLY EXECUTE the tools. Use the write_file_content tool NOW for each file. Do not describe - just execute.',
+          });
+          // Continue the loop to force tool execution
+          iteration++;
+          continue;
+        }
+        
         // AI finished with a text response, we're done
         break;
       }
 
       iteration++;
+    }
+
+    // Direct tool fallback: if user requested file creation but AI returned text only, execute ourselves
+    if (isFileCreationRequest(command)) {
+      const wrote = toolExecutions.filter((e) => e.tool === 'write_file_content');
+      if (wrote.length === 0 && context.currentDirectory) {
+        const items = parseFileCreationRequest(command);
+        if (items.length > 0) {
+          const created: string[] = [];
+          const errors: string[] = [];
+          for (const item of items) {
+            const params = {
+              path: item.fileName,
+              content: item.content || '',
+              createDirectories: true,
+              overwrite: false,
+            };
+            const res = await executeTool('write_file_content', params, context);
+            const exec: ToolExecutionInfo = {
+              tool: 'write_file_content',
+              description: `Create file: ${item.fileName}`,
+              params,
+              status: res.success ? 'success' : 'error',
+              result: res,
+            };
+            toolExecutions.push(exec);
+            if (res.success) created.push(item.fileName);
+            else if (res.error) errors.push(res.error);
+          }
+          const successCount = created.length;
+          if (successCount > 0) {
+            finalResponse = `Created ${successCount} file(s): ${created.join(', ')}.`;
+            if (errors.length > 0) finalResponse += ` ${errors.length} failed: ${errors.join('; ')}`;
+          } else {
+            finalResponse = `I attempted to create the files but encountered errors: ${errors.join('; ')}.`;
+          }
+        }
+      }
     }
 
     // Generate implementation plan if we have tool executions
@@ -566,13 +667,13 @@ async function processCommandWithAnthropicProvider(
 
     // Final cleanup of response - remove any remaining JSON blocks or technical details
     let cleanedResponse = finalResponse.trim();
-    
+
     // Remove any remaining JSON command blocks (multiple patterns to catch all variations)
     cleanedResponse = cleanedResponse.replace(/```json\s*\{[^}]*"tool"[^}]*\}[^`]*```/gi, '');
     cleanedResponse = cleanedResponse.replace(/```json\s*\{[\s\S]*?"tool"[\s\S]*?\}[\s\S]*?```/gi, '');
     cleanedResponse = cleanedResponse.replace(/```json[\s\S]*?"tool"[\s\S]*?```/gi, '');
     cleanedResponse = cleanedResponse.replace(/\{[\s\S]*?"tool"\s*:\s*"[^"]+"[\s\S]*?\}/g, '');
-    
+
     // Remove phrases introducing JSON blocks
     cleanedResponse = cleanedResponse.replace(/Here's a (sample )?command block in JSON format:[\s\S]*?```json[\s\S]*?```/gi, '');
     cleanedResponse = cleanedResponse.replace(/Here's the JSON (command|format|block):[\s\S]*?```json[\s\S]*?```/gi, '');
@@ -582,26 +683,109 @@ async function processCommandWithAnthropicProvider(
     cleanedResponse = cleanedResponse.replace(/Here's how to (do|execute) it in JSON:[\s\S]*?```json[\s\S]*?```/gi, '');
     cleanedResponse = cleanedResponse.replace(/To use a tool, (you|we) (can|need to|must) (use|output|provide) (this|the following) JSON:[\s\S]*?```json[\s\S]*?```/gi, '');
     cleanedResponse = cleanedResponse.replace(/We'll need to (use|output|provide) (this|the following) JSON:[\s\S]*?```json[\s\S]*?```/gi, '');
-    
+
     // Remove "Tool Execution Result" JSON blocks
     cleanedResponse = cleanedResponse.replace(/\*\*Tool Execution Result:\*\*[\s\S]*?```json[\s\S]*?```/gi, '');
     cleanedResponse = cleanedResponse.replace(/Tool Execution Result:[\s\S]*?```json[\s\S]*?```/gi, '');
     cleanedResponse = cleanedResponse.replace(/\*\*Tool Execution Result:\*\*[\s\S]*?\{[\s\S]*?\}/gi, '');
     cleanedResponse = cleanedResponse.replace(/Tool Execution Result:[\s\S]*?\{[\s\S]*?\}/gi, '');
-    
+
     // Remove standalone JSON result blocks
     cleanedResponse = cleanedResponse.replace(/```json\s*\{[\s\S]*?"foldersCreated"[\s\S]*?\}[\s\S]*?```/gi, '');
     cleanedResponse = cleanedResponse.replace(/```json\s*\{[\s\S]*?"filesProcessed"[\s\S]*?\}[\s\S]*?```/gi, '');
     cleanedResponse = cleanedResponse.replace(/```json\s*\{[\s\S]*?"count"[\s\S]*?\}[\s\S]*?```/gi, '');
-    
+
     // Remove references to JSON in explanations
     cleanedResponse = cleanedResponse.replace(/The (JSON|command) (format|block|structure) (is|would be|looks like):[\s\S]*?```json[\s\S]*?```/gi, '');
     cleanedResponse = cleanedResponse.replace(/In JSON format:[\s\S]*?```json[\s\S]*?```/gi, '');
     
+    // Remove ALL JSON blocks and tool parameter displays
+    cleanedResponse = cleanedResponse.replace(/```json[\s\S]*?```/gi, '');
+    cleanedResponse = cleanedResponse.replace(/```[\s\S]*?tool:[\s\S]*?```/gi, '');
+    cleanedResponse = cleanedResponse.replace(/tool:\s*\w+[\s\S]*?path:[\s\S]*?content:[\s\S]*?/gi, '');
+    
+    // Remove phrases about executing or showing commands
+    cleanedResponse = cleanedResponse.replace(/Here's the JSON command block:[\s\S]*?/gi, '');
+    cleanedResponse = cleanedResponse.replace(/Here's a JSON command block:[\s\S]*?/gi, '');
+    cleanedResponse = cleanedResponse.replace(/And again:[\s\S]*?/gi, '');
+    cleanedResponse = cleanedResponse.replace(/I'll execute these commands immediately[\s\S]*?/gi, '');
+    cleanedResponse = cleanedResponse.replace(/To execute these operations[\s\S]*?/gi, '');
+    cleanedResponse = cleanedResponse.replace(/I will use the[\s\S]*?tool[\s\S]*?/gi, '');
+    cleanedResponse = cleanedResponse.replace(/I'll use the[\s\S]*?tool[\s\S]*?/gi, '');
+    cleanedResponse = cleanedResponse.replace(/I understand the user's request[\s\S]*?(?=I'll|I will|The|Please|Before|Creating|I've|Created)/gi, '');
+    cleanedResponse = cleanedResponse.replace(/Since the user wants[\s\S]*?(?=I'll|I will|The|Please|Before|Creating|I've|Created)/gi, '');
+    cleanedResponse = cleanedResponse.replace(/I'll help[\s\S]*?(?=I'll|I will|The|Please|Before|Creating|I've|Created)/gi, '');
+    cleanedResponse = cleanedResponse.replace(/First, let's[\s\S]*?(?=I'll|I will|The|Please|Before|Creating|I've|Created)/gi, '');
+    cleanedResponse = cleanedResponse.replace(/Let's extract[\s\S]*?(?=I'll|I will|The|Please|Before|Creating|I've|Created)/gi, '');
+    cleanedResponse = cleanedResponse.replace(/To create these files[\s\S]*?(?=I'll|I will|The|Please|Before|Creating|I've|Created)/gi, '');
+    cleanedResponse = cleanedResponse.replace(/Here are the steps:[\s\S]*?(?=I'll|I will|The|Please|Before|Creating|I've|Created)/gi, '');
+    
+    // Remove descriptions of what will be done instead of doing it
+    cleanedResponse = cleanedResponse.replace(/Here's what I'll do:[\s\S]*?(?=I'll|I will|The|Please|Before|Creating|I've|Created)/gi, '');
+    cleanedResponse = cleanedResponse.replace(/Here's what will happen:[\s\S]*?(?=I'll|I will|The|Please|Before|Creating|I've|Created)/gi, '');
+    cleanedResponse = cleanedResponse.replace(/I will extract[\s\S]*?(?=I'll|I will|The|Please|Before|Creating|I've|Created)/gi, '');
+    cleanedResponse = cleanedResponse.replace(/I'll extract[\s\S]*?(?=I'll|I will|The|Please|Before|Creating|I've|Created)/gi, '');
+    cleanedResponse = cleanedResponse.replace(/I'll write[\s\S]*?(?=I'll|I will|The|Please|Before|Creating|I've|Created)/gi, '');
+    cleanedResponse = cleanedResponse.replace(/I'll call[\s\S]*?(?=I'll|I will|The|Please|Before|Creating|I've|Created)/gi, '');
+    cleanedResponse = cleanedResponse.replace(/These two files will be[\s\S]*?(?=I'll|I will|The|Please|Before|Creating|I've|Created)/gi, '');
+    
+    // Remove "Please confirm" phrases when tools should execute immediately
+    cleanedResponse = cleanedResponse.replace(/Please confirm before proceeding\.[\s\S]*?/gi, '');
+    cleanedResponse = cleanedResponse.replace(/Please respond with[\s\S]*?(?=I'll|I will|The|Before|Creating|I've|Created)/gi, '');
+    cleanedResponse = cleanedResponse.replace(/Before I proceed[\s\S]*?(?=I'll|I will|The|Creating|I've|Created)/gi, '');
+    cleanedResponse = cleanedResponse.replace(/Before creating[\s\S]*?(?=I'll|I will|The|Creating|I've|Created)/gi, '');
+    cleanedResponse = cleanedResponse.replace(/To ensure safety[\s\S]*?(?=I'll|I will|The|Creating|I've|Created)/gi, '');
+
     // Remove empty lines and clean up multiple newlines
     cleanedResponse = cleanedResponse.replace(/\n{3,}/g, '\n\n');
     cleanedResponse = cleanedResponse.replace(/^\s*\n/gm, ''); // Remove lines with only whitespace
     cleanedResponse = cleanedResponse.trim();
+
+    // Verify tool execution before allowing success messages
+    // If user requested file creation, ensure tools were actually executed
+    const wantsFileCreation = /(?:create|make|generate).*(?:document|file|files)/i.test(command);
+    if (wantsFileCreation) {
+      const writeFileExecutions = toolExecutions.filter(exec => exec.tool === 'write_file_content');
+      const successfulExecutions = writeFileExecutions.filter(exec => exec.status === 'success' && exec.result?.success);
+      
+      // If AI claims success but no tools executed, replace with error
+      if (writeFileExecutions.length === 0) {
+        console.warn('[AI] File creation requested but no write_file_content tools were executed');
+        if (cleanedResponse.toLowerCase().includes('created') && !cleanedResponse.toLowerCase().includes('error')) {
+          cleanedResponse = 'I apologize, but I was unable to create the files. The tools were not executed. Please try again.';
+        } else if (cleanedResponse.toLowerCase().includes("i'll") || cleanedResponse.toLowerCase().includes("i will") || cleanedResponse.toLowerCase().includes("let's")) {
+          cleanedResponse = "I apologize - I described what I would do instead of actually creating the files. Please try again, and I'll execute the tools immediately.";
+        }
+      } else if (successfulExecutions.length === 0) {
+        // Tools executed but all failed
+        console.warn('[AI] File creation tools executed but all failed');
+        const errors = writeFileExecutions
+          .filter(exec => exec.result && !exec.result.success)
+          .map(exec => exec.result?.error || 'Unknown error')
+          .join('; ');
+        cleanedResponse = `I attempted to create the files but encountered errors: ${errors}. Please check the file paths and permissions.`;
+      } else if (successfulExecutions.length < writeFileExecutions.length) {
+        // Some succeeded, some failed
+        const failedCount = writeFileExecutions.length - successfulExecutions.length;
+        const errors = writeFileExecutions
+          .filter(exec => exec.result && !exec.result.success)
+          .map(exec => exec.result?.error || 'Unknown error')
+          .join('; ');
+        const createdFiles = successfulExecutions
+          .map(exec => exec.result?.data?.fileName || exec.params?.path?.split('/').pop())
+          .filter(Boolean);
+        cleanedResponse = `Created ${successfulExecutions.length} file(s): ${createdFiles.join(', ')}. However, ${failedCount} file(s) failed: ${errors}`;
+      } else {
+        // All succeeded - verify we have actual file names from tool results
+        const createdFiles = successfulExecutions
+          .map(exec => exec.result?.data?.fileName || exec.params?.path?.split('/').pop())
+          .filter(Boolean);
+        if (createdFiles.length > 0) {
+          // Replace AI's response with verified file names
+          cleanedResponse = `Created ${createdFiles.length} file(s): ${createdFiles.join(', ')}.`;
+        }
+      }
+    }
 
     return {
       content: cleanedResponse || 'I processed your request using available tools.',
@@ -644,20 +828,30 @@ async function processCommandWithOllamaProvider(
   directoryAnalysis: DirectoryAnalysis | null,
   settings: AISettings,
   abortSignal?: AbortSignal,
-  conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>
+  conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>,
+  voiceContext?: { enabled: boolean; persona?: string }
 ): Promise<{ content: string; operation?: FileOperation; metadata?: any }> {
   try {
     // Get all available tools (custom + MCP), filtered by settings
     const tools = await getAllTools(settings);
 
     let systemPrompt = settings.systemPrompt;
+    let skillContext = '';
+
+    if (settings.clawdbotEnabled) {
+      try {
+        skillContext = await getClawdhubSkillsContext();
+      } catch (e) {
+        // Ignore for local
+      }
+    }
 
     if (!systemPrompt) {
-      systemPrompt = generateSystemPrompt(tools, { 
+      systemPrompt = generateSystemPrompt(tools, {
         clawdbotEnabled: settings.clawdbotEnabled,
         aiName: settings.aiName,
         userName: settings.userName
-      });
+      }, skillContext, voiceContext);
     }
 
     return await processCommandWithOllama(
@@ -667,6 +861,7 @@ async function processCommandWithOllamaProvider(
       settings,
       tools,
       systemPrompt,
+      skillContext,
       abortSignal,
       conversationHistory
     );
@@ -690,11 +885,11 @@ function buildUserPrompt(
   // Detect if this is a confirmation response (yes, no, ok, sure, etc.)
   const isConfirmation = /^(yes|yeah|yep|yup|ok|okay|sure|alright|all right|go ahead|proceed|continue|do it|execute|confirm|approved?|agreed?)$/i.test(command.trim());
   const isRejection = /^(no|nope|nah|cancel|stop|abort|don't|dont)$/i.test(command.trim());
-  
+
   // Detect if this is a question that requires immediate tool execution
   const isQuestion = /^(how many|how much|what|which|where|when|who|count|list|show|find|analyze)/i.test(command.trim());
   const needsAnalysis = /(pictures?|images?|files?|photos?|documents?|videos?|audio|size|space|count)/i.test(command);
-  
+
   let prompt = `User command: "${command}"\n\n`;
 
   // Handle confirmation/rejection responses with context
@@ -706,18 +901,18 @@ function buildUserPrompt(
         const lastMessage = lastAssistantMessage.content;
         prompt += `CRITICAL CONTEXT: The user is responding "${command}" to your previous message where you asked for confirmation or approval.\n\n`;
         prompt += `Your previous message was: "${lastMessage.substring(0, 800)}"\n\n`;
-        
+
         if (isConfirmation) {
           // Extract what operation was discussed
           const operationKeywords = {
             'organize': ['organize', 'organization', 'organizing', 'group', 'grouping'],
             'create folders': ['create', 'creating', 'folders', 'subfolders', 'directory', 'directories'],
-            'create files': ['create', 'creating', 'files', 'file', 'generate', 'generating', 'make', 'making'],
+            'create files': ['create', 'creating', 'files', 'file', 'generate', 'generating', 'make', 'making', 'documents', 'document'],
             'move files': ['move', 'moving', 'relocate'],
             'rename': ['rename', 'renaming', 'rename files'],
             'delete': ['delete', 'deleting', 'remove', 'removing'],
           };
-          
+
           let detectedOperation = '';
           for (const [op, keywords] of Object.entries(operationKeywords)) {
             if (keywords.some(kw => lastMessage.toLowerCase().includes(kw))) {
@@ -725,10 +920,12 @@ function buildUserPrompt(
               break;
             }
           }
-          
+
           prompt += `ACTION REQUIRED: The user has confirmed/approved with "${command}".\n\n`;
-          prompt += `You MUST immediately execute the operation you described. Do NOT just repeat information or ask again.\n\n`;
-          
+          prompt += `You MUST immediately EXECUTE the tools (not describe them). Do NOT repeat information or ask again.\n`;
+          prompt += `If you mentioned creating files, ACTUALLY CALL the 'write_file_content' tool NOW for each file.\n`;
+          prompt += `Do NOT describe what you would do - ACTUALLY EXECUTE the tools.\n\n`;
+
           if (detectedOperation) {
             prompt += `Based on your previous message, you were discussing: ${detectedOperation}.\n\n`;
             prompt += `IMMEDIATELY execute the appropriate tools to ${detectedOperation}:\n`;
@@ -738,7 +935,31 @@ function buildUserPrompt(
             } else if (detectedOperation.includes('create folders')) {
               prompt += `- Use 'folder_creation_tab' or 'create_directory' to create the folders\n`;
             } else if (detectedOperation.includes('create files') || detectedOperation.includes('create file')) {
-              prompt += `- Use 'file_creation_tab' to create the files\n`;
+              // Check if user mentioned specific file names (documents) vs patterns
+              const hasSpecificNames = /(?:called|named|titled|with name|with the name|one that says|that says|the first|the second|the other)/i.test(lastMessage);
+              const mentionsDocuments = /(?:document|documents|\.docx|\.txt|file|files)/i.test(lastMessage);
+              if (hasSpecificNames || mentionsDocuments) {
+                prompt += `\\n=== ACTION REQUIRED: USER CONFIRMED FILE CREATION ===\\n`;
+                prompt += `The user said "yes" to creating files. EXECUTE IMMEDIATELY - NO MORE QUESTIONS.\\n\\n`;
+                prompt += `YOU MUST:\\n`;
+                prompt += `1. Extract ALL file names from: "${lastMessage}"\\n`;
+                prompt += `2. For EACH file, IMMEDIATELY call 'write_file_content' tool (use tool_use, NOT text):\\n`;
+                prompt += `   - path: [currentDirectory]/[filename].docx (add .docx if no extension)\\n`;
+                prompt += `   - content: "" (empty string)\\n`;
+                prompt += `   - createDirectories: true\\n`;
+                prompt += `   - overwrite: false\\n`;
+                prompt += `3. Call 'write_file_content' MULTIPLE TIMES (once per file)\\n`;
+                prompt += `4. DO NOT write any text response until AFTER tools execute\\n`;
+                prompt += `5. After execution, report: "Created [X] file(s): [list names]"\\n\\n`;
+                prompt += `FORBIDDEN:\\n`;
+                prompt += `- Do NOT ask for confirmation again\\n`;
+                prompt += `- Do NOT describe what you'll do\\n`;
+                prompt += `- Do NOT show JSON or tool parameters\\n`;
+                prompt += `- Do NOT use 'folder_creation_tab'\\n\\n`;
+                prompt += `EXECUTE THE TOOLS NOW USING tool_use.\\n\\n`;
+              } else {
+                prompt += `- Use 'file_creation_tab' to create files with patterns\n`;
+              }
             } else if (detectedOperation.includes('move')) {
               prompt += `- Use 'move_file' to move files to their new locations\n`;
             } else if (detectedOperation.includes('rename')) {
@@ -778,7 +999,7 @@ function buildUserPrompt(
       if (lastAssistantMessage) {
         prompt += `CONTEXT: The user clicked a confirmation button or said "${command}" to approve the operation.\n\n`;
         prompt += `Your previous message was: "${lastAssistantMessage.content.substring(0, 800)}"\n\n`;
-        
+
         if (action === 'yes') {
           prompt += `The user has confirmed/approved. Proceed with the operation you described. Execute the tools you mentioned and complete the task immediately.\n\n`;
         } else {
@@ -786,6 +1007,36 @@ function buildUserPrompt(
         }
       }
     }
+  }
+
+  // Detect if user wants to create documents/files (not folders)
+  const wantsDocuments = /(?:create|make|generate)\s+(?:two|three|four|five|\d+)?\s*(?:document|documents|file|files|\.docx|\.txt|\.md)/i.test(command);
+  const hasSpecificFileNames = /(?:called|named|titled|with name|with the name|one that says|that says|the first|the second|the other)/i.test(command);
+  const mentionsDocuments = /(?:document|documents|\.docx|\.txt|\.md|text file)/i.test(command);
+  
+  if ((wantsDocuments || mentionsDocuments || hasSpecificFileNames) && !isConfirmation && !isRejection) {
+    prompt += `\n\n=== CRITICAL: FILE CREATION REQUEST ===\n`;
+    prompt += `The user wants to create FILES/DOCUMENTS. This is NON-DESTRUCTIVE - NO CONFIRMATION NEEDED.\n\n`;
+    prompt += `YOU MUST IMMEDIATELY USE THE 'write_file_content' TOOL - DO NOT DESCRIBE, ACTUALLY CALL IT.\n\n`;
+    prompt += `EXECUTION STEPS (DO THIS NOW):\n`;
+    prompt += `1. Extract ALL file names from: "${command}"\n`;
+    prompt += `   - Pattern: "one that says, X, and the other one is, Y" = TWO files: X and Y\n`;
+    prompt += `   - Pattern: "the first document should be called A, the second is B" = TWO files: A and B\n`;
+    prompt += `2. For EACH file name, IMMEDIATELY call 'write_file_content' tool (use tool_use, not text):\n`;
+    prompt += `   - path: [currentDirectory]/[filename].docx (add .docx if no extension provided)\n`;
+    prompt += `   - content: "" (empty string, unless user specified content)\n`;
+    prompt += `   - createDirectories: true\n`;
+    prompt += `   - overwrite: false\n`;
+    prompt += `3. DO NOT write any text response describing what you'll do.\n`;
+    prompt += `4. DO NOT ask for confirmation - just execute.\n`;
+    prompt += `5. After tools execute, report: "Created [X] file(s): [list file names]"\n\n`;
+    prompt += `ABSOLUTELY FORBIDDEN:\n`;
+    prompt += `- Do NOT say "I'll create", "I will create", "I understand", "Before creating", "Let me"\n`;
+    prompt += `- Do NOT show JSON blocks, tool parameters, or technical details\n`;
+    prompt += `- Do NOT ask "Please confirm" or "Would you like me to proceed"\n`;
+    prompt += `- Do NOT use 'folder_creation_tab' (that's for folders only)\n`;
+    prompt += `- Do NOT describe the steps - just execute the tools\n\n`;
+    prompt += `START CALLING THE TOOLS NOW USING tool_use - NO TEXT RESPONSE UNTIL AFTER EXECUTION.\n\n`;
   }
 
   // Add instruction for direct action if it's a question

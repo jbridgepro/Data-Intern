@@ -2,18 +2,24 @@
  * File: src/features/panel-configuration/types.ts
  * 
  * Frontend: Type definitions for panel configuration feature
- * Defines types for UI panel visibility, layout settings, and view modes
+ * Defines types for UI panel visibility, layout settings, view modes, and panel sizing
  */
 
 /**
  * View mode options for the application layout
  */
-export type ViewMode = "agent" | "editor" | "zen" | "browser";
+export type PresetViewMode = "agent" | "editor" | "zen" | "browser";
+export type ViewMode = PresetViewMode | (string & {});
 
 /**
  * Position options for sidebars and panels
  */
 export type PanelPosition = "left" | "right" | "bottom" | "hidden";
+
+/**
+ * Panel IDs for consistent identification
+ */
+export type PanelId = "sidebar" | "chat" | "editors" | "panel" | "agents";
 
 /**
  * Panel visibility configuration
@@ -33,6 +39,37 @@ export interface PanelVisibility {
 }
 
 /**
+ * Panel size configuration for individual panels
+ * Stores width (for side panels) or height (for bottom panel)
+ */
+export interface PanelSizeConfig {
+  /** Current size in pixels */
+  size: number;
+  /** Minimum allowed size in pixels */
+  minSize: number;
+  /** Maximum allowed size in pixels */
+  maxSize: number;
+  /** Whether the panel is currently minimized */
+  isMinimized: boolean;
+}
+
+/**
+ * Panel sizes configuration for all resizable panels
+ */
+export interface PanelSizes {
+  /** Main sidebar width */
+  sidebar: PanelSizeConfig;
+  /** Chat panel width */
+  chat: PanelSizeConfig;
+  /** Editors panel width */
+  editors: PanelSizeConfig;
+  /** Bottom panel height */
+  panel: PanelSizeConfig;
+  /** Agent sidebar width */
+  agents: PanelSizeConfig;
+}
+
+/**
  * Layout configuration settings
  */
 export interface LayoutConfig {
@@ -45,18 +82,30 @@ export interface LayoutConfig {
 }
 
 /**
+ * Custom view mode configuration
+ */
+export interface CustomViewMode {
+  id: string;
+  name: string;
+  visibility: PanelVisibility;
+}
+
+/**
  * Complete panel configuration state
  */
 export interface PanelConfiguration {
   /** Current view mode */
   viewMode: ViewMode;
+  /** Custom view modes */
+  customViewModes: CustomViewMode[];
   /** Panel visibility settings */
   visibility: PanelVisibility;
-  /** Layout configuration */
   /** Layout configuration */
   layout: LayoutConfig;
   /** Active tab in the bottom panel */
   bottomPanelActiveTab: "terminal" | "problems" | "output";
+  /** Panel sizes and minimized states */
+  panelSizes: PanelSizes;
 }
 
 /**

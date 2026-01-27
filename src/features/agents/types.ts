@@ -23,6 +23,18 @@ export type AgentType =
   | 'clawdbot';
 
 /**
+ * Subagent configuration.
+ */
+export interface SubAgentConfig {
+  id: string;
+  name: string;
+  role: string;
+  goal: string;
+  model?: string;
+  tools?: string[];
+}
+
+/**
  * Agent configuration.
  */
 export interface AgentConfig {
@@ -34,6 +46,7 @@ export interface AgentConfig {
   autoStart?: boolean;
   schedule?: AgentSchedule;
   params?: Record<string, any>;
+  subagents?: SubAgentConfig[];
 }
 
 /**

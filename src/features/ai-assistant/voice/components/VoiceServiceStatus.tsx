@@ -261,7 +261,11 @@ export const VoiceServiceStatus = ({
                   <>
                     Make sure the voice service is running:
                     <br />
-                    <code className="mt-1 block">python3 voice_service.py</code>
+                    <code className="mt-1 block">python3 voice-service/voice_service.py</code>
+                    <div className="mt-2 text-xs opacity-80">
+                      If it fails with "Address already in use", run:
+                      <code className="block mt-0.5">lsof -i :8765 | xargs kill</code>
+                    </div>
                   </>
                 )}
               </div>

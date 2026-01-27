@@ -213,6 +213,71 @@ const TOOL_PATTERNS: ToolPattern[] = [
       },
     },
   },
+  {
+    toolName: "write_file_content",
+    keywords: [
+      "create document",
+      "create documents",
+      "create file",
+      "create files",
+      "write file",
+      "write document",
+      "make document",
+      "make file",
+    ],
+    paramExtractors: {
+      path: (text: string) => {
+        // Extract file path - look for file names in quotes or after "called", "named", etc.
+        // Pattern 1: "create a document called 'Justin's Big Plan.docx'"
+        const calledPattern = /(?:called|named|titled|with name|with the name)\s+["']?([^"']+)["']?/i;
+        const match1 = text.match(calledPattern);
+        if (match1) {
+          let name = match1[1].trim();
+          if (!name.match(/\.\w+$/)) {
+            name += ".docx"; // Default to .docx for documents
+          }
+          return name;
+        }
+        
+        // Pattern 2: "one that says, Justins, New Idea" - extract the name (handles commas in name)
+        const saysPattern = /(?:one|file|document|the first|the second)\s+(?:that\s+)?(?:says|named|called)\s*[,:]\s*["']?([^"']+)["']?/i;
+        const match2 = text.match(saysPattern);
+        if (match2) {
+          // Clean up the name and add extension if missing
+          let name = match2[1].trim();
+          // Remove trailing commas
+          name = name.replace(/,\s*$/, '');
+          if (!name.match(/\.\w+$/)) {
+            name += ".docx"; // Default to .docx for documents
+          }
+          return name;
+        }
+        
+        // Pattern 3: "Justins, New Idea" - direct name extraction
+        const directPattern = /^([A-Za-z][^,]+(?:,\s*[^,]+)*)/;
+        const match3 = text.match(directPattern);
+        if (match3) {
+          let name = match3[1].trim();
+          if (!name.match(/\.\w+$/)) {
+            name += ".docx";
+          }
+          return name;
+        }
+        
+        return "";
+      },
+      content: (text: string) => {
+        // Extract content - usually the file name itself or empty
+        // For documents, content is often empty or the title
+        const saysPattern = /(?:says|with content|containing)\s*[,:]\s*["']?([^"']+)["']?/i;
+        const match = text.match(saysPattern);
+        if (match) {
+          return match[1].trim();
+        }
+        return ""; // Default to empty content
+      },
+    },
+  },
 ];
 
 /**
@@ -296,6 +361,11 @@ function generateDescription(
         desc += ` with extension${extensions.length !== 1 ? "s" : ""}: ${extensions.map(e => `.${e}`).join(", ")}`;
       }
       return desc;
+
+    case "write_file_content":
+      const fileName = params.path ? params.path.split("/").pop() : "document";
+      const hasContent = params.content && params.content.trim().length > 0;
+      return `Create file "${fileName}"${hasContent ? ` with content` : ""}`;
 
     case "file_copy_tab":
       return `Copy files from ${params.sourcePath || "source"} to ${

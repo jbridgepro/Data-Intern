@@ -35,10 +35,12 @@ export const VoiceToTextPanel = ({
   onOpenSettings,
   onInsertToChat,
 }: VoiceToTextPanelProps) => {
+  // Frontend: Voice state management
   const [voiceState, setVoiceState] = useState<VoiceState>("idle");
   const [currentTranscript, setCurrentTranscript] = useState("");
-  const [transcriptHistory, setTranscriptHistory] = useState<string[]>([]);
-  const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
+  // Store transcripts with unique IDs to prevent React key conflicts
+  const [transcriptHistory, setTranscriptHistory] = useState<Array<{ id: string; text: string }>>([]);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
   const [audioLevel, setAudioLevel] = useState(0);
   const [isVoiceActive, setIsVoiceActive] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -68,17 +70,15 @@ export const VoiceToTextPanel = ({
           const finalText = result.text.trim();
           if (finalText) {
             setCurrentTranscript("");
-            setTranscriptHistory((prev) => [finalText, ...prev]);
+            // Add transcript with unique ID (timestamp + random) to prevent duplicate keys
+            // This ensures uniqueness even if multiple transcripts are added in the same millisecond
+            const transcriptId = `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+            setTranscriptHistory((prev) => [{ id: transcriptId, text: finalText }, ...prev]);
             setError(null); // Clear errors on successful transcription
             
-            // Call onTranscript callback (for logging/processing)
+            // Call onTranscript callback - this handles inserting text into chat input
+            // Do NOT also call onInsertToChat here to avoid duplicate inserts
             onTranscript(finalText);
-            
-            // Automatically insert the transcribed text into the chat input
-            // This ensures the text appears in the chat box immediately
-            if (onInsertToChat) {
-              onInsertToChat(finalText);
-            }
           }
         } else {
           setCurrentTranscript(result.text);
@@ -190,11 +190,12 @@ export const VoiceToTextPanel = ({
     }
   };
 
-  const handleCopy = async (text: string, index: number) => {
+  // Frontend: Copy transcript text to clipboard
+  const handleCopy = async (text: string, id: string) => {
     try {
       await navigator.clipboard.writeText(text);
-      setCopiedIndex(index);
-      setTimeout(() => setCopiedIndex(null), 2000);
+      setCopiedId(id);
+      setTimeout(() => setCopiedId(null), 2000);
     } catch (error) {
       console.error("Failed to copy:", error);
     }
@@ -276,7 +277,18 @@ export const VoiceToTextPanel = ({
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <div className={cn("h-2 w-2 rounded-full", getStateColor())} />
+              <div className={cn("relative flex h-2.5 w-2.5 items-center justify-center")}>
+                 {voiceState === 'listening' || voiceState === 'processing' ? (
+                   <span className={cn("animate-ping absolute inline-flex h-full w-full rounded-full opacity-75", 
+                     voiceState === 'listening' ? "bg-red-400" : "bg-yellow-400"
+                   )}></span>
+                 ) : null}
+                 <span className={cn("relative inline-flex rounded-full h-2 w-2", 
+                   voiceState === 'listening' ? "bg-red-500" : 
+                   voiceState === 'processing' ? "bg-yellow-500" :
+                   voiceState === 'speaking' ? "bg-green-500" : "bg-slate-400"
+                 )}></span>
+              </div>
               <span className={cn("text-sm font-medium", getStateColor())}>
                 {getStateLabel()}
               </span>
@@ -294,20 +306,27 @@ export const VoiceToTextPanel = ({
           {voiceState === "listening" && (
             <div className="space-y-2">
               <div className="flex items-center justify-center gap-0.5 h-6">
-                {Array.from({ length: 15 }).map((_, i) => {
+                {Array.from({ length: 24 }).map((_, i) => {
+                  // Symmetric wave pattern
+                  const center = 12;
+                  const dist = Math.abs(i - center);
+                  const waveFactor = 1 - (dist / 12); 
+                  
                   const barHeight = Math.max(
-                    2,
-                    audioLevel * 15 > i ? (audioLevel * 15 - i) * 4 : 2
+                    4,
+                    audioLevel * 20 * waveFactor > 0.5 ? Math.min(24, Math.random() * 10 + audioLevel * 30 * waveFactor) : 4
                   );
-                  const isActive = isVoiceActive && audioLevel * 15 > i;
+                  
+                  const isActive = isVoiceActive && audioLevel > 0.05;
+                  
                   return (
                     <div
                       key={i}
                       className={cn(
-                        "w-0.5 rounded-full transition-all duration-75",
+                        "w-1 rounded-full transition-all duration-100",
                         isActive
-                          ? "bg-green-500 dark:bg-green-400"
-                          : "bg-slate-300 dark:bg-slate-600"
+                          ? "bg-gradient-to-t from-blue-500 to-cyan-400 dark:from-blue-600 dark:to-cyan-400"
+                          : "bg-slate-200 dark:bg-slate-700"
                       )}
                       style={{ height: `${barHeight}px` }}
                     />
@@ -392,22 +411,22 @@ export const VoiceToTextPanel = ({
             </div>
             <ScrollArea className="h-64 border border-slate-200 dark:border-slate-700 rounded-lg p-2">
               <div className="space-y-2">
-                {transcriptHistory.map((transcript, index) => (
+                {transcriptHistory.map((transcript) => (
                   <div
-                    key={index}
+                    key={transcript.id}
                     className="group p-3 bg-slate-50 dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-700 hover:border-blue-300 dark:hover:border-blue-700 transition-colors"
                   >
                     <p className="text-sm text-slate-700 dark:text-slate-300 mb-2">
-                      {transcript}
+                      {transcript.text}
                     </p>
                     <div className="flex items-center gap-2">
                       <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => handleCopy(transcript, index)}
+                        onClick={() => handleCopy(transcript.text, transcript.id)}
                         className="h-7 text-xs"
                       >
-                        {copiedIndex === index ? (
+                        {copiedId === transcript.id ? (
                           <>
                             <Check className="h-3 w-3 mr-1" />
                             Copied
@@ -423,7 +442,7 @@ export const VoiceToTextPanel = ({
                         <Button
                           variant="ghost"
                           size="sm"
-                          onClick={() => handleInsertToChat(transcript)}
+                          onClick={() => handleInsertToChat(transcript.text)}
                           className="h-7 text-xs"
                         >
                           <Send className="h-3 w-3 mr-1" />

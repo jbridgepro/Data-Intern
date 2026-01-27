@@ -29,6 +29,7 @@ interface CopyToolbarProps {
   onSearchChange: (term: string) => void;
   
   activeFilters: string[];
+  availableExtensions: string[];
   onToggleFilter: (ext: string) => void;
   
   excludeTemp: boolean;
@@ -44,8 +45,6 @@ interface CopyToolbarProps {
   isProcessing: boolean;
 }
 
-const COMMON_EXTENSIONS = ["jpg", "png", "mp4", "mp3", "pdf", "txt", "docx", "xlsx", "zip", "json", "ts", "tsx"];
-
 export const CopyToolbar = ({
   currentPath,
   onPathChange,
@@ -56,6 +55,7 @@ export const CopyToolbar = ({
   searchTerm,
   onSearchChange,
   activeFilters,
+  availableExtensions,
   onToggleFilter,
   excludeTemp,
   onToggleExcludeTemp,
@@ -188,16 +188,23 @@ export const CopyToolbar = ({
           {/* Quick Filters */}
           <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar mask-grad-right">
             <Filter className="h-3.5 w-3.5 text-muted-foreground mr-1" />
-            {COMMON_EXTENSIONS.map(ext => (
-               <Badge
-               key={ext}
-               variant={activeFilters.includes(ext) ? "default" : "outline"}
-               className="cursor-pointer text-[10px] h-5 px-2 hover:bg-primary/80"
-               onClick={() => !isProcessing && onToggleFilter(ext)}
-             >
-               .{ext}
-             </Badge>
-            ))}
+            
+            {availableExtensions.length > 0 ? (
+               availableExtensions.map(ext => (
+                <Badge
+                  key={ext}
+                  variant={activeFilters.includes(ext) ? "destructive" : "outline"}
+                  className="cursor-pointer text-[10px] h-5 px-2 hover:bg-destructive/80 transition-colors"
+                  onClick={() => !isProcessing && onToggleFilter(ext)}
+                >
+                  {ext === "{no-ext}" ? "No Ext" : `.${ext}`}
+                </Badge>
+              ))
+            ) : (
+              <span className="text-[10px] text-muted-foreground italic px-2">
+                No extensions found
+              </span>
+            )}
           </div>
         </div>
 

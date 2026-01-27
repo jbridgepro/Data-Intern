@@ -7,7 +7,7 @@ export interface SearchOptions {
     wholeWord: boolean;
     includePattern: string;
     excludePattern: string;
-    target: 'content' | 'filename' | 'folder';
+    target: 'content' | 'filename' | 'folder' | 'all';
 }
 
 export interface Match {
@@ -16,6 +16,7 @@ export interface Match {
     content: string;
     matchIndex: number;
     length: number;
+    source: 'content' | 'filename' | 'folder';
 }
 
 export interface FileResult {
@@ -66,14 +67,14 @@ export async function searchFiles(
                     if (matchesExclude(relativePath, options.excludePattern)) continue;
 
                     // 2. Check if searching for folders
-                    if (target === 'folder') {
+                    if (target === 'folder' || target === 'all') {
                         // Check match on folder name
                         const folderMatches = findInContent(entry.name, query, options, fullPath);
                         if (folderMatches.length > 0) {
                             // Map matches to use the folder path
                             results.push({
                                 path: fullPath,
-                                matches: folderMatches.map(m => ({ ...m, content: entry.name, line: 1 }))
+                                matches: folderMatches.map(m => ({ ...m, content: entry.name, line: 1, source: 'folder' as const }))
                             });
                             matchCount += folderMatches.length;
                         }
@@ -83,7 +84,8 @@ export async function searchFiles(
                     await traverse(fullPath);
                 } else {
                     // File Handling
-                    if (target === 'folder') continue; // Skip files if looking for folders
+                    if (target === 'folder') continue; // Skip files if looking for folders ONLY
+
                     if (isBinaryFile(entry.name)) continue;
                     if (!matchesFilters(relativePath, options.includePattern, options.excludePattern)) continue;
 
@@ -91,28 +93,34 @@ export async function searchFiles(
                     if (scannedCount % 10 === 0) onProgress(scannedCount, matchCount);
 
                     // 3. Search Target Logic
-                    if (target === 'filename') {
+                    const fileMatches: Match[] = [];
+
+                    // Check Filename (if target is filename OR all)
+                    if (target === 'filename' || target === 'all') {
                         const nameMatches = findInContent(entry.name, query, options, fullPath);
                         if (nameMatches.length > 0) {
-                            results.push({
-                                path: fullPath,
-                                matches: nameMatches.map(m => ({ ...m, content: entry.name, line: 1 }))
-                            });
-                            matchCount += nameMatches.length;
+                            fileMatches.push(...nameMatches.map(m => ({ ...m, content: entry.name, line: 1, source: 'filename' as const })));
                         }
-                    } else if (target === 'content') {
+                    }
+
+                    // Check Content (if target is content OR all)
+                    if (target === 'content' || target === 'all') {
                         try {
                             const content = await readTextFile(fullPath);
-                            if (content.length > MAX_FILE_SIZE) continue;
-
-                            const fileMatches = findInContent(content, query, options, fullPath);
-                            if (fileMatches.length > 0) {
-                                results.push({ path: fullPath, matches: fileMatches });
-                                matchCount += fileMatches.length;
+                            if (content.length <= MAX_FILE_SIZE) {
+                                const contentMatches = findInContent(content, query, options, fullPath);
+                                if (contentMatches.length > 0) {
+                                    fileMatches.push(...contentMatches.map(m => ({ ...m, source: 'content' as const })));
+                                }
                             }
                         } catch (e) {
                             // Skip unreadable
                         }
+                    }
+
+                    if (fileMatches.length > 0) {
+                        results.push({ path: fullPath, matches: fileMatches });
+                        matchCount += fileMatches.length;
                     }
                 }
             }

@@ -14,9 +14,10 @@ import {
   FileCode,
   Bot,
   Plus,
-  ChevronRight,
   Settings,
+  Trash2,
 } from "lucide-react";
+import { Input } from "@/components/ui/input";
 import { motion } from "framer-motion";
 import { usePanelConfiguration } from "../hooks/usePanelConfiguration";
 import { ViewMode, PanelPosition } from "../types";
@@ -44,17 +45,26 @@ import { cn } from "@/lib/utils";
  * Panel Configuration Component
  * Main component for configuring panel visibility and layout settings
  */
-export const PanelConfiguration = () => {
+interface PanelConfigurationProps {
+  onNavigateToSettings?: () => void;
+}
+
+export const PanelConfiguration = ({
+  onNavigateToSettings,
+}: PanelConfigurationProps) => {
   const {
     configuration,
-    setViewMode,
     togglePanelVisibility,
-    setPanelVisibility,
     setAgentSidebarPosition,
     toggleTitleBar,
     toggleStatusBar,
     applyViewModePreset,
+    saveCustomViewMode,
+    deleteCustomViewMode,
   } = usePanelConfiguration();
+
+  const [isAddingMode, setIsAddingMode] = useState(false);
+  const [newModeName, setNewModeName] = useState("");
 
   const [selectedViewMode, setSelectedViewMode] = useState<ViewMode>(
     configuration.viewMode,
@@ -139,6 +149,14 @@ export const PanelConfiguration = () => {
     { mode: "browser", label: "Browser", icon: Layout },
   ];
 
+  const handleSaveMode = () => {
+    if (newModeName.trim()) {
+      saveCustomViewMode(newModeName.trim());
+      setNewModeName("");
+      setIsAddingMode(false);
+    }
+  };
+
   return (
     <div className="flex flex-col h-full glass rounded-2xl shadow-xl overflow-hidden relative min-h-0">
       <div className="absolute inset-0 bg-white/40 dark:bg-slate-900/40 pointer-events-none" />
@@ -211,19 +229,85 @@ export const PanelConfiguration = () => {
                       </span>
                     </button>
                   ))}
+                  {configuration.customViewModes.map((customMode) => (
+                    <div
+                      key={customMode.id}
+                      className={cn(
+                        "relative group flex flex-col items-center gap-2 p-4 rounded-xl border-2 transition-all duration-200 cursor-pointer",
+                        selectedViewMode === customMode.id
+                          ? "border-blue-600 bg-blue-50 dark:bg-blue-900/20 shadow-lg shadow-blue-500/25"
+                          : "border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-800/50"
+                      )}
+                      onClick={() => handleViewModeChange(customMode.id)}
+                    >
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          deleteCustomViewMode(customMode.id);
+                        }}
+                        className="absolute top-2 right-2 p-1.5 rounded-lg opacity-0 group-hover:opacity-100 hover:bg-red-100 dark:hover:bg-red-900/30 text-red-500 transition-all"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                      
+                      <div
+                        className={cn(
+                          "p-3 rounded-lg",
+                          selectedViewMode === customMode.id
+                            ? "bg-blue-600 text-white"
+                            : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400"
+                        )}
+                      >
+                        <Layout className="h-6 w-6" />
+                      </div>
+                      <span
+                        className={cn(
+                          "text-sm font-medium",
+                          selectedViewMode === customMode.id
+                            ? "text-blue-600 dark:text-blue-400"
+                            : "text-slate-700 dark:text-slate-300"
+                        )}
+                      >
+                        {customMode.name}
+                      </span>
+                    </div>
+                  ))}
                 </div>
-                <div className="mt-4 flex items-center gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="border-dashed"
-                    onClick={() => {
-                      // Add new view mode functionality (placeholder)
-                    }}
-                  >
-                    <Plus className="h-4 w-4 mr-2" />
-                    Add
-                  </Button>
+                
+                <div className="mt-4 flex flex-col gap-3">
+                  {isAddingMode ? (
+                    <div className="flex items-center gap-2 max-w-sm">
+                      <Input
+                        value={newModeName}
+                        onChange={(e) => setNewModeName(e.target.value)}
+                        placeholder="View mode name..."
+                        className="h-8"
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") handleSaveMode();
+                          if (e.key === "Escape") setIsAddingMode(false);
+                        }}
+                        autoFocus
+                      />
+                      <Button size="sm" onClick={handleSaveMode}>Save</Button>
+                      <Button 
+                        size="sm" 
+                        variant="ghost" 
+                        onClick={() => setIsAddingMode(false)}
+                      >
+                        Cancel
+                      </Button>
+                    </div>
+                  ) : (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="border-dashed w-fit"
+                      onClick={() => setIsAddingMode(true)}
+                    >
+                      <Plus className="h-4 w-4 mr-2" />
+                      Add current layout as preset
+                    </Button>
+                  )}
                 </div>
               </CardContent>
             </Card>
@@ -406,8 +490,11 @@ export const PanelConfiguration = () => {
                   <Button
                     variant="outline"
                     onClick={() => {
-                      // Navigate to main settings
-                      window.location.hash = "#settings";
+                      if (onNavigateToSettings) {
+                        onNavigateToSettings();
+                      } else {
+                        window.location.hash = "#settings";
+                      }
                     }}
                   >
                     <Settings className="h-4 w-4 mr-2" />

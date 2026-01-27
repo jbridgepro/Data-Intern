@@ -46,7 +46,7 @@ export class VoiceService {
       const SpeechRecognition = (window as any).SpeechRecognition ||
         (window as any).webkitSpeechRecognition;
 
-      if (SpeechRecognition && this.settings.provider === 'browser-stt') {
+      if (SpeechRecognition) {
         this.recognition = new SpeechRecognition();
         this.recognition.continuous = true;
         this.recognition.interimResults = true;
@@ -186,10 +186,10 @@ export class VoiceService {
    */
   pauseListening() {
     if (!this.isListening || this.isPaused) return;
-    
+
     this.isPaused = true;
     this.setState('idle');
-    
+
     // For browser STT, we can't truly pause, so we stop
     if (this.recognition && this.settings.provider === 'browser-stt') {
       try {
@@ -205,7 +205,7 @@ export class VoiceService {
    */
   async resumeListening() {
     if (!this.isPaused) return;
-    
+
     await this.startListening();
   }
 
@@ -226,7 +226,7 @@ export class VoiceService {
       }
 
       this.audioRecorder = new AudioRecorder();
-      
+
       // Set up audio level monitoring
       this.audioRecorder.setAudioLevelCallback((level) => {
         this.currentAudioLevel = level;
@@ -243,21 +243,43 @@ export class VoiceService {
         }
       });
 
-      // Configure VAD based on settings
+      // Configure VAD based on settings - TUNED FOR NATURAL CONVERSATION
       if (this.settings.noiseCancellation) {
-        this.audioRecorder.setVADThreshold(0.03); // Higher threshold with noise cancellation
+        this.audioRecorder.setVADThreshold(0.05);
+        this.audioRecorder.setVADSilenceDuration(2000); // 2.0s for noisy (was 1000)
       } else {
-        this.audioRecorder.setVADThreshold(0.02); // Lower threshold without noise cancellation
+        this.audioRecorder.setVADThreshold(0.015);
+        this.audioRecorder.setVADSilenceDuration(1500); // 1.5s for normal (was 800)
       }
+
+      // Handle Silence Detection (End of Thought)
+      this.audioRecorder.setSilenceDetectionCallback(async () => {
+        if (this.settings.activationMode === 'continuous' && this.isListening && !this.isPaused) {
+          console.log('Silence detected, processing thought...');
+          await this.processConversationTurn();
+        }
+      });
+
+      // Handle Voice Start (Interruption/New Thought)
+      this.audioRecorder.setVoiceStartCallback(() => {
+        if (this.settings.activationMode === 'continuous' && this.isListening && !this.isPaused) {
+          if (this.currentState !== 'speaking') {
+            this.setState('listening');
+          }
+          // If speaking, we might want to stop speaking (barge-in)
+          if (this.currentState === 'speaking' && this.settings.allowInterruptions) {
+            this.stopSpeaking();
+            this.setState('listening');
+          }
+        }
+      });
 
       await this.audioRecorder.startRecording();
       this.isListening = true;
       this.setState('listening');
 
-      // In continuous mode, periodically transcribe
-      if (this.settings.activationMode === 'continuous') {
-        this.startContinuousTranscription();
-      }
+      // No more fixed interval loop!
+
     } catch (error: any) {
       console.error('Failed to start Faster-Whisper listening:', error);
       this.setState('idle');
@@ -272,24 +294,31 @@ export class VoiceService {
   /**
    * Starts continuous transcription for Faster-Whisper.
    */
-  private startContinuousTranscription() {
-    // Transcribe every 3 seconds in continuous mode
-    this.recordingInterval = setInterval(async () => {
-      if (this.isListening && this.audioRecorder) {
-        try {
-          // Stop current recording, transcribe, then restart
-          const audioBase64 = await this.audioRecorder.stopRecording();
-          await this.transcribeWithFasterWhisper(audioBase64);
+  /**
+   * Processes the current audio turn (silence detected).
+   */
+  private async processConversationTurn() {
+    if (!this.audioRecorder || !this.isListening) return;
 
-          // Restart recording
-          if (this.isListening) {
-            await this.audioRecorder.startRecording();
-          }
-        } catch (error) {
-          console.error('Continuous transcription error:', error);
+    try {
+      // Flush the audio buffer without stopping recording
+      const audioBase64 = await this.audioRecorder.flushAudio();
+
+      // Only process if we got valid audio data
+      // flushAudio returns null if audio is too short, corrupted, or conversion fails
+      if (audioBase64 && audioBase64.length > 0) {
+        // Only switch to 'processing' if we actually have audio
+        // and we aren't already speaking (to avoid flickering)
+        if (this.currentState !== 'speaking') {
+          this.setState('processing');
         }
+
+        await this.transcribeWithFasterWhisper(audioBase64);
       }
-    }, 3000);
+    } catch (error) {
+      console.error('Error processing conversation turn:', error);
+      this.setState('listening'); // Reset to listening on error
+    }
   }
 
   /**
@@ -297,7 +326,7 @@ export class VoiceService {
    */
   async stopListening() {
     this.isPaused = false;
-    
+
     if (this.settings.provider === 'faster-whisper' && this.audioRecorder && this.isListening) {
       // Stop continuous transcription
       if (this.recordingInterval) {
@@ -308,17 +337,25 @@ export class VoiceService {
       try {
         // Get final transcription
         const audioBase64 = await this.audioRecorder.stopRecording();
-        if (audioBase64) {
+        if (audioBase64 && audioBase64.length > 0) {
           await this.transcribeWithFasterWhisper(audioBase64);
+        } else {
+          console.warn('No audio data to transcribe');
+          this.setState('idle');
         }
-      } catch (error) {
+      } catch (error: any) {
         console.error('Error during final transcription:', error);
+        this.setState('idle');
+        // Don't throw - just log and reset state
       }
 
       this.audioRecorder = null;
       this.isListening = false;
       this.currentAudioLevel = 0;
       this.isVoiceActive = false;
+
+      // If we are just stopping, we might be in 'processing' state
+      // but 'idle' is the correct final state
       this.setState('idle');
     } else if (this.recognition && this.isListening) {
       try {
@@ -338,6 +375,20 @@ export class VoiceService {
    */
   private async transcribeWithFasterWhisper(audioBase64: string) {
     try {
+      // Validate audio data
+      if (!audioBase64 || audioBase64.length === 0) {
+        console.warn('Empty audio data provided for transcription');
+        this.setState('idle');
+        return;
+      }
+
+      // Check minimum size (base64 encoded audio should be at least a few KB)
+      if (audioBase64.length < 1000) {
+        console.warn('Audio data is too short for transcription');
+        this.setState('idle');
+        return;
+      }
+
       this.setState('processing');
 
       const serviceUrl = this.settings.voiceServiceUrl || 'http://127.0.0.1:8765';
@@ -382,9 +433,16 @@ export class VoiceService {
           });
         }
       } else {
-        const errorMessage = result.error || 'Transcription failed: Unknown error';
+        // Get detailed error message
+        let errorMessage = result.error || 'Transcription failed: Unknown error';
+
+        // Enhance error message with context
+        if (errorMessage === 'Unknown error' || !errorMessage.includes(':')) {
+          errorMessage = `Transcription failed: ${errorMessage}. The voice service may not be ready yet, or the Whisper model may still be loading.`;
+        }
+
         console.error('Transcription failed:', errorMessage);
-        
+
         // Provide user-friendly error feedback
         if (this.onTranscript) {
           this.onTranscript({
@@ -394,20 +452,73 @@ export class VoiceService {
             interimResults: undefined,
           });
         }
+
+        // Throw error to trigger fallback handling
+        throw new Error(errorMessage);
       }
     } catch (error: any) {
       console.error('Faster-Whisper transcription error:', error);
-      
-      // Handle specific error cases
-      if (error.message?.includes('timeout')) {
-        console.error('Transcription service timeout. Please check if the voice service is running.');
-      } else if (error.message?.includes('ECONNREFUSED') || error.message?.includes('Failed to fetch')) {
+
+      // Extract error message
+      let errorMessage = 'Transcription failed';
+      if (error?.message) {
+        errorMessage = error.message;
+      } else if (typeof error === 'string') {
+        errorMessage = error;
+      } else if (error) {
+        errorMessage = String(error);
+      }
+
+      // Handle specific error cases with better messages
+      if (errorMessage.includes('timeout') || errorMessage.includes('Timeout')) {
+        errorMessage = 'Transcription timeout: The voice service did not respond in time. The Whisper model may still be loading (this can take 1-2 minutes on first run).';
+        console.error('Transcription service timeout. Please check if the voice service is running and the model is loaded.');
+      } else if (errorMessage.includes('ECONNREFUSED') || errorMessage.includes('Failed to connect') || errorMessage.includes('Cannot connect')) {
+        errorMessage = `Cannot connect to voice service at ${this.settings.voiceServiceUrl || 'http://127.0.0.1:8765'}. Please ensure the service is running and the Whisper model is loaded.`;
         console.error('Cannot connect to voice service. Please ensure the service is running at:', this.settings.voiceServiceUrl || 'http://127.0.0.1:8765');
+      } else if (errorMessage.includes('model') && errorMessage.includes('loading')) {
+        errorMessage = 'Whisper model is still loading. Please wait a moment and try again.';
+        console.error('Whisper model is still loading.');
+      } else if (errorMessage.includes('Decoding failed') || errorMessage.includes('EncodingError') || error?.message?.includes('Decoding failed')) {
+        errorMessage = 'Audio decoding failed. The recorded audio may be corrupted, too short, or in an unsupported format. Please try speaking again.';
+        console.error('Audio decoding error detected. This usually means the audio format is not supported or the audio data is corrupted.');
+      }
+
+      // Log the detailed error for debugging
+      console.error('Detailed transcription error:', {
+        message: errorMessage,
+        originalError: error,
+        serviceUrl: this.settings.voiceServiceUrl || 'http://127.0.0.1:8765',
+      });
+
+      // Handle audio decoding errors specifically - don't fallback, just reset state
+      if (errorMessage.includes('Decoding failed') || errorMessage.includes('EncodingError') || error?.message?.includes('Decoding failed')) {
+        // Don't fallback for decoding errors - they indicate a problem with the audio itself
+        // Just reset state and let user try again
+        this.setState('idle');
+        return;
+      }
+
+      // Automatic fallback to browser-stt only if connection errors
+      if (this.recognition && (errorMessage.includes('connect') || errorMessage.includes('ECONNREFUSED'))) {
+        console.log('Falling back to browser-stt provider due to connection error');
+        // Update settings to use browser-stt
+        this.updateSettings({ provider: 'browser-stt' });
+
+        // Stop current listening (which was using faster-whisper)
+        this.stopListening().then(() => {
+          // Restart with new provider
+          this.startListening();
+        });
+      } else {
+        // For other errors (like model loading), don't fallback - just log the error
+        // The user can retry once the model is loaded
+        console.warn('Transcription error (not falling back):', errorMessage);
       }
     } finally {
-      if (this.isListening) {
+      if (this.isListening && this.settings.provider === 'faster-whisper') {
         this.setState('listening');
-      } else {
+      } else if (!this.isListening) {
         this.setState('idle');
       }
     }
@@ -488,26 +599,98 @@ export class VoiceService {
         // Decode base64 audio and play it
         await this.playAudioFromBase64(result.audio);
       } else {
-        console.error('Piper synthesis failed:', result.error);
-        // Fallback to browser TTS
-        if (this.synthesis) {
-          const utterance = new SpeechSynthesisUtterance(text);
-          utterance.rate = this.settings.voiceSpeed;
-          utterance.volume = this.settings.volume / 100;
-          utterance.onend = () => this.setState('idle');
-          this.synthesis.speak(utterance);
+        // Check if error indicates missing voice model
+        const errorMessage = result.error || '';
+        const isHTMLResponse = errorMessage.includes('<!DOCTYPE HTML>') || errorMessage.includes('<html');
+        const isVoiceNotFound = isHTMLResponse ||
+                              errorMessage.includes('not found') || 
+                              errorMessage.includes('404') ||
+                              errorMessage.includes('Voice model');
+        
+        if (isVoiceNotFound) {
+          // Extract error message from HTML if present
+          let extractedMessage = errorMessage;
+          if (isHTMLResponse) {
+            const match = errorMessage.match(/<p>Message: ([^<]+)<\/p>/);
+            if (match) {
+              extractedMessage = match[1];
+            }
+          }
+          
+          console.warn(`Voice model '${voice}' not found: ${extractedMessage}`);
+          console.warn('Falling back to browser TTS. To use Piper TTS, please download the voice model and place it in the voices directory.');
+        } else {
+          console.error('Piper synthesis failed:', result.error);
         }
+        
+        // Fallback to browser TTS
+        this.fallbackToBrowserTTS(text);
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Piper TTS error:', error);
-      // Fallback to browser TTS
-      if (this.synthesis) {
-        const utterance = new SpeechSynthesisUtterance(text);
-        utterance.rate = this.settings.voiceSpeed;
-        utterance.volume = this.settings.volume / 100;
-        utterance.onend = () => this.setState('idle');
-        this.synthesis.speak(utterance);
+      
+      // Check if error is about missing voice model
+      const errorMessage = error?.message || String(error) || '';
+      const isHTMLResponse = errorMessage.includes('<!DOCTYPE HTML>') || errorMessage.includes('<html');
+      const isVoiceNotFound = isHTMLResponse ||
+                            errorMessage.includes('not found') || 
+                            errorMessage.includes('404') ||
+                            errorMessage.includes('Voice model');
+      
+      if (isVoiceNotFound) {
+        const voice = this.settings.piperVoice || 'en_US-lessac-medium';
+        
+        // Extract error message from HTML if present
+        let extractedMessage = errorMessage;
+        if (isHTMLResponse) {
+          const match = errorMessage.match(/<p>Message: ([^<]+)<\/p>/);
+          if (match) {
+            extractedMessage = match[1];
+          }
+        }
+        
+        console.warn(`Voice model '${voice}' not found: ${extractedMessage}`);
+        console.warn('Falling back to browser TTS. To use Piper TTS, please download the voice model and place it in the voices directory.');
       }
+      
+      // Fallback to browser TTS
+      this.fallbackToBrowserTTS(text);
+    }
+  }
+
+  /**
+   * Fallback to browser TTS when Piper is unavailable.
+   */
+  private fallbackToBrowserTTS(text: string) {
+    if (!this.synthesis) {
+      console.warn('Browser TTS not available');
+      this.setState('idle');
+      return;
+    }
+
+    try {
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.rate = this.settings.voiceSpeed;
+      utterance.volume = this.settings.volume / 100;
+      utterance.lang = this.settings.language === 'auto' ? 'en-US' : this.settings.language;
+      
+      utterance.onstart = () => {
+        this.setState('speaking');
+      };
+      
+      utterance.onend = () => {
+        this.setState('idle');
+      };
+      
+      utterance.onerror = (error) => {
+        console.error('Browser TTS error:', error);
+        this.setState('idle');
+      };
+      
+      this.synthesis.speak(utterance);
+    } catch (error) {
+      console.error('Failed to use browser TTS:', error);
+      this.setState('idle');
     }
   }
 
