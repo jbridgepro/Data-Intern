@@ -2240,6 +2240,10 @@ export async function executeTool(
         };
     }
   } catch (error: any) {
+    // Re-throw to be caught by outer catch
+    throw error;
+  }
+  } catch (error: any) {
     const executionTime = Date.now() - startTime;
     console.error(`Error executing tool ${toolName} (took ${executionTime}ms):`, error);
     

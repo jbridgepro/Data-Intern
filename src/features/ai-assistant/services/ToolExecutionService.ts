@@ -7,8 +7,8 @@
 import { executeTool } from '../utils/toolsRegistry';
 import type { ToolResult, ToolContext } from '../utils/toolsRegistry';
 import { executeMCPTool, isMCPTool, parseMCPToolName } from '../utils/mcpIntegration';
-import type { ToolExecutionInfo } from '../../components/ToolExecutionCard';
-import type { ReasoningStep } from '../../components/ReasoningChain';
+import type { ToolExecutionInfo } from '../components/ToolExecutionCard';
+import type { ReasoningStep } from '../components/ReasoningChain';
 
 export class ToolExecutionService {
     /**
