@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react';
 import { readDir, stat, copyFile as tauriCopyFile, rename } from '@tauri-apps/plugin-fs';
 import { open } from '@tauri-apps/plugin-dialog';
 import { join } from '@tauri-apps/api/path';
+import { usePersistentState } from '../../../hooks/usePersistentState';
 
 export interface FileEntry {
     path: string;
@@ -12,7 +13,7 @@ export interface FileEntry {
 }
 
 export const useFileSystem = () => {
-    const [currentPath, setCurrentPath] = useState<string>('');
+    const [currentPath, setCurrentPath] = usePersistentState<string>('filesystem-current-path', '');
     const [error, setError] = useState<string | null>(null);
 
     const selectDirectory = useCallback(async () => {

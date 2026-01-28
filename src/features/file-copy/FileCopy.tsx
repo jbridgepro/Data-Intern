@@ -16,10 +16,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   X,
   CheckCircle,
+  RotateCcw
 } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { join, dirname, basename } from "@tauri-apps/api/path";
 import { exists, mkdir } from "@tauri-apps/plugin-fs";
+import { usePersistentState } from "../../hooks/usePersistentState";
 
 // Types for conflict resolution
 type ConflictResolution = "overwrite" | "skip" | "rename" | "ask";
@@ -53,7 +55,7 @@ export const FileCopy = () => {
     setCurrentPath,
   } = useFileSystem();
 
-  const [destPath, setDestPath] = useState("");
+  const [destPath, setDestPath, resetDestPath] = usePersistentState("file-copy-dest-path", "");
   const [selectedFiles, setSelectedFiles] = useState<Map<string, FileEntry>>(
     new Map(),
   );
@@ -64,9 +66,9 @@ export const FileCopy = () => {
   const cancelRef = useRef(false);
 
   // Conflict resolution
-  const [conflictResolution, setConflictResolution] =
-    useState<ConflictResolution>("ask");
-  const [preserveStructure, setPreserveStructure] = useState(false);
+  const [conflictResolution, setConflictResolution, resetConflictResolution] =
+    usePersistentState<ConflictResolution>("file-copy-conflict-res", "ask");
+  const [preserveStructure, setPreserveStructure, resetPreserveStructure] = usePersistentState("file-copy-preserve-struct", false);
 
   // Operation history
   const [operationHistory, setOperationHistory] = useState<OperationHistory[]>(
@@ -89,7 +91,8 @@ export const FileCopy = () => {
   // Filters
   const [searchTerm, setSearchTerm] = useState("");
   const [activeFilters, setActiveFilters] = useState<string[]>([]);
-  const [excludeTemp, setExcludeTemp] = useState(true);
+  const [filterMode, setFilterMode, resetFilterMode] = usePersistentState<"include" | "exclude">("file-copy-filter-mode", "exclude");
+  const [excludeTemp, setExcludeTemp, resetExcludeTemp] = usePersistentState("file-copy-exclude-temp", true);
   const [availableExtensions, setAvailableExtensions] = useState<string[]>([]);
 
   // Update available extensions when directory contents change
@@ -183,11 +186,22 @@ export const FileCopy = () => {
       allFiles.forEach((file) => {
         let isVisible = true;
 
-        if (!file.isDirectory && activeFilters.length > 0) {
-            const ext = file.extension ? file.extension.toLowerCase() : "{no-ext}";
-            if (activeFilters.includes(ext)) {
-                isVisible = false;
-            }
+        // Check extension filtering
+        if (!file.isDirectory) {
+             const ext = file.extension ? file.extension.toLowerCase() : "{no-ext}";
+             
+             if (filterMode === "exclude") {
+                 // Exclude mode: only hide if in activeFilters
+                 if (activeFilters.length > 0 && activeFilters.includes(ext)) {
+                     isVisible = false;
+                 }
+             } else {
+                 // Include mode: hide if NOT in activeFilters
+                 // If activeFilters is empty, strictly nothing is included -> hide all
+                 if (activeFilters.length === 0 || !activeFilters.includes(ext)) {
+                     isVisible = false;
+                 }
+             }
         }
 
         if (
@@ -224,6 +238,7 @@ export const FileCopy = () => {
     currentPath,
     getDirectoryContents,
     activeFilters,
+    filterMode,
     searchTerm,
     excludeTemp,
   ]);
@@ -505,6 +520,8 @@ export const FileCopy = () => {
         activeFilters={activeFilters}
         availableExtensions={availableExtensions}
         onToggleFilter={toggleFilter}
+        filterMode={filterMode}
+        onToggleFilterMode={() => setFilterMode(prev => prev === "include" ? "exclude" : "include")}
         excludeTemp={excludeTemp}
         onToggleExcludeTemp={setExcludeTemp}
         onSelectAll={handleSelectAll}
@@ -514,6 +531,30 @@ export const FileCopy = () => {
         onToggleHistory={() => setShowHistory(!showHistory)}
         isProcessing={isProcessing}
       />
+      
+      {/* Reset Bar */}
+      <div className="flex justify-end p-2 bg-slate-50 border-b dark:bg-slate-900 border-slate-200 dark:border-slate-800">
+           <Button
+             variant="ghost" 
+             size="sm"
+             onClick={() => {
+                 resetDestPath();
+                 resetConflictResolution();
+                 resetPreserveStructure();
+                 resetFilterMode();
+                 resetExcludeTemp();
+                 
+                 // Local UI
+                 setSelectedFiles(new Map());
+                 setSearchTerm("");
+                 setActiveFilters([]);
+             }}
+             className="text-xs gap-2 text-muted-foreground hover:text-foreground"
+           >
+             <RotateCcw className="h-3 w-3" />
+             Reset Copy Tool
+           </Button>
+      </div>
 
       {/* 2. Main Content Area (Stack) */}
       <div className="flex-1 overflow-hidden flex flex-col relative">
@@ -582,6 +623,7 @@ export const FileCopy = () => {
             onSelectionChange={handleSelectionChange}
             getDirectoryContents={getDirectoryContents}
             filterExtensions={activeFilters}
+            filterMode={filterMode}
             searchTerm={searchTerm}
             excludeTemp={excludeTemp}
           />

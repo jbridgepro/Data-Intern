@@ -32,14 +32,16 @@ interface ResizablePanelProps {
   onMinimizeChange: (minimized: boolean) => void;
   /** Direction of the resize handle */
   direction: ResizeDirection;
-  /** Additional class names for the container */
-  className?: string;
   /** Size when minimized (default: 40px for header only) */
   minimizedSize?: number;
+  /** Additional class names for the container */
+  className?: string;
   /** Whether to show the minimize button in header */
   showMinimizeButton?: boolean;
   /** Custom header content (optional) */
   header?: ReactNode;
+  /** Whether to render children even when minimized (useful for sidebars with their own minimized state) */
+  renderChildrenWhenMinimized?: boolean;
 }
 
 /**
@@ -56,9 +58,10 @@ export const ResizablePanel = ({
   onMinimizeChange,
   direction,
   className,
-  minimizedSize = 40,
+  minimizedSize = 64, // Updated default to 64 for sidebar consistency
   showMinimizeButton = true,
   header,
+  renderChildrenWhenMinimized = false,
 }: ResizablePanelProps) => {
   // Track dragging state
   const [isDragging, setIsDragging] = useState(false);
@@ -209,8 +212,9 @@ export const ResizablePanel = ({
     <div
       ref={panelRef}
       className={cn(
-        "relative flex flex-col overflow-hidden",
+        "relative flex flex-col",
         isHorizontal ? "h-full" : "w-full",
+        !renderChildrenWhenMinimized && "overflow-hidden",
         className
       )}
       style={getPanelStyle()}
@@ -242,8 +246,8 @@ export const ResizablePanel = ({
         </div>
       )}
 
-      {/* Minimized State - Show only expand button */}
-      {isMinimized && !header && (
+      {/* Minimized State - Show only expand button IF not rendering children */}
+      {isMinimized && !header && !renderChildrenWhenMinimized && (
         <div className="h-full flex items-center justify-center">
           <Button
             variant="ghost"
@@ -257,9 +261,9 @@ export const ResizablePanel = ({
         </div>
       )}
 
-      {/* Panel Content - Only render when not minimized */}
-      {!isMinimized && (
-        <div className="flex-1 overflow-hidden min-h-0">
+      {/* Panel Content - Only render when not minimized OR explicitly asked to render when minimized */}
+      {(!isMinimized || renderChildrenWhenMinimized) && (
+        <div className={cn("flex-1 min-h-0", !renderChildrenWhenMinimized && "overflow-hidden")}>
           {children}
         </div>
       )}

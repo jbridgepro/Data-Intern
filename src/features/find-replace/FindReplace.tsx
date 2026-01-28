@@ -11,21 +11,22 @@ import { FindActions } from "./components/FindActions";
 import { ResultsPreview } from "./components/ResultsPreview";
 import { searchFiles, SearchOptions, FileResult } from "./utils/searchLogic";
 import { replaceInFile } from "./utils/replaceLogic";
-import { AlertCircle, X, CheckCircle } from "lucide-react";
+import { AlertCircle, X, CheckCircle, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useFileSystem } from "../file-copy/hooks/useFileSystem";
+import { usePersistentState } from "../../hooks/usePersistentState";
 
 export const FindReplace = () => {
   // Use file system hook for consistency if needed, but we manage path locally for flexibility
   // Actually reusing useFileSystem might be good for recent paths logic if it was shared.
   // For now we'll implement local recent paths similar to Copy feature.
 
-  const [selectedPath, setSelectedPath] = useState<string>("");
-  const [searchQuery, setSearchQuery] = useState("");
-  const [replaceQuery, setReplaceQuery] = useState("");
+  const [selectedPath, setSelectedPath, resetSelectedPath] = usePersistentState<string>("find-replace-path", "");
+  const [searchQuery, setSearchQuery, resetSearchQuery] = usePersistentState("find-replace-search-query", "");
+  const [replaceQuery, setReplaceQuery, resetReplaceQuery] = usePersistentState("find-replace-replace-query", "");
   
-  const [options, setOptions] = useState<SearchOptions>({
+  const [options, setOptions, resetOptions] = usePersistentState<SearchOptions>("find-replace-options", {
     matchCase: false,
     useRegex: false,
     wholeWord: false,
@@ -263,6 +264,26 @@ export const FindReplace = () => {
 
   return (
     <div className="flex flex-col h-full bg-background text-foreground animate-in fade-in duration-300">
+      <div className="flex justify-end p-2 bg-slate-50 border-b dark:bg-slate-900 border-slate-200 dark:border-slate-800">
+          <Button 
+            variant="ghost" 
+            size="sm" 
+            onClick={() => {
+                resetSelectedPath();
+                resetSearchQuery();
+                resetReplaceQuery();
+                resetOptions();
+                setResults([]);
+                setSearchStats({ scanned: 0, found: 0 });
+                setStatusMessage(null);
+                setSelectedMatches(new Set());
+            }}
+            className="text-xs gap-2 text-muted-foreground hover:text-foreground"
+          >
+              <RotateCcw className="h-3 w-3" />
+              Reset Tool
+          </Button>
+      </div>
       <FindToolbar 
         currentPath={selectedPath}
         onPathChange={setSelectedPath}

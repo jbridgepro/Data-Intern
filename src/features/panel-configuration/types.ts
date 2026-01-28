@@ -19,7 +19,7 @@ export type PanelPosition = "left" | "right" | "bottom" | "hidden";
 /**
  * Panel IDs for consistent identification
  */
-export type PanelId = "sidebar" | "chat" | "editors" | "panel" | "agents";
+export type PanelId = "sidebar" | "chat" | "panel" | "agents";
 
 /**
  * Panel visibility configuration
@@ -30,8 +30,7 @@ export interface PanelVisibility {
   agents: boolean;
   /** Toggle Chat panel visibility */
   chat: boolean;
-  /** Toggle Editors panel visibility */
-  editors: boolean;
+
   /** Toggle bottom Panel visibility */
   panel: boolean;
   /** Toggle main Sidebar visibility */
@@ -61,8 +60,7 @@ export interface PanelSizes {
   sidebar: PanelSizeConfig;
   /** Chat panel width */
   chat: PanelSizeConfig;
-  /** Editors panel width */
-  editors: PanelSizeConfig;
+
   /** Bottom panel height */
   panel: PanelSizeConfig;
   /** Agent sidebar width */
@@ -116,8 +114,7 @@ export interface PanelShortcuts {
   toggleAgents: string;
   /** Toggle Chat panel (⌘⇧B / Ctrl+Shift+B) */
   toggleChat: string;
-  /** Toggle Editors panel (⌘⇧E / Ctrl+Shift+E) */
-  toggleEditors: string;
+
   /** Toggle bottom Panel (⌘J / Ctrl+J) */
   togglePanel: string;
   /** Toggle main Sidebar (⌘B / Ctrl+B) */

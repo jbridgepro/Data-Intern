@@ -11,10 +11,12 @@ import {
   X, 
   Filter, 
   Settings2,
+  ListFilter,
 } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { cn } from "@/lib/utils";
 import { useState, useRef, useEffect } from "react";
 
 interface CopyToolbarProps {
@@ -31,6 +33,9 @@ interface CopyToolbarProps {
   activeFilters: string[];
   availableExtensions: string[];
   onToggleFilter: (ext: string) => void;
+  
+  filterMode: "include" | "exclude";
+  onToggleFilterMode: () => void;
   
   excludeTemp: boolean;
   onToggleExcludeTemp: (val: boolean) => void;
@@ -57,6 +62,8 @@ export const CopyToolbar = ({
   activeFilters,
   availableExtensions,
   onToggleFilter,
+  filterMode,
+  onToggleFilterMode,
   excludeTemp,
   onToggleExcludeTemp,
   onSelectAll,
@@ -80,7 +87,7 @@ export const CopyToolbar = ({
   }, []);
 
   return (
-    <div className="flex flex-col border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+    <div className="flex flex-col border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 relative z-10">
       {/* Top Bar: Source & Global Actions */}
       <div className="flex items-center justify-between px-4 py-3 gap-4">
         <div className="flex items-center gap-3 flex-1">
@@ -193,8 +200,15 @@ export const CopyToolbar = ({
                availableExtensions.map(ext => (
                 <Badge
                   key={ext}
-                  variant={activeFilters.includes(ext) ? "destructive" : "outline"}
-                  className="cursor-pointer text-[10px] h-5 px-2 hover:bg-destructive/80 transition-colors"
+                  variant={activeFilters.includes(ext) 
+                    ? (filterMode === "exclude" ? "destructive" : "default") 
+                    : "outline"}
+                  className={cn(
+                    "cursor-pointer text-[10px] h-5 px-2 transition-colors",
+                    activeFilters.includes(ext) 
+                        ? (filterMode === "exclude" ? "hover:bg-destructive/80" : "hover:bg-primary/80")
+                        : "hover:bg-secondary"
+                  )}
                   onClick={() => !isProcessing && onToggleFilter(ext)}
                 >
                   {ext === "{no-ext}" ? "No Ext" : `.${ext}`}
@@ -232,6 +246,28 @@ export const CopyToolbar = ({
                        checked={excludeTemp}
                        onCheckedChange={onToggleExcludeTemp}
                      />
+                   </div>
+                   
+                   <Separator />
+                   
+                   <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                           <Label className="text-sm">Filter Mode</Label>
+                            <Button
+                               variant="outline"
+                               size="sm"
+                               className="h-6 text-[10px] px-2 gap-1"
+                               onClick={onToggleFilterMode}
+                            >
+                               <ListFilter className="h-3 w-3"/>
+                               {filterMode === "exclude" ? "Exclude Selected" : "Include Selected"}
+                            </Button>
+                        </div>
+                        <p className="text-[10px] text-muted-foreground">
+                           {filterMode === "exclude" 
+                               ? "Selected extensions will be hidden from the list." 
+                               : "Only selected extensions will be shown."}
+                        </p>
                    </div>
                  </div>
                </div>

@@ -23,6 +23,7 @@ import {
   CheckCircle2,
   XCircle,
   AlertTriangle,
+  RotateCcw
 } from "lucide-react";
 import {
   FolderConfig,
@@ -48,6 +49,7 @@ import { Label } from "../../components/ui/label";
 
 import { motion, AnimatePresence } from "framer-motion";
 import { open } from "@tauri-apps/plugin-dialog";
+import { usePersistentState } from "../../hooks/usePersistentState";
 
 // Configuration preset type
 interface ConfigPreset {
@@ -56,7 +58,7 @@ interface ConfigPreset {
 }
 
 export const FolderCreation = () => {
-  const [config, setConfig] = useState<FolderConfig>({
+  const [config, setConfig, resetConfig] = usePersistentState<FolderConfig>("folder-creation-config", {
     rootPath: "",
     creationMode: "pattern",
     folderList: "",
@@ -291,6 +293,21 @@ export const FolderCreation = () => {
               Batch create organized folder structures
             </p>
           </div>
+        </div>
+        <div>
+           <Button
+               variant="ghost"
+               size="icon"
+               onClick={() => {
+                   resetConfig();
+                   // Reset local
+                   setPresetName("");
+               }}
+               className="h-8 w-8 text-muted-foreground hover:text-foreground"
+               title="Reset Configuration"
+           >
+               <RotateCcw className="h-4 w-4" />
+           </Button>
         </div>
       </div>
 

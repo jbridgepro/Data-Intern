@@ -23,7 +23,7 @@ import {
 const DEFAULT_PANEL_SIZES: PanelSizes = {
   sidebar: { size: 256, minSize: 180, maxSize: 400, isMinimized: false },
   chat: { size: 320, minSize: 240, maxSize: 600, isMinimized: false },
-  editors: { size: 256, minSize: 180, maxSize: 400, isMinimized: false },
+
   panel: { size: 256, minSize: 100, maxSize: 500, isMinimized: false },
   agents: { size: 320, minSize: 240, maxSize: 600, isMinimized: false },
 };
@@ -35,10 +35,10 @@ const DEFAULT_CONFIG: PanelConfiguration = {
   viewMode: "editor",
   customViewModes: [],
   visibility: {
-    agents: true,
-    chat: true,
-    editors: true,
-    panel: true,
+    agents: false,
+    chat: false,
+
+    panel: false,
     sidebar: true,
   },
   layout: {
@@ -107,7 +107,7 @@ const loadConfiguration = (): PanelConfiguration => {
         panelSizes: {
           sidebar: { ...DEFAULT_PANEL_SIZES.sidebar, ...(parsed.panelSizes?.sidebar || {}) },
           chat: { ...DEFAULT_PANEL_SIZES.chat, ...(parsed.panelSizes?.chat || {}) },
-          editors: { ...DEFAULT_PANEL_SIZES.editors, ...(parsed.panelSizes?.editors || {}) },
+
           panel: { ...DEFAULT_PANEL_SIZES.panel, ...(parsed.panelSizes?.panel || {}) },
           agents: { ...DEFAULT_PANEL_SIZES.agents, ...(parsed.panelSizes?.agents || {}) },
         },
@@ -280,28 +280,28 @@ export const PanelConfigurationProvider = ({ children }: { children: ReactNode }
       agent: {
         agents: true,
         chat: true,
-        editors: false,
+
         panel: true,
         sidebar: true,
       },
       editor: {
         agents: false,
         chat: false,
-        editors: true,
+
         panel: true,
         sidebar: true,
       },
       zen: {
         agents: false,
         chat: false,
-        editors: true,
+
         panel: false,
         sidebar: false,
       },
       browser: {
         agents: false,
         chat: false,
-        editors: false,
+
         panel: true,
         sidebar: false,
       },

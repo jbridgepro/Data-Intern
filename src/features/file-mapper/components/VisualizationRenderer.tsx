@@ -8,8 +8,6 @@
 import { FileSystemNode } from "../utils/fileSystemScanner";
 import { VisualizationStyle, VisualizationConfig } from "../types";
 import { TreeView } from "./visualizations/TreeView";
-import { SunburstDiagram } from "./visualizations/SunburstDiagram";
-import { TreemapView } from "./visualizations/TreemapView";
 import { NetworkGraph } from "./visualizations/NetworkGraph";
 import { IndentedList } from "./visualizations/IndentedList";
 import { MindMap } from "./visualizations/MindMap";
@@ -40,10 +38,6 @@ export function VisualizationRenderer({
   switch (style) {
     case "tree":
       return <TreeView data={data} config={config} onRefresh={onRefresh} />;
-    case "sunburst":
-      return <SunburstDiagram data={data} config={config} />;
-    case "treemap":
-      return <TreemapView data={data} config={config} />;
     case "network":
       return <NetworkGraph data={data} config={config} />;
     case "indented":

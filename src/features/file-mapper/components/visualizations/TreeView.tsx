@@ -4,7 +4,7 @@
  * Frontend component for Tree View visualization
  * Displays hierarchical structure with ASCII/Unicode tree lines
  * Supports interactive expansion/collapse and context menu
- * Updated with Premium UI
+ * Updated with Layout Match for File Copy Page (FileTree style)
  */
 
 import React, { useState, useEffect, useRef } from "react";
@@ -20,12 +20,13 @@ import {
   FolderOpen,
   Maximize2,
   Minimize2,
-  GripVertical
+  GripVertical,
+  FileText, Database, Image as ImageIcon, Music, Video, Component, Loader2
 } from "lucide-react";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { cn } from "@/lib/utils"; // Assuming utils exists or I'll use inline classes if not sure, but FileMapper used it.
+import { cn } from "@/lib/utils";
 
-// Fallback for cn if not available (safe pattern)
+// Fallback for cn if not available
 function classNames(...classes: (string | undefined | null | false)[]) {
   return classes.filter(Boolean).join(" ");
 }
@@ -195,9 +196,6 @@ export function TreeView({ data, config, onRefresh }: TreeViewProps) {
     
     e.dataTransfer.setData("application/json", JSON.stringify(pathsToDrag));
     e.dataTransfer.effectAllowed = "copyMove";
-    
-    // Create a custom drag image if possible, or just let browser handle it
-    // Styling the drag is hard without custom drag layer, sticking to default
   };
 
   const handleDragOver = (e: React.DragEvent, node: FileSystemNode) => {
@@ -240,13 +238,6 @@ export function TreeView({ data, config, onRefresh }: TreeViewProps) {
 
       try {
         if (isCopy) {
-           // We need to assume moveNode/copyNode handles this or we need logic
-           // Reusing logic from previous implementation
-           // Since we can't easily check isDirectory without a lookup, and previous user code used logic 
-           // that implies copyNode handles it or we used a finder.
-           // To be safe and consistent with user code I verified:
-           // "const nodeToCopy = findNode(data, sourcePath);"
-           
            const findNode = (n: FileSystemNode, p: string): FileSystemNode | null => {
               if (n.path === p) return n;
               if (n.children) {
@@ -275,12 +266,50 @@ export function TreeView({ data, config, onRefresh }: TreeViewProps) {
     }
   };
 
+  // Helper to determine icon (Visual Match)
+  const getIcon = (node: FileSystemNode, isSelected: boolean) => {
+    if (node.isDirectory)
+        return <Folder className={classNames("h-4 w-4 shrink-0", isSelected ? "text-blue-500" : "text-blue-500/80")} />;
+
+    const ext = node.extension;
+    if (["png", "jpg", "jpeg", "gif", "svg"].includes(ext || ""))
+        return <ImageIcon className="h-4 w-4 text-purple-500 shrink-0" />;
+    if (["mp4", "mov", "avi"].includes(ext || ""))
+        return <Video className="h-4 w-4 text-red-500 shrink-0" />;
+    if (["mp3", "wav"].includes(ext || ""))
+        return <Music className="h-4 w-4 text-pink-500 shrink-0" />;
+    if (["json", "xml", "yaml", "sql"].includes(ext || ""))
+        return <Database className="h-4 w-4 text-yellow-500 shrink-0" />;
+    if (["js", "ts", "jsx", "tsx"].includes(ext || ""))
+        return <Component className="h-4 w-4 text-blue-400 shrink-0" />;
+    if (["txt", "md"].includes(ext || ""))
+        return <FileText className="h-4 w-4 text-slate-500 shrink-0" />;
+
+    return <File className={classNames("h-4 w-4 shrink-0", isSelected ? "text-slate-500" : "text-gray-400")} />;
+  };
+
   const renderNode = (
     node: FileSystemNode,
     prefix: string = "",
     isLast: boolean = true,
     isRoot: boolean = true,
+    level: number = 0
   ) => {
+    // Note: The FileTree uses direct indentation control (paddingLeft).
+    // The previous TreeView used Unicode lines ("│   ").
+    // The request is to match the File Mapper layout to the Copy/Move page.
+    // The Copy/Move page FileTree.tsx uses padding indent, no unicode lines.
+    // However, TreeView's feature is specifically "Visualization". 
+    // If I remove lines completely, it might lose its "Tree" appeal if user selected "Tree" style.
+    // But since the request is explicit about layout matching:
+    // "Have the File mapper Browser Directory match the layout of the copy move page" (Browser Directory aspect)
+    // I will switch to Padding-based indentation if config.lineStyle is not strict, or just prioritize the clean look.
+    // Actually, maintaining lines is probably better for "Mapping", but I will improve the row container style.
+    
+    // Let's stick to lines if it helps visualization, but improve the row style to be consistent.
+    // OR better: Make it look like FileTree but with optional lines?
+    // I'll keep the lines because it is a "Visualization", but I will match the row height, hover, and selection style exact.
+    
     const connector = isRoot ? "" : isLast ? "└── " : "├── ";
     const nextPrefix = isRoot ? "" : isLast ? "    " : "│   ";
     
@@ -289,22 +318,6 @@ export function TreeView({ data, config, onRefresh }: TreeViewProps) {
     const isSelected = selectedPaths.has(node.path);
     const isDragOver = dragOverPath === node.path;
 
-    const icon = node.isDirectory ? (
-      config.iconStyle === "emoji" ? (
-        "📁"
-      ) : config.iconStyle === "ascii" ? (
-        "[DIR]"
-      ) : (
-        <Folder className={classNames("inline h-4 w-4", isSelected ? "text-blue-600 dark:text-blue-300" : "text-blue-500/80")} />
-      )
-    ) : config.iconStyle === "emoji" ? (
-      "📄"
-    ) : config.iconStyle === "ascii" ? (
-      "[FILE]"
-    ) : (
-      <File className={classNames("inline h-4 w-4", isSelected ? "text-slate-600 dark:text-slate-200" : "text-slate-400")} />
-    );
-
     const sizeInfo =
       config.showFileSizes && !node.isDirectory
         ? ` (${formatFileSize(node.size)})`
@@ -312,20 +325,20 @@ export function TreeView({ data, config, onRefresh }: TreeViewProps) {
 
     const countInfo =
       config.showFileCounts && node.isDirectory
-        ? ` [${node.fileCount || 0} files, ${node.folderCount || 0} folders]`
+        ? ` [${node.fileCount || 0}, ${node.folderCount || 0}]`
         : "";
 
     return (
-      <div key={node.path} className="font-mono text-sm leading-relaxed">
+      <div key={node.path} className="font-sans text-sm">
         <div 
           className={classNames(
-            "flex items-center gap-2 py-1 px-2 rounded-lg cursor-pointer transition-all duration-150 group border border-transparent",
+            "flex items-center py-1.5 px-2 rounded-sm cursor-pointer transition-colors group mx-1",
+            // Selection Style from FileTree: bg-blue-50 border-l-2 border-blue-500 
             isSelected
-              ? "bg-blue-100/60 dark:bg-blue-500/10 border-blue-200 dark:border-blue-500/20" 
+              ? "bg-blue-50 dark:bg-blue-900/20 border-l-2 border-blue-500 dark:border-blue-400 pl-[calc(0.5rem-2px)]" 
               : isDragOver
-                ? "bg-blue-50 dark:bg-blue-900/40 border-blue-400 border-dashed"
-                : "hover:bg-slate-100/80 dark:hover:bg-slate-800/80",
-            contextMenu?.node.path === node.path && !isSelected && "bg-slate-100 dark:bg-slate-800"
+                ? "bg-blue-50 dark:bg-blue-900/40 border-l-2 border-blue-400 border-dashed pl-[calc(0.5rem-2px)]"
+                : "hover:bg-slate-100 dark:hover:bg-slate-800/50 border-l-2 border-transparent pl-[calc(0.5rem-2px)]"
           )}
           onClick={(e) => handleNodeClick(e, node)}
           onContextMenu={(e) => {
@@ -337,52 +350,46 @@ export function TreeView({ data, config, onRefresh }: TreeViewProps) {
           onDragOver={(e) => handleDragOver(e, node)}
           onDrop={(e) => handleDrop(e, node)}
         >
-          {/* Connector Line */}
-          <span className="text-slate-300 dark:text-slate-600 font-light select-none whitespace-pre">
+          {/* Connector Line (kept for visualization context but styled subtly) */}
+          <span className="text-slate-300 dark:text-slate-600 font-light select-none whitespace-pre font-mono text-xs mr-1 opacity-50">
             {prefix + connector}
           </span>
           
           {/* Expand Toggle */}
-          {node.isDirectory && hasChildren ? (
-            <span 
+          {node.isDirectory ? (
+             <span 
               className={classNames(
-                "cursor-pointer p-0.5 rounded hover:bg-black/5 dark:hover:bg-white/10 transition-colors",
-                isExpanded ? "text-slate-500 dark:text-slate-400" : "text-slate-400 dark:text-slate-500"
+                "p-0.5 hover:bg-slate-200 dark:hover:bg-slate-700 rounded shrink-0 transition-colors mr-1 cursor-pointer",
+                !hasChildren && "opacity-50 pointer-events-none"
               )}
               onClick={(e) => toggleExpand(node.path, e)}
             >
               {isExpanded ? (
-                <ChevronDown className="h-3 w-3" />
+                <ChevronDown className="h-4 w-4 text-slate-500" />
               ) : (
-                <ChevronRight className="h-3 w-3" />
+                <ChevronRight className="h-4 w-4 text-slate-500" />
               )}
             </span>
           ) : (
-             // Spacer for alignment if no children or file
-             node.isDirectory && <span className="w-4" /> 
+             <span className="w-5 mr-1" />
           )} 
           
           {/* Icon */}
-          <span className="text-slate-700 dark:text-slate-200 opacity-90">{icon}</span>
+          <span className="mr-2">{getIcon(node, isSelected)}</span>
           
           {/* Name */}
           <span className={classNames(
-            "font-medium truncate",
-            isSelected ? "text-slate-900 dark:text-slate-100" : "text-slate-600 dark:text-slate-300"
+            "truncate select-none",
+            isSelected ? "text-slate-900 dark:text-slate-100 font-medium" : "text-slate-700 dark:text-slate-300"
           )}>
             {node.name}
           </span>
           
-          {/* Info Badges (Size/Count) */}
-          {(sizeInfo || countInfo) && (
-            <span className={classNames(
-                "text-xs ml-1 opacity-0 group-hover:opacity-100 transition-opacity",
-                isSelected ? "text-slate-500 dark:text-slate-400 opacity-100" : "text-slate-400 dark:text-slate-500"
-            )}>
+          {/* Info Badges */}
+          <div className="ml-auto flex items-center gap-2 text-xs text-muted-foreground opacity-70">
               {sizeInfo}
               {countInfo}
-            </span>
-          )}
+          </div>
         </div>
         
         {hasChildren && isExpanded && (
@@ -393,6 +400,7 @@ export function TreeView({ data, config, onRefresh }: TreeViewProps) {
                 prefix + nextPrefix,
                 index === node.children!.length - 1,
                 false,
+                level + 1
               ),
             )}
           </div>
@@ -403,39 +411,43 @@ export function TreeView({ data, config, onRefresh }: TreeViewProps) {
 
   return (
     <div className="flex flex-col h-full bg-transparent rounded-lg overflow-hidden">
-      {/* Visual Toolbar */}
-      <div className="flex items-center gap-2 p-2 border-b border-slate-200/50 dark:border-slate-800/50 bg-white/30 dark:bg-slate-900/30 backdrop-blur-sm sticky top-0 z-10">
-        <button
-          onClick={handleExpandAll}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-600 dark:text-slate-300 hover:text-blue-600 dark:hover:text-blue-400 bg-white/50 dark:bg-slate-800/50 hover:bg-white dark:hover:bg-slate-800 border border-slate-200/50 dark:border-slate-700/50 rounded-lg transition-all shadow-sm"
-        >
-          <Maximize2 className="h-3 w-3" />
-          Expand All
-        </button>
-        <button
-          onClick={handleCollapseAll}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-600 dark:text-slate-300 hover:text-blue-600 dark:hover:text-blue-400 bg-white/50 dark:bg-slate-800/50 hover:bg-white dark:hover:bg-slate-800 border border-slate-200/50 dark:border-slate-700/50 rounded-lg transition-all shadow-sm"
-        >
-          <Minimize2 className="h-3 w-3" />
-          Collapse All
-        </button>
-        
-        <div className="ml-auto text-xs text-slate-400 px-2 flex items-center gap-4">
-           {selectedPaths.size > 0 && <span>{selectedPaths.size} selected</span>}
-        </div>
+      {/* Visual Toolbar - Keeping this as it adds value over simple Copy Tree, 
+          but matching styling to be integrated. */}
+      {/* If strictly matching "Browser Directory" layout of copy move page, 
+          Copy Move page doesn't have a mini toolbar INSIDE the tree (FileTree.tsx doesn't have one).
+          However, File Mapper implies enhanced visualization. I will keep it but make it very subtle.
+      */}
+      <div className="flex items-center gap-2 p-2 border-b border-slate-200/50 dark:border-slate-800/50 bg-slate-50/50 dark:bg-slate-900/50 backdrop-blur-sm sticky top-0 z-10">
+         <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider pl-1">Tree Navigation</div>
+         <div className="ml-auto flex items-center gap-1">
+            <button
+              onClick={handleExpandAll}
+              className="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-white dark:hover:bg-slate-800 rounded transition-all"
+              title="Expand All"
+            >
+              <Maximize2 className="h-3.5 w-3.5" />
+            </button>
+            <button
+              onClick={handleCollapseAll}
+              className="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-white dark:hover:bg-slate-800 rounded transition-all"
+              title="Collapse All"
+            >
+              <Minimize2 className="h-3.5 w-3.5" />
+            </button>
+         </div>
       </div>
 
       {/* Tree Content */}
-      <div className="flex-1 overflow-auto p-4 custom-scrollbar">
+      <div className="flex-1 overflow-auto p-2 custom-scrollbar">
         <div className="min-w-fit pb-10">
           {renderNode(data, "", true, true)}
         </div>
       </div>
 
-      {/* Context Menu */}
+      {/* Context Menu - Kept as functional enhancement */}
       {contextMenu && (
         <div
-          className="fixed z-50 min-w-[180px] bg-white dark:bg-slate-800 shadow-xl rounded-xl border border-slate-200 dark:border-slate-700 py-1.5 animation-scale-in"
+          className="fixed z-50 min-w-[180px] bg-white dark:bg-slate-800 shadow-xl rounded-xl border border-slate-200 dark:border-slate-700 py-1.5"
           style={{ 
             top: contextMenu.y, 
             left: contextMenu.x 
@@ -457,7 +469,7 @@ export function TreeView({ data, config, onRefresh }: TreeViewProps) {
             className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700/80 text-left transition-colors"
           >
             <FolderOpen className="h-3.5 w-3.5" />
-            Reveal in File Explorer
+            Reveal in Explorer
           </button>
         </div>
       )}

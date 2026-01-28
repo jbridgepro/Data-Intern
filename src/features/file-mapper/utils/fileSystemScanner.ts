@@ -646,3 +646,37 @@ export async function copyNode(
     throw error;
   }
 }
+
+/**
+ * Filter the file tree based on a search term.
+ * Returns a new tree containing only nodes that match the term or have descendants that match.
+ */
+export function filterTree(node: FileSystemNode, searchTerm: string): FileSystemNode | null {
+  if (!searchTerm) return node;
+
+  const term = searchTerm.toLowerCase();
+  const matches = node.name.toLowerCase().includes(term);
+
+  // If node is a file and matches, return it
+  if (!node.isDirectory) {
+    return matches ? { ...node } : null;
+  }
+
+  // If node is directory, filter children
+  let filteredChildren: FileSystemNode[] = [];
+  if (node.children) {
+    filteredChildren = node.children
+      .map(child => filterTree(child, searchTerm))
+      .filter((child): child is FileSystemNode => child !== null);
+  }
+
+  // Include directory if it matches OR if it has matching descendants
+  if (matches || filteredChildren.length > 0) {
+    return {
+      ...node,
+      children: filteredChildren
+    };
+  }
+
+  return null;
+}

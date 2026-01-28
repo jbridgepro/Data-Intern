@@ -30,6 +30,7 @@ interface FileTreeProps {
   onSelectionChange: (entry: FileEntry, isSelected: boolean) => void;
   getDirectoryContents: (path: string) => Promise<FileEntry[]>;
   filterExtensions?: string[];
+  filterMode?: "include" | "exclude";
   searchTerm?: string;
   excludeTemp?: boolean;
 }
@@ -41,6 +42,7 @@ const FileNode = ({
   onSelectionChange,
   getDirectoryContents,
   filterExtensions,
+  filterMode,
   searchTerm,
   excludeTemp,
 }: {
@@ -50,6 +52,7 @@ const FileNode = ({
   onSelectionChange: (entry: FileEntry, isSelected: boolean) => void;
   getDirectoryContents: (path: string) => Promise<FileEntry[]>;
   filterExtensions?: string[];
+  filterMode?: "include" | "exclude";
   searchTerm?: string;
   excludeTemp?: boolean;
 }) => {
@@ -65,9 +68,68 @@ const FileNode = ({
 
   if (filterExtensions && filterExtensions.length > 0 && !entry.isDirectory) {
     const ext = entry.extension ? entry.extension.toLowerCase() : "{no-ext}";
-    if (filterExtensions.includes(ext)) {
-      isVisible = false;
+    if (filterMode === "exclude") {
+        if (filterExtensions.includes(ext)) {
+        isVisible = false;
+        }
+    } else {
+        // Include mode
+        if (!filterExtensions.includes(ext)) {
+            isVisible = false;
+        }
     }
+  } else if (filterMode === "include" && filterExtensions && filterExtensions.length > 0 && !entry.isDirectory) {
+      // If in include mode and extensions are set, but this file has no extension logic above hit (should cover it)
+      // Actually checking logic:
+      // If Include mode:
+      //   If activeFilters has items:
+      //      Only show if ext IN activeFilters.
+      //   If activeFilters is empty:
+      //      Show everything? Or hide everything? 
+      //      Usually "Include mode" with nothing selected means "Include Nothing" -> Hide All.
+      //      Let's double check implementation plan.
+      //      Plan: "Verify all files disappear (if no extensions selected)."
+      
+      // My logic above: 
+      // if (filterExtensions && filterExtensions.length > 0 ...)
+      // This implies if filterExtensions is EMPTY, we skip the block, so isVisible remains true.
+      
+      // If we want "Include Mode with NO selection" to show NOTHING, we need to handle that.
+      // BUT, usually purely empty selection in Include Mode showing nothing is annoying if you just switched.
+      // However, strict "Include Selected" means "Show nothing if nothing selected".
+      
+      // Let's refine the logic block.
+      
+      // REPLACEMENT:
+  }
+  
+  if (filterMode === "include" && !entry.isDirectory) {
+      // If include mode:
+      // If filters are active, only show if match.
+      // If NO filters active, show NOTHING (per strict interpretation) OR Show Everything?
+      // Let's go with: If in include mode, and we have available extensions, we should probably hide unless selected.
+      // But if we haven't selected anything yet, the user sees empty list.
+      // Let's stick effectively to:
+      // If filterExtensions is empty -> Hide everything?
+      // Or should we treat empty as "All"? 
+      // The user prompt said "Toggle whether selected file extensions are included".
+      // If 0 selected, 0 included.
+      
+      if (!filterExtensions || filterExtensions.length === 0) {
+           isVisible = false; 
+      } else {
+           const ext = entry.extension ? entry.extension.toLowerCase() : "{no-ext}";
+           if (!filterExtensions.includes(ext)) {
+               isVisible = false;
+           }
+      }
+  } else if (filterMode === "exclude" && !entry.isDirectory) {
+      if (filterExtensions && filterExtensions.length > 0) {
+        const ext = entry.extension ? entry.extension.toLowerCase() : "{no-ext}";
+        if (filterExtensions.includes(ext)) {
+          isVisible = false;
+        }
+      }
   }
 
   if (searchTerm && !entry.isDirectory) {
@@ -252,6 +314,7 @@ const FileNode = ({
               onSelectionChange={onSelectionChange}
               getDirectoryContents={getDirectoryContents}
               filterExtensions={filterExtensions}
+              filterMode={filterMode}
               searchTerm={searchTerm}
               excludeTemp={excludeTemp}
             />
@@ -276,6 +339,7 @@ export const FileTree = ({
   onSelectionChange,
   getDirectoryContents,
   filterExtensions,
+  filterMode,
   searchTerm,
   excludeTemp,
 }: FileTreeProps) => {
@@ -395,6 +459,7 @@ export const FileTree = ({
                   onSelectionChange={onSelectionChange}
                   getDirectoryContents={getDirectoryContents}
                   filterExtensions={filterExtensions}
+                  filterMode={filterMode}
                   searchTerm={searchTerm}
                   excludeTemp={excludeTemp}
                 />

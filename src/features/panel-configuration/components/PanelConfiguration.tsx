@@ -112,13 +112,7 @@ export const PanelConfiguration = ({
       shortcut: "⌘⇧B",
       description: "Toggle Chat panel",
     },
-    {
-      id: "editors" as const,
-      label: "Editors",
-      icon: FileCode,
-      shortcut: "⌘⇧E",
-      description: "Toggle Editors panel",
-    },
+
     {
       id: "panel" as const,
       label: "Panel",
@@ -236,11 +230,16 @@ export const PanelConfiguration = ({
                         "relative group flex flex-col items-center gap-2 p-4 rounded-xl border-2 transition-all duration-200 cursor-pointer",
                         selectedViewMode === customMode.id
                           ? "border-blue-600 bg-blue-50 dark:bg-blue-900/20 shadow-lg shadow-blue-500/25"
-                          : "border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-800/50"
+                          : "border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-800/50",
                       )}
                       onClick={() => handleViewModeChange(customMode.id)}
                     >
                       <button
+                        // Frontend: Accessible delete button for custom view modes
+                        // Provide an explicit accessible name so screen readers can announce the action
+                        aria-label={`Delete "${customMode.name}" view mode`}
+                        title={`Delete "${customMode.name}" view mode`}
+                        type="button"
                         onClick={(e) => {
                           e.stopPropagation();
                           deleteCustomViewMode(customMode.id);
@@ -249,13 +248,13 @@ export const PanelConfiguration = ({
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                       </button>
-                      
+
                       <div
                         className={cn(
                           "p-3 rounded-lg",
                           selectedViewMode === customMode.id
                             ? "bg-blue-600 text-white"
-                            : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400"
+                            : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400",
                         )}
                       >
                         <Layout className="h-6 w-6" />
@@ -265,7 +264,7 @@ export const PanelConfiguration = ({
                           "text-sm font-medium",
                           selectedViewMode === customMode.id
                             ? "text-blue-600 dark:text-blue-400"
-                            : "text-slate-700 dark:text-slate-300"
+                            : "text-slate-700 dark:text-slate-300",
                         )}
                       >
                         {customMode.name}
@@ -273,7 +272,7 @@ export const PanelConfiguration = ({
                     </div>
                   ))}
                 </div>
-                
+
                 <div className="mt-4 flex flex-col gap-3">
                   {isAddingMode ? (
                     <div className="flex items-center gap-2 max-w-sm">
@@ -288,10 +287,12 @@ export const PanelConfiguration = ({
                         }}
                         autoFocus
                       />
-                      <Button size="sm" onClick={handleSaveMode}>Save</Button>
-                      <Button 
-                        size="sm" 
-                        variant="ghost" 
+                      <Button size="sm" onClick={handleSaveMode}>
+                        Save
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
                         onClick={() => setIsAddingMode(false)}
                       >
                         Cancel
@@ -498,7 +499,7 @@ export const PanelConfiguration = ({
                     }}
                   >
                     <Settings className="h-4 w-4 mr-2" />
-                    Cursor Settings
+                    Settings
                   </Button>
                   <kbd className="px-2 py-1 text-xs font-mono bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded text-slate-700 dark:text-slate-300">
                     {formatShortcut("⇧⌘J")}
