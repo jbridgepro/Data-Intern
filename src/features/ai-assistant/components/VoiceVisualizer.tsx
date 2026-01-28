@@ -22,7 +22,8 @@ export const VoiceVisualizer = ({
   height = 400,
 }: VoiceVisualizerProps) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const animationFrameRef = useRef<number>();
+  // Store the current animation frame ID; initialize with null for browser-safe typing
+  const animationFrameRef = useRef<number | null>(null);
   const particlesRef = useRef<any[]>([]);
 
   useEffect(() => {
@@ -54,10 +55,10 @@ export const VoiceVisualizer = ({
       if (!canvas || !ctx) return;
 
       // Clear with trail effect
-      ctx.fillStyle = "rgba(0, 0, 0, 0.1)"; // Slight trail for "motion blur" feel? 
+      ctx.fillStyle = "rgba(0, 0, 0, 0.1)"; // Slight trail for "motion blur" feel?
       // Actually standard clear is cleaner for the orb style
       ctx.clearRect(0, 0, width, height);
-      
+
       const centerX = width / 2;
       const centerY = height / 2;
 
@@ -65,13 +66,13 @@ export const VoiceVisualizer = ({
       const isListening = state === "listening";
       const isSpeaking = state === "speaking";
       const isProcessing = state === "processing";
-      
+
       // Dynamic color palette based on state
       // Using HSL for easier manipulation
       let hue = 220; // Blue (Idle)
       let saturation = 60;
       let lightness = 60;
-      
+
       if (isListening) {
         hue = 200; // Cyan/Blue
         saturation = 90;
@@ -89,15 +90,31 @@ export const VoiceVisualizer = ({
       // Base radius breathing
       const breath = Math.sin(phase * 0.05) * 5;
       const audioImpulse = audioLevel * 100; // Scale up audio input
-      
+
       // Draw Orb Layers
-      
+
       // Layer 1: Core Glow
-      const coreGradient = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, 150);
-      coreGradient.addColorStop(0, `hsla(${hue}, ${saturation}%, ${lightness + 20}%, 0.8)`);
-      coreGradient.addColorStop(0.2, `hsla(${hue}, ${saturation}%, ${lightness}%, 0.4)`);
-      coreGradient.addColorStop(1, `hsla(${hue}, ${saturation}%, ${lightness}%, 0)`);
-      
+      const coreGradient = ctx.createRadialGradient(
+        centerX,
+        centerY,
+        0,
+        centerX,
+        centerY,
+        150,
+      );
+      coreGradient.addColorStop(
+        0,
+        `hsla(${hue}, ${saturation}%, ${lightness + 20}%, 0.8)`,
+      );
+      coreGradient.addColorStop(
+        0.2,
+        `hsla(${hue}, ${saturation}%, ${lightness}%, 0.4)`,
+      );
+      coreGradient.addColorStop(
+        1,
+        `hsla(${hue}, ${saturation}%, ${lightness}%, 0)`,
+      );
+
       ctx.beginPath();
       ctx.arc(centerX, centerY, 150 + audioImpulse * 0.5, 0, Math.PI * 2);
       ctx.fillStyle = coreGradient;
@@ -107,7 +124,7 @@ export const VoiceVisualizer = ({
       // We simulate a "liquid" surface using sine waves on the radius
       ctx.save();
       ctx.translate(centerX, centerY);
-      
+
       const numPoints = 100;
       ctx.beginPath();
       for (let i = 0; i <= numPoints; i++) {
@@ -116,55 +133,61 @@ export const VoiceVisualizer = ({
         const wave1 = Math.sin(angle * 3 + phase * 0.05);
         const wave2 = Math.sin(angle * 5 - phase * 0.03);
         const wave3 = Math.sin(angle * 7 + phase * 0.02);
-        
+
         // Combine waves
         const distortion = (wave1 + wave2 + wave3) * (5 + audioImpulse * 0.2);
         const r = 80 + breath + audioImpulse + distortion;
-        
+
         const x = Math.cos(angle) * r;
         const y = Math.sin(angle) * r;
-        
+
         if (i === 0) ctx.moveTo(x, y);
         else ctx.lineTo(x, y);
       }
       ctx.closePath();
-      
+
       // Gradient for the liquid surface
       const surfaceGradient = ctx.createLinearGradient(-100, -100, 100, 100);
-      surfaceGradient.addColorStop(0, `hsla(${hue - 20}, ${saturation}%, ${lightness}%, 0.8)`);
-      surfaceGradient.addColorStop(1, `hsla(${hue + 20}, ${saturation}%, ${lightness}%, 0.8)`);
-      
+      surfaceGradient.addColorStop(
+        0,
+        `hsla(${hue - 20}, ${saturation}%, ${lightness}%, 0.8)`,
+      );
+      surfaceGradient.addColorStop(
+        1,
+        `hsla(${hue + 20}, ${saturation}%, ${lightness}%, 0.8)`,
+      );
+
       ctx.fillStyle = surfaceGradient;
       ctx.fill();
-      
+
       // Wireframe overlay for "tech" feel (optional, keeps it cleaner without usually)
       // ctx.strokeStyle = `hsla(${hue}, 90%, 90%, 0.3)`;
       // ctx.lineWidth = 1;
       // ctx.stroke();
-      
+
       ctx.restore();
 
       // Layer 3: orbiting particles (for Processing state mostly)
       if (isProcessing || isSpeaking) {
-         ctx.save();
-         ctx.translate(centerX, centerY);
-         // Faster rotation for processing
-         const rotationSpeed = isProcessing ? 0.05 : 0.01;
-         
-         particlesRef.current.forEach((p, i) => {
-             // Update angle
-             p.angle += p.speed + rotationSpeed;
-             
-             // Draw particle
-             const x = Math.cos(p.angle) * (p.radius + audioImpulse * 0.5);
-             const y = Math.sin(p.angle) * (p.radius + audioImpulse * 0.5);
-             
-             ctx.beginPath();
-             ctx.arc(x, y, 2, 0, Math.PI * 2);
-             ctx.fillStyle = `hsla(${hue}, 100%, 90%, ${0.5 + Math.sin(phase * 0.1 + i) * 0.4})`;
-             ctx.fill();
-         });
-         ctx.restore();
+        ctx.save();
+        ctx.translate(centerX, centerY);
+        // Faster rotation for processing
+        const rotationSpeed = isProcessing ? 0.05 : 0.01;
+
+        particlesRef.current.forEach((p, i) => {
+          // Update angle
+          p.angle += p.speed + rotationSpeed;
+
+          // Draw particle
+          const x = Math.cos(p.angle) * (p.radius + audioImpulse * 0.5);
+          const y = Math.sin(p.angle) * (p.radius + audioImpulse * 0.5);
+
+          ctx.beginPath();
+          ctx.arc(x, y, 2, 0, Math.PI * 2);
+          ctx.fillStyle = `hsla(${hue}, 100%, 90%, ${0.5 + Math.sin(phase * 0.1 + i) * 0.4})`;
+          ctx.fill();
+        });
+        ctx.restore();
       }
 
       phase++;
@@ -181,9 +204,9 @@ export const VoiceVisualizer = ({
   }, [state, audioLevel, width, height]);
 
   return (
-    <canvas 
-      ref={canvasRef} 
-      style={{ width, height }} 
+    <canvas
+      ref={canvasRef}
+      style={{ width, height }}
       className="max-w-full max-h-full pointer-events-none"
     />
   );

@@ -456,7 +456,8 @@ async function processCommandWithAnthropicProvider(
         } else if (content.type === 'tool_use') {
           // AI wants to use a tool
           const toolName = content.name;
-          const toolArgs = content.input;
+          // Anthropic SDK types the input as unknown; normalize to a record for downstream helpers
+          const toolArgs = content.input as Record<string, any>;
 
           // Add reasoning step for tool selection
           reasoningSteps.push({
@@ -478,9 +479,10 @@ async function processCommandWithAnthropicProvider(
           };
           toolExecutions.push(execution);
 
+          // For tool_use blocks, the Anthropic client expects an array of content blocks
           messages.push({
             role: 'assistant',
-            content: content,
+            content: [content],
           });
 
           // Execute the tool

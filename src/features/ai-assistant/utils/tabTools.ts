@@ -193,14 +193,34 @@ export async function executeFolderCreationTool(
     
     const config: FolderConfig = {
       rootPath: params.rootPath,
+      baseName: '', // Not used when folderNames are provided directly
       count: params.folderNames.length,
-      prefix: '',
       subfolders: params.subfolders?.join(',') || '',
-      namingPattern: params.numbering ? 'Number - Name' : 'Name Only',
-      datePosition: params.datePrefix ? 'Prefix' : 'None',
-      dateFormat: params.dateFormat || 'YYYY-MM-DD',
+      useNumbering: params.numbering ?? false,
+      startNumber: 1,
+      digitCount: 2,
+      numberPosition: 'suffix',
+      separator: '-',
+      customPrefix: '',
+      customSuffix: '',
+      useDate: params.datePrefix ?? false,
+      datePosition: params.datePrefix ? 'prefix' : 'suffix',
+      dateFormat: (params.dateFormat as 'YYYY-MM-DD' | 'YYYYMMDD' | 'DD-MM-YYYY' | 'MM-DD-YYYY' | 'YYYY-MM-DD_HH-MM-SS' | 'YYYYMMDD_HHMMSS' | 'timestamp') || 'YYYY-MM-DD',
+      useRandomString: false,
+      randomStringLength: 8,
+      randomStringPosition: 'suffix',
+      useUUID: false,
+      uuidPosition: 'suffix',
       subfolderPrefix: '',
       subfolderSuffix: '',
+      overwrite: false,
+      creationMode: 'pattern',
+      folderList: '',
+      csvDelimiter: ',',
+      csvColumnOrder: [],
+      csvColumnConfig: {},
+      csvRows: [],
+      csvHeaders: [],
     };
     
     // Generate preview nodes with custom names
@@ -332,6 +352,12 @@ export async function executeFileCreationTool(
       uuidPosition: 'suffix',
       creationMode: 'pattern',
       fileList: '',
+      // CSV Configuration (required by FileConfig)
+      csvDelimiter: ',',
+      csvColumnOrder: [],
+      csvColumnConfig: {},
+      csvRows: [],
+      csvHeaders: [],
     };
     
     // Generate file list
@@ -451,6 +477,7 @@ export async function executeFindReplaceTool(
       wholeWord: params.wholeWord ?? false,
       includePattern: params.filePattern || '*',
       excludePattern: '',
+      target: 'content', // Default to searching file content
     };
     
     // Search for matches
@@ -494,7 +521,7 @@ export async function executeFindReplaceTool(
         try {
           const replacements = result.matches.map(match => ({
             line: match.line,
-            oldText: match.text,
+            oldText: match.content.substring(match.matchIndex, match.matchIndex + match.length),
             newText: params.replaceQuery || '',
             matchIndex: match.matchIndex,
           }));

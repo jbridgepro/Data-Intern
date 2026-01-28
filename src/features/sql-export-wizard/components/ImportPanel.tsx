@@ -93,17 +93,26 @@ export function ImportPanel({
     };
   };
 
-  const handleSavePreset = (preset: ImportTemplate) => {
-    const presetToSave: ImportTemplate = {
-      ...preset,
-      configuration: getCurrentConfiguration(),
-    };
-    saveImportTemplate(presetToSave);
-    loadPresets();
+  const handleSavePreset = (preset: ExportTemplate | ImportTemplate) => {
+    // Type guard: ensure it's an ImportTemplate
+    if ('configuration' in preset && 'columnMapping' in preset.configuration) {
+      const importPreset = preset as ImportTemplate;
+      const presetToSave: ImportTemplate = {
+        ...importPreset,
+        configuration: getCurrentConfiguration(),
+      };
+      saveImportTemplate(presetToSave);
+      loadPresets();
+    }
   };
 
-  const handleLoadPreset = (preset: ImportTemplate) => {
-    const config = preset.configuration;
+  const handleLoadPreset = (preset: ExportTemplate | ImportTemplate) => {
+    // Type guard: ensure it's an ImportTemplate
+    if (!('configuration' in preset && 'columnMapping' in preset.configuration)) {
+      return; // Not an import preset, ignore
+    }
+    const importPreset = preset as ImportTemplate;
+    const config = importPreset.configuration;
 
     // Restore configuration
     setSourceFile(config.source.file);
@@ -115,7 +124,7 @@ export function ImportPanel({
 
     // Update last used
     const updatedPreset: ImportTemplate = {
-      ...preset,
+      ...importPreset,
       lastUsed: new Date(),
     };
     saveImportTemplate(updatedPreset);
@@ -347,15 +356,17 @@ export function ImportPanel({
               >
                 Append to existing:
               </Label>
-              <Select className="flex-1 ml-2">
-                <SelectTrigger>
-                  <SelectValue placeholder="Select Table" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="Users">Users</SelectItem>
-                  <SelectItem value="Orders">Orders</SelectItem>
-                </SelectContent>
-              </Select>
+              <div className="flex-1 ml-2">
+                <Select>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select Table" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="Users">Users</SelectItem>
+                    <SelectItem value="Orders">Orders</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
           </div>
         </CardContent>

@@ -27,7 +27,8 @@ export async function generateRenameOperation(
     for (const file of files) {
       const newName = await generateDateBasedName(file);
       if (newName !== file.name) {
-        const targetPath = await join(dirname(file.path), newName);
+        const fileDir = await dirname(file.path);
+      const targetPath = await join(fileDir, newName);
         operations.push({
           sourcePath: file.path,
           targetPath,
@@ -41,7 +42,8 @@ export async function generateRenameOperation(
     for (const file of files) {
       const newName = toSnakeCase(file.name);
       if (newName !== file.name) {
-        const targetPath = await join(dirname(file.path), newName);
+        const fileDir = await dirname(file.path);
+      const targetPath = await join(fileDir, newName);
         operations.push({
           sourcePath: file.path,
           targetPath,
@@ -55,7 +57,8 @@ export async function generateRenameOperation(
     for (const file of files) {
       const newName = standardizeFileName(file.name);
       if (newName !== file.name) {
-        const targetPath = await join(dirname(file.path), newName);
+        const fileDir = await dirname(file.path);
+      const targetPath = await join(fileDir, newName);
         operations.push({
           sourcePath: file.path,
           targetPath,
@@ -69,7 +72,8 @@ export async function generateRenameOperation(
     for (const file of files) {
       const newName = cleanFileName(file.name);
       if (newName !== file.name) {
-        const targetPath = await join(dirname(file.path), newName);
+        const fileDir = await dirname(file.path);
+      const targetPath = await join(fileDir, newName);
         operations.push({
           sourcePath: file.path,
           targetPath,
@@ -94,13 +98,32 @@ export async function generateRenameOperation(
 }
 
 /**
+ * Helper function to get file extension synchronously
+ */
+function getExtname(name: string): string {
+  const lastDot = name.lastIndexOf('.');
+  return lastDot !== -1 ? name.substring(lastDot) : '';
+}
+
+/**
+ * Helper function to get basename synchronously
+ */
+function getBasename(name: string, ext?: string): string {
+  const base = name.split('/').pop() || name;
+  if (ext && base.endsWith(ext)) {
+    return base.slice(0, -ext.length);
+  }
+  return base;
+}
+
+/**
  * Generates a date-based filename.
  */
 async function generateDateBasedName(file: FileInfo): Promise<string> {
   const date = file.created || file.modified || new Date();
   const dateStr = date.toISOString().split('T')[0]; // YYYY-MM-DD
-  const ext = extname(file.name);
-  const baseName = basename(file.name, ext);
+  const ext = getExtname(file.name);
+  const baseName = getBasename(file.name, ext);
 
   // Check if date already in filename
   if (/\d{4}-\d{2}-\d{2}/.test(file.name)) {
@@ -114,8 +137,8 @@ async function generateDateBasedName(file: FileInfo): Promise<string> {
  * Converts filename to snake_case.
  */
 function toSnakeCase(name: string): string {
-  const ext = extname(name);
-  const baseName = basename(name, ext);
+  const ext = getExtname(name);
+  const baseName = getBasename(name, ext);
 
   return baseName
     .replace(/([a-z])([A-Z])/g, '$1_$2')
@@ -127,8 +150,8 @@ function toSnakeCase(name: string): string {
  * Standardizes filename format.
  */
 function standardizeFileName(name: string): string {
-  const ext = extname(name);
-  const baseName = basename(name, ext);
+  const ext = getExtname(name);
+  const baseName = getBasename(name, ext);
 
   // Remove special characters, normalize spaces
   let standardized = baseName
@@ -139,7 +162,7 @@ function standardizeFileName(name: string): string {
   // Capitalize first letter of each word
   standardized = standardized
     .split(' ')
-    .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .map((word: string) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
     .join(' ');
 
   return standardized + ext;
@@ -149,8 +172,8 @@ function standardizeFileName(name: string): string {
  * Cleans up filename (removes extra spaces, special chars).
  */
 function cleanFileName(name: string): string {
-  const ext = extname(name);
-  const baseName = basename(name, ext);
+  const ext = getExtname(name);
+  const baseName = getBasename(name, ext);
 
   let cleaned = baseName
     .replace(/[^\w\s.-]/g, '') // Remove special chars except . and -

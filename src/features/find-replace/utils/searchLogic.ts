@@ -161,7 +161,8 @@ function findInContent(content: string, query: string, options: SearchOptions, f
                 line: lineIdx + 1,
                 content: line,
                 matchIndex: match.index,
-                length: match[0].length
+                length: match[0].length,
+                source: 'content' as const
             });
             if (match.index === regex.lastIndex) {
                 regex.lastIndex++;

@@ -5,7 +5,8 @@
  * Extracts logic from the monolithic ollamaService.ts.
  */
 
-import type { DirectoryAnalysis, ToolDefinition } from '../types';
+import type { DirectoryAnalysis } from '../types';
+import type { ToolDefinition } from '../utils/toolsRegistry';
 import { getConversationalSystemPrompt, generateJsonCommandModePrompt } from '../utils/aiGuidelines';
 
 export class PromptBuilder {
@@ -256,35 +257,6 @@ export class PromptBuilder {
         } else {
             prompt += `IMMEDIATELY execute the tools you mentioned in your previous message. Do not repeat information - take action now.\n\n`;
         }
-        return prompt;
-    }
-
-    private static generateFileCreationPrompt(command: string): string {
-        let prompt = '';
-        prompt += `\n\n=== CRITICAL: FILE CREATION REQUEST ===\n`;
-        prompt += `The user wants to create FILES/DOCUMENTS. This is NON-DESTRUCTIVE - NO CONFIRMATION NEEDED.\n\n`;
-        prompt += `YOU MUST IMMEDIATELY USE THE 'write_file_content' TOOL - DO NOT DESCRIBE, ACTUALLY CALL IT.\n\n`;
-        prompt += `EXECUTION STEPS (DO THIS NOW):\n`;
-        prompt += `1. Extract ALL file names from: "${command}"\n`;
-        prompt += `   - Pattern: "one that says, X, and the other one is, Y" = TWO files: X and Y\n`;
-        prompt += `   - Pattern: "the first document should be called A, the second is B" = TWO files: A and B\n`;
-        prompt += `2. For EACH file name, IMMEDIATELY call 'write_file_content' tool:\n`;
-        prompt += `   - path: Use a RELATIVE path like "filename.docx" - the system will automatically resolve it to the current working directory\n`;
-        prompt += `   - NEVER use placeholder text like "[currentDirectory]" - just use the filename directly\n`;
-        prompt += `   - content: "" (empty string, unless user specified content)\n`;
-        prompt += `   - createDirectories: true\n`;
-        prompt += `   - overwrite: false\n`;
-        prompt += `3. DO NOT write any text response describing what you'll do.\n`;
-        prompt += `4. DO NOT ask for confirmation - just execute.\n`;
-        prompt += `5. After tools execute, report: "Created [X] file(s): [list file names]"\n\n`;
-        prompt += `ABSOLUTELY FORBIDDEN:\n`;
-        prompt += `- Do NOT say "I'll create", "I will create", "I understand", "Before creating", "Let me"\n`;
-        prompt += `- Do NOT show JSON blocks, tool parameters, or technical details\n`;
-        prompt += `- Do NOT ask "Please confirm" or "Would you like me to proceed"\n`;
-        prompt += `- Do NOT use 'folder_creation_tab' (that's for folders only)\n`;
-        prompt += `- Do NOT describe the steps - just execute the tools\n`;
-        prompt += `- Do NOT use placeholder text like "[currentDirectory]" or "/path/to/" in the path\n\n`;
-        prompt += `START CALLING THE TOOLS NOW USING tool_use - NO TEXT RESPONSE UNTIL AFTER EXECUTION.\n\n`;
         return prompt;
     }
 

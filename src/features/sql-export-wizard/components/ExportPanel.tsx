@@ -94,16 +94,25 @@ export function ExportPanel({
     };
   };
 
-  const handleSavePreset = (preset: ExportTemplate) => {
-    const presetToSave: ExportTemplate = {
-      ...preset,
-      configuration: getCurrentConfiguration(),
-    };
-    saveTemplate(presetToSave);
-    loadPresets();
+  const handleSavePreset = (preset: ExportTemplate | ImportTemplate) => {
+    // Type guard: ensure it's an ExportTemplate
+    if ('configuration' in preset && 'format' in preset.configuration) {
+      const exportPreset = preset as ExportTemplate;
+      const presetToSave: ExportTemplate = {
+        ...exportPreset,
+        configuration: getCurrentConfiguration(),
+      };
+      saveTemplate(presetToSave);
+      loadPresets();
+    }
   };
 
-  const handleLoadPreset = (preset: ExportTemplate) => {
+  const handleLoadPreset = (preset: ExportTemplate | ImportTemplate) => {
+    // Type guard: ensure it's an ExportTemplate
+    if (!('configuration' in preset && 'format' in preset.configuration)) {
+      return; // Not an export preset, ignore
+    }
+    const exportPreset = preset as ExportTemplate;
     const config = preset.configuration;
 
     // Restore configuration
@@ -121,7 +130,7 @@ export function ExportPanel({
 
     // Update last used
     const updatedPreset: ExportTemplate = {
-      ...preset,
+      ...exportPreset,
       lastUsed: new Date(),
     };
     saveTemplate(updatedPreset);

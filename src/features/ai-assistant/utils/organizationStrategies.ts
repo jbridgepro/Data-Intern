@@ -132,7 +132,7 @@ async function organizeByDate(
     }
 
     const targetDir = await join(rootPath, folderName);
-    const fileName = basename(file.path);
+    const fileName = await basename(file.path);
     const targetPath = await join(targetDir, fileName);
 
     operations.push({
@@ -167,7 +167,7 @@ async function organizeByProject(files: FileInfo[], rootPath: string): Promise<F
     const targetDir = await join(rootPath, projectName);
 
     for (const file of projectFiles) {
-      const fileName = basename(file.path);
+      const fileName = await basename(file.path);
       const targetPath = await join(targetDir, fileName);
 
       operations.push({
@@ -212,7 +212,7 @@ async function organizeBySize(
     }
 
     const targetDir = await join(rootPath, category);
-    const fileName = basename(file.path);
+    const fileName = await basename(file.path);
     const targetPath = await join(targetDir, fileName);
 
     operations.push({

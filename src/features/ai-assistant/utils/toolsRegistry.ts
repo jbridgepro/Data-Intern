@@ -1373,9 +1373,22 @@ async function createClawdBotCommand(args: string[], workDir?: string): Promise<
     cmd = Command.create('sh', ['-c', `${clawdbotPath} ${escapedArgs}`]);
   }
 
-  // Set working directory if provided
+  // Set working directory if provided - reconstruct command with cd prepended
   if (workDir) {
-    cmd.cwd = workDir;
+    // Reconstruct the command with cd prepended since we can't modify Command properties
+    if (clawdbotPath === 'clawdbot') {
+      // For direct command, wrap in sh with cd
+      const escapedArgs = args.map(arg => `'${arg.replace(/'/g, "'\\''")}'`).join(' ');
+      cmd = Command.create('sh', ['-c', `cd "${workDir}" && clawdbot ${escapedArgs}`]);
+    } else {
+      // For absolute path or Node 22, reconstruct with cd
+      const escapedArgs = args.map(arg => `'${arg.replace(/'/g, "'\\''")}'`).join(' ');
+      if (useNode22 && clawdbotPath !== 'clawdbot') {
+        cmd = Command.create('sh', ['-c', `cd "${workDir}" && ${NODE22_PATH} ${clawdbotPath} ${escapedArgs}`]);
+      } else {
+        cmd = Command.create('sh', ['-c', `cd "${workDir}" && ${clawdbotPath} ${escapedArgs}`]);
+      }
+    }
   }
 
   return { cmd, path: clawdbotPath };
@@ -2104,19 +2117,26 @@ export async function executeTool(
           // Assuming 'sh' is allowed for flexibility as per previous patterns.
           let cmd;
           if (command === 'sh' || command === 'bash') {
-            cmd = Command.create(command, cmdArgs);
+            // For shell commands, we can prepend cd if cwd is specified
+            if (cwd) {
+              const shellCmd = cmdArgs.length > 0 ? cmdArgs.join(' ') : '';
+              cmd = Command.create(command, ['-c', `cd "${cwd}" && ${shellCmd}`]);
+            } else {
+              cmd = Command.create(command, cmdArgs);
+            }
           } else {
             // Wrap in sh -c for maximum compatibility if direct execution isn't whitelisted for every bin
             // But let's try direct first if it matches known patterns, otherwise fallback to sh
             // Actually, the most robust way for arbitrary CLI tools (like node, curl) in this context
             // is often to interpret the whole thing through sh
-            const fullCmd = `${command} ${cmdArgs.map(a => `'${a.replace(/'/g, "'\\''")}'`).join(' ')}`;
+            let fullCmd = `${command} ${cmdArgs.map(a => `'${a.replace(/'/g, "'\\''")}'`).join(' ')}`;
+            if (cwd) {
+              fullCmd = `cd "${cwd}" && ${fullCmd}`;
+            }
             cmd = Command.create('sh', ['-c', fullCmd]);
           }
-
-          if (cwd) {
-            cmd.cwd = cwd;
-          }
+          // Note: For direct commands (not shell), cwd cannot be set in Tauri v2 Command API
+          // The command will run in the current working directory
 
           const result = await cmd.execute();
 
@@ -2206,12 +2226,11 @@ export async function executeTool(
             const cmdArgs = [skill.executablePath, ...skillArgs];
             
             // Use sh -c to execute with the node path
-            const fullCmd = `${skill.nodePath} ${cmdArgs.map(a => `'${a.replace(/'/g, "'\\''")}'`).join(' ')}`;
-            const cmd = Command.create('sh', ['-c', fullCmd]);
-
+            let fullCmd = `${skill.nodePath} ${cmdArgs.map(a => `'${a.replace(/'/g, "'\\''")}'`).join(' ')}`;
             if (cwd) {
-              cmd.cwd = cwd;
+              fullCmd = `cd "${cwd}" && ${fullCmd}`;
             }
+            const cmd = Command.create('sh', ['-c', fullCmd]);
 
             const result = await cmd.execute();
 
@@ -2391,7 +2410,10 @@ async function executeListDirectoryContents(args: Record<string, any>, context: 
           size: metadata.size,
           created: new Date(metadata.birthtime || 0).toISOString(),
           modified: new Date(metadata.mtime || 0).toISOString(),
-          extension: entry.isDirectory ? null : extname(entry.name).slice(1),
+          extension: entry.isDirectory ? null : (() => {
+            const lastDot = entry.name.lastIndexOf('.');
+            return lastDot !== -1 ? entry.name.substring(lastDot + 1) : null;
+          })(),
         });
       } catch (e) {
         // Include entry even if we can't stat it
@@ -2440,8 +2462,9 @@ async function executeGetFileInfo(args: Record<string, any>, context: ToolContex
 
   try {
     const metadata = await stat(filePath);
-    const fileName = basename(filePath);
-    const fileExt = extname(fileName).slice(1);
+    const fileName = await basename(filePath);
+    const lastDot = fileName.lastIndexOf('.');
+    const fileExt = lastDot !== -1 ? fileName.substring(lastDot + 1) : '';
 
     return {
       success: true,
@@ -2473,9 +2496,8 @@ async function executeReadFileContent(args: Record<string, any>, context: ToolCo
 
   try {
     const maxLines = args.maxLines || 10000;
-    const encoding = args.encoding || 'utf8';
-
-    let content = await readTextFile(filePath, { encoding });
+    // Note: Tauri v2 readTextFile always reads as UTF-8, encoding option not supported
+    let content = await readTextFile(filePath);
 
     // Limit lines if specified
     if (maxLines > 0) {
@@ -3001,7 +3023,8 @@ async function executeBatchDelete(args: Record<string, any>, context: ToolContex
 
             // Check age filter
             if (olderThanDays) {
-              const ageDays = (Date.now() - (metadata.mtime || 0)) / (1000 * 60 * 60 * 24);
+              const mtime = metadata.mtime ? (typeof metadata.mtime === 'number' ? metadata.mtime : new Date(metadata.mtime).getTime()) : 0;
+              const ageDays = (Date.now() - mtime) / (1000 * 60 * 60 * 24);
               if (ageDays < olderThanDays) continue;
             }
 
@@ -3115,7 +3138,7 @@ async function executeMoveFile(args: Record<string, any>, context: ToolContext):
     }
 
     // Create parent directory if needed
-    const parentDir = dirname(destPath);
+    const parentDir = await dirname(destPath);
     const parentExists = await exists(parentDir);
     if (!parentExists) {
       await mkdir(parentDir, { recursive: true });
@@ -3170,7 +3193,7 @@ async function executeCopyFile(args: Record<string, any>, context: ToolContext):
     }
 
     // Create parent directory if needed
-    const parentDir = dirname(destPath);
+    const parentDir = await dirname(destPath);
     const parentExists = await exists(parentDir);
     if (!parentExists) {
       await mkdir(parentDir, { recursive: true });
@@ -3244,7 +3267,9 @@ async function executeGetRecentFiles(args: Record<string, any>, context: ToolCon
 
           try {
             const metadata = await stat(entryPath);
-            const modifiedTime = metadata.mtime || 0;
+            const modifiedTime = metadata.mtime 
+              ? (typeof metadata.mtime === 'number' ? metadata.mtime : new Date(metadata.mtime).getTime())
+              : 0;
 
             if (modifiedTime >= cutoffTime) {
               results.push({
@@ -3877,7 +3902,9 @@ async function executeSyncDirectories(args: Record<string, any>, context: ToolCo
               const srcStat = await stat(srcPath);
               const dstStat = await stat(dstPath);
               
-              if (srcStat.mtime > dstStat.mtime || srcStat.size !== dstStat.size) {
+              const srcMtime = srcStat.mtime ? new Date(srcStat.mtime).getTime() : 0;
+              const dstMtime = dstStat.mtime ? new Date(dstStat.mtime).getTime() : 0;
+              if (srcMtime > dstMtime || srcStat.size !== dstStat.size) {
                 toCopy.push({ source: srcPath, dest: dstPath, reason: 'modified' });
               }
             } catch (e) {

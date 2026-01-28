@@ -149,13 +149,14 @@ export const FolderTree = ({
       }
 
       const entries = await readDir(path);
-      const folderEntries: FolderEntry[] = entries
-        .filter((e) => e.isDirectory && !e.name.startsWith("."))
-        .map((e) => ({
+      const filteredEntries = entries.filter((e) => e.isDirectory && !e.name.startsWith("."));
+      const folderEntriesWithPaths = await Promise.all(
+        filteredEntries.map(async (e) => ({
           name: e.name,
-          path: join(path, e.name),
+          path: await join(path, e.name),
         }))
-        .sort((a, b) => a.name.localeCompare(b.name));
+      );
+      const folderEntries: FolderEntry[] = folderEntriesWithPaths.sort((a, b) => a.name.localeCompare(b.name));
 
       setFolders(folderEntries);
       setFilteredFolders(folderEntries);

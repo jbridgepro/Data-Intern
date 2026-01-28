@@ -265,7 +265,9 @@ export const TerminalTabs = () => {
                       ? theme.colors.selection
                       : "transparent",
                   color: theme.colors.foreground,
-                  ringColor: theme.colors.brightBlue,
+                  // ringColor is not a standard CSS property, using CSS variable instead
+                  // @ts-expect-error - Custom property for ring color
+                  ['--ring-color']: theme.colors.brightBlue,
                 }}
               >
                 <div

@@ -749,10 +749,10 @@ async function processCommandWithJsonMode(
     // If we executed fallback tools and there's no response yet, generate one
     if (toolExecutions.length > executedToolsCount && (!finalResponse || finalResponse.trim().length === 0)) {
       const lastTool = toolExecutions[toolExecutions.length - 1];
-      if (lastTool.success) {
+      if (lastTool.result?.success) {
         finalResponse = 'Done! I completed the operation.';
       } else {
-        finalResponse = `I encountered an error: ${lastTool.error || 'Unknown error'}`;
+        finalResponse = `I encountered an error: ${lastTool.result?.error || 'Unknown error'}`;
       }
     }
 

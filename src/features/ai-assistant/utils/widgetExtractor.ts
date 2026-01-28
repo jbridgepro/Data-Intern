@@ -358,7 +358,7 @@ function generateDescription(
         desc += ` starting with "${baseName}"`;
       }
       if (extensions.length > 0) {
-        desc += ` with extension${extensions.length !== 1 ? "s" : ""}: ${extensions.map(e => `.${e}`).join(", ")}`;
+        desc += ` with extension${extensions.length !== 1 ? "s" : ""}: ${extensions.map((e: string) => `.${e}`).join(", ")}`;
       }
       return desc;
 

@@ -98,10 +98,8 @@ export class AudioRecorder {
           noiseSuppression: true,
           autoGainControl: true,
           // Additional constraints for better quality
-          latency: 0.01, // Low latency
-          googEchoCancellation: true,
-          googNoiseSuppression: true,
-          googAutoGainControl: true,
+          // Note: Google-specific constraints (goog*) are not in the standard MediaTrackConstraints type
+          // They may work at runtime but TypeScript doesn't recognize them
           googHighpassFilter: true,
           googTypingNoiseDetection: true,
         },

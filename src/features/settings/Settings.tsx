@@ -19,7 +19,7 @@ import {
   Search,
   Database,
   Sparkles,
-  Slider,
+  Sliders,
   Layout,
   ExternalLink,
 } from "lucide-react";

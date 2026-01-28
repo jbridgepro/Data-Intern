@@ -373,9 +373,8 @@ export const TerminalSession = ({
               shellArgs = ["-c", expandedCommand];
             }
 
-            const process = new Command(shellCommand, shellArgs, {
-              cwd: currentDirectory || undefined,
-            });
+            // Use Command.create() instead of constructor (Tauri v2 API)
+            const process = Command.create(shellCommand, shellArgs);
 
             const output = await process.execute();
 
@@ -398,7 +397,7 @@ export const TerminalSession = ({
               const stderrLines = output.stderr
                 .split("\n")
                 .filter((line) => line.trim() !== "");
-              stderrLines.forEach((line) => {
+              stderrLines.forEach((line: string) => {
                 const errorLine: TerminalLine = {
                   id: `error-${Date.now()}-${Math.random()}`,
                   type: "error",
