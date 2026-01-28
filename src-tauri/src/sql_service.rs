@@ -50,13 +50,11 @@ pub async fn test_mssql_connection(
             })
         }
     } else if params.authentication == "windows" {
-        // Tiberius supports SSPI on Windows, but cross-platform might vary.
-        // For now, we assume this is running where it can use it, or fallback.
-        // On non-windows, this might fail or need Kerberos.
-        // We'll try integrated.
+        // Tiberius supports SSPI on Windows for integrated authentication.
+        // Use AuthMethod::Integrated for Windows integrated authentication (SSPI).
         #[cfg(windows)]
         {
-            config.authentication(AuthMethod::windows_integrated());
+            config.authentication(AuthMethod::Integrated);
         }
         #[cfg(not(windows))]
         {
