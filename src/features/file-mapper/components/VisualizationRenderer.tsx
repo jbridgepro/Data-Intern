@@ -20,12 +20,14 @@ interface VisualizationRendererProps {
   data: FileSystemNode | null;
   style: VisualizationStyle;
   config: VisualizationConfig;
+  onRefresh?: () => void;
 }
 
 export function VisualizationRenderer({
   data,
   style,
   config,
+  onRefresh,
 }: VisualizationRendererProps) {
   if (!data) {
     return (
@@ -37,7 +39,7 @@ export function VisualizationRenderer({
 
   switch (style) {
     case "tree":
-      return <TreeView data={data} config={config} />;
+      return <TreeView data={data} config={config} onRefresh={onRefresh} />;
     case "sunburst":
       return <SunburstDiagram data={data} config={config} />;
     case "treemap":
@@ -53,6 +55,6 @@ export function VisualizationRenderer({
     case "size-analysis":
       return <SizeAnalysis data={data} config={config} />;
     default:
-      return <TreeView data={data} config={config} />;
+      return <TreeView data={data} config={config} onRefresh={onRefresh} />;
   }
 }

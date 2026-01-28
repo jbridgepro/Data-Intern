@@ -5,7 +5,8 @@
  * including file sizes, dates, types, and hierarchical relationships.
  */
 
-import { readDir, DirEntry, stat } from "@tauri-apps/plugin-fs";
+import { readDir, DirEntry, stat, rename, copyFile, mkdir } from "@tauri-apps/plugin-fs";
+import { join } from "@tauri-apps/api/path";
 
 // Extended file entry with full metadata
 export interface FileSystemNode {
@@ -54,10 +55,10 @@ export async function scanDirectory(
   config: Partial<ScanConfig> = {}
 ): Promise<FileSystemNode | null> {
   const finalConfig = { ...defaultConfig, ...config };
-  
+
   try {
     const isBrowser = !(window as any).__TAURI_INTERNALS__;
-    
+
     if (isBrowser) {
       // Return mock data for browser testing
       return createMockTree();
@@ -133,7 +134,7 @@ async function scanDirectoryRecursive(
     if (isDirectory && config.includeFolders) {
       try {
         const entries = await readDir(currentPath);
-        
+
         for (const entry of entries) {
           const childPath = `${currentPath}/${entry.name}`;
           const childNode = await scanDirectoryRecursive(
@@ -270,11 +271,11 @@ function calculateCounts(node: FileSystemNode): void {
  */
 export function formatFileSize(bytes: number): string {
   if (bytes === 0) return "0 B";
-  
+
   const k = 1024;
   const sizes = ["B", "KB", "MB", "GB", "TB"];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
-  
+
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
 }
 
@@ -582,4 +583,66 @@ function createMockTree(): FileSystemNode {
       },
     ],
   };
+}
+/**
+ * Move a file or directory
+ */
+export async function moveNode(
+  sourcePath: string,
+  destPath: string
+): Promise<void> {
+  const isBrowser = !(window as any).__TAURI_INTERNALS__;
+  if (isBrowser) {
+    console.log(`[Mock] Moving ${sourcePath} to ${destPath}`);
+    return;
+  }
+
+  try {
+    await rename(sourcePath, destPath);
+  } catch (error) {
+    console.error(`Error moving ${sourcePath} to ${destPath}:`, error);
+    throw error;
+  }
+}
+
+/**
+ * Copy a file or directory (recursive)
+ */
+export async function copyNode(
+  sourcePath: string,
+  destPath: string,
+  isDirectory: boolean
+): Promise<void> {
+  const isBrowser = !(window as any).__TAURI_INTERNALS__;
+  if (isBrowser) {
+    console.log(`[Mock] Copying ${sourcePath} to ${destPath}`);
+    return;
+  }
+
+  try {
+    if (isDirectory) {
+      // Create destination directory
+      await mkdir(destPath, { recursive: true });
+
+      // Read source directory
+      const entries = await readDir(sourcePath);
+
+      // Recursively copy contents
+      for (const entry of entries) {
+        const srcChildPath = `${sourcePath}/${entry.name}`; // Simple concatenation for now, ideal to use join if possible but basic string op works for exact paths usually
+        const destChildPath = `${destPath}/${entry.name}`;
+
+        // We need to know if child is directory. 
+        // In current tauri-plugin-fs, readDir returns DirEntry which has isDirectory (if detailed) OR name only.
+        // Actually readDir returns Array<DirEntry> where DirEntry { name: string, isDirectory: boolean, ... }
+
+        await copyNode(srcChildPath, destChildPath, entry.isDirectory);
+      }
+    } else {
+      await copyFile(sourcePath, destPath);
+    }
+  } catch (error) {
+    console.error(`Error copying ${sourcePath} to ${destPath}:`, error);
+    throw error;
+  }
 }

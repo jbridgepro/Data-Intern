@@ -81,6 +81,11 @@ export const FolderCreation = () => {
     subfolderPrefix: "",
     subfolderSuffix: "",
     overwrite: false,
+    csvDelimiter: "-",
+    csvColumnOrder: [],
+    csvColumnConfig: {},
+    csvRows: [],
+    csvHeaders: [],
   });
 
   // State to hold the current nodes. This allows edits to persist until config changes.
@@ -205,7 +210,7 @@ export const FolderCreation = () => {
     if (!presetName.trim()) return;
     const newPreset: ConfigPreset = {
       name: presetName.trim(),
-      config: { ...config },
+      config: { ...config, csvRows: [] },
     };
     const updatedPresets = [...presets, newPreset];
     savePresets(updatedPresets);

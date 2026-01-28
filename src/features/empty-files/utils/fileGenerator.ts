@@ -43,8 +43,19 @@ export interface FileConfig {
     overwrite: boolean;
 
     // Creation Mode
-    creationMode: 'pattern' | 'list';
+    creationMode: 'pattern' | 'list' | 'csv';
     fileList: string;
+
+    // CSV Configuration
+    csvDelimiter: string;
+    csvColumnOrder: string[];
+    csvColumnConfig: Record<string, {
+        enabled: boolean;
+        prefix: string;
+        suffix: string;
+    }>;
+    csvRows: Record<string, string>[];
+    csvHeaders: string[];
 }
 
 export interface GeneratedFile {
@@ -132,7 +143,8 @@ const generateFileNameNoExt = (
     index: number,
     config: FileConfig,
     customBaseName?: string,
-    dateStr: string = ''
+    dateStr: string = '',
+    csvRow?: Record<string, string> // Added for CSV mode
 ): string => {
     const {
         baseName,
@@ -140,7 +152,11 @@ const generateFileNameNoExt = (
         separator,
         customPrefix, customSuffix,
         useRandomString, randomStringLength, randomStringPosition,
-        useUUID, uuidPosition
+        useUUID, uuidPosition,
+        creationMode, // Added
+        csvDelimiter, // Added
+        csvColumnOrder, // Added
+        csvColumnConfig // Added
     } = config;
 
     const currentNum = startNumber + (index - 1);
@@ -173,7 +189,25 @@ const generateFileNameNoExt = (
     if (useNumbering && numberPosition === 'prefix') prefixParts.push(numStr);
 
     // Add base name
-    if (customBaseName !== undefined) {
+    if (creationMode === 'csv' && csvRow) {
+        // Build base name from CSV columns
+        const csvParts: string[] = [];
+        const order = csvColumnOrder && csvColumnOrder.length > 0 ? csvColumnOrder : [];
+
+        order.forEach(colId => {
+            const colConfig = csvColumnConfig?.[colId];
+            if (colConfig?.enabled !== false) {
+                let val = csvRow[colId] || '';
+                if (val) {
+                    const p = colConfig?.prefix || '';
+                    const s = colConfig?.suffix || '';
+                    csvParts.push(`${p}${val}${s}`);
+                }
+            }
+        });
+        middleParts.push(csvParts.join(csvDelimiter || separator || ' '));
+
+    } else if (customBaseName !== undefined) {
         if (customBaseName) middleParts.push(customBaseName);
     } else if (baseName) {
         middleParts.push(baseName);
@@ -246,6 +280,28 @@ export const generatePreview = async (config: FileConfig): Promise<GeneratedFile
                 });
             }
         }
+    } else if (config.creationMode === 'csv') {
+        if (!config.csvRows || config.csvRows.length === 0) return [];
+
+        const rows = config.csvRows.slice(0, 50); // Limit to 50 for preview
+
+        rows.forEach((row, index) => {
+            const fileNameNoExt = generateFileNameNoExt(index + 1, config, undefined, dateStr, row);
+
+            for (const ext of activeExtensions) {
+                const fullExt = ext.startsWith('.') || ext === '' ? ext : `.${ext}`;
+                const fileName = `${fileNameNoExt}${fullExt}`;
+                const fullPath = rootPath ? `${rootPath}/${fileName}` : fileName;
+
+                files.push({
+                    id: `file-csv-${index}-${ext}-${Date.now()}`,
+                    name: fileName,
+                    path: fullPath,
+                    status: 'pending'
+                });
+            }
+        });
+
     } else {
         // Pattern Mode
         for (let i = 1; i <= count; i++) {

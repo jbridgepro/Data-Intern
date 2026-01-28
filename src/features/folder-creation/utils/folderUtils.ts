@@ -49,8 +49,19 @@ export interface FolderConfig {
     overwrite?: boolean;
 
     // Creation Mode
-    creationMode: 'pattern' | 'list';
+    creationMode: 'pattern' | 'list' | 'csv';
     folderList: string;
+
+    // CSV Configuration
+    csvDelimiter: string; // The configured delimiter for combining columns
+    csvColumnOrder: string[]; // IDs of columns in order
+    csvColumnConfig: Record<string, {
+        enabled: boolean;
+        prefix: string;
+        suffix: string;
+    }>;
+    csvRows: Record<string, string>[]; // Parsed CSV data (for preview/generation)
+    csvHeaders: string[]; // Original headers or generated Column_X
 }
 
 export interface PreviewNode {
@@ -131,13 +142,16 @@ const generateUUID = (): string => {
  * @param index - The folder index (1-based)
  * @param config - Folder configuration
  * @param currentDate - Optional date object (defaults to current date)
+ * @param customBaseName - Optional custom base name (for list mode)
+ * @param csvRow - Optional CSV row data
  * @returns Generated folder name
  */
 export const generateFolderName = (
     index: number,
     config: FolderConfig,
     currentDate: Date = new Date(),
-    customBaseName?: string
+    customBaseName?: string,
+    csvRow?: Record<string, string>
 ): string => {
     const {
         baseName,
@@ -145,7 +159,11 @@ export const generateFolderName = (
         separator, useDate, dateFormat, datePosition,
         customPrefix, customSuffix,
         useRandomString, randomStringLength, randomStringPosition,
-        useUUID, uuidPosition
+        useUUID, uuidPosition,
+        creationMode,
+        csvDelimiter,
+        csvColumnOrder,
+        csvColumnConfig
     } = config;
 
     const currentNum = startNumber + (index - 1);
@@ -180,8 +198,27 @@ export const generateFolderName = (
     // Add number to prefix if specified
     if (useNumbering && numberPosition === 'prefix') prefixParts.push(numStr);
 
-    // Add base name
-    if (customBaseName !== undefined) {
+    // Determine Base Name
+    if (creationMode === 'csv' && csvRow) {
+        // Build base name from CSV columns
+        const csvParts: string[] = [];
+        const order = csvColumnOrder && csvColumnOrder.length > 0 ? csvColumnOrder : [];
+
+        order.forEach(colId => {
+            const colConfig = csvColumnConfig?.[colId];
+            if (colConfig?.enabled !== false) { // Default to true if not config
+                let val = csvRow[colId] || '';
+                if (val) {
+                    const p = colConfig?.prefix || '';
+                    const s = colConfig?.suffix || '';
+                    csvParts.push(`${p}${val}${s}`);
+                }
+            }
+        });
+
+        middleParts.push(csvParts.join(csvDelimiter || separator || ' '));
+
+    } else if (customBaseName !== undefined) {
         if (customBaseName) middleParts.push(customBaseName);
     } else if (baseName) {
         middleParts.push(baseName);
@@ -269,6 +306,45 @@ export const generatePreview = (config: FolderConfig): PreviewNode[] => {
                 type: "folder"
             });
             return shownNodes;
+        }
+
+        return nodes;
+    }
+
+    // CSV Mode Logic
+    if (config.creationMode === 'csv') {
+        if (!config.csvRows || config.csvRows.length === 0) return [];
+
+        const currentDate = new Date();
+        const rows = config.csvRows;
+
+        // Visualize first 50
+        const previewRows = rows.slice(0, 50);
+
+        previewRows.forEach((row, index) => {
+            const finalName = generateFolderName(index + 1, config, currentDate, undefined, row);
+            const parentId = `folder-csv-${index}`;
+
+            const children: PreviewNode[] = subfolderNames.map((sub, subIndex) => ({
+                id: `${parentId}-sub-${subIndex}`,
+                name: `${config.subfolderPrefix}${sub}${config.subfolderSuffix}`,
+                type: "folder",
+            }));
+
+            nodes.push({
+                id: parentId,
+                name: finalName,
+                type: "folder",
+                children
+            });
+        });
+
+        if (rows.length > 50) {
+            nodes.push({
+                id: 'more-placeholder',
+                name: `... (${rows.length - 50} more - not editable in preview)`,
+                type: "folder"
+            });
         }
 
         return nodes;
@@ -499,6 +575,46 @@ export const createFolders = async (
                         await mkdir(subPath, { recursive: true });
                     }
 
+                } catch (error: any) {
+                    const errorMessage = error?.message || 'Unknown error occurred';
+                    errors.push(`${folderName}: ${errorMessage}`);
+                    console.error(`Failed to create ${fullPath}`, error);
+                }
+            }
+        }
+    } else if (config.creationMode === 'csv') {
+        // CSV creation for > 50 items (or all items, really we should just loop all if we want to be safe, but we follow the pattern)
+        // Actually, recreate ALL for consistency or just the remaining?
+        // The 'validNodes' logic above creates the first 50 (or whatever was previewed/edited).
+        // So we only need to create the Rest.
+
+        const rows = config.csvRows || [];
+        if (rows.length > validNodes.length) {
+            const subfolderNames = config.subfolders
+                .split(/[\n,]/)
+                .map((s) => s.trim())
+                .filter((s) => s.length > 0);
+
+            const currentDate = new Date();
+
+            for (let i = validNodes.length; i < rows.length; i++) {
+                const row = rows[i];
+                const folderName = generateFolderName(i + 1, config, currentDate, undefined, row);
+                const fullPath = await join(config.rootPath, folderName);
+
+                onProgress(i + 1, rows.length, `Creating ${folderName}...`);
+
+                try {
+                    const folderExists = await exists(fullPath);
+                    if (folderExists && !config.overwrite) continue;
+
+                    await mkdir(fullPath, { recursive: true });
+
+                    for (const sub of subfolderNames) {
+                        const subName = `${config.subfolderPrefix}${sub}${config.subfolderSuffix}`;
+                        const subPath = await join(fullPath, subName);
+                        await mkdir(subPath, { recursive: true });
+                    }
                 } catch (error: any) {
                     const errorMessage = error?.message || 'Unknown error occurred';
                     errors.push(`${folderName}: ${errorMessage}`);

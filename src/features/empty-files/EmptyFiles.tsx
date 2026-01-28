@@ -21,6 +21,7 @@ import {
   Clock,
   List,
   Type,
+  FileSpreadsheet, // Added
 } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { writeTextFile, exists } from "@tauri-apps/plugin-fs";
@@ -36,6 +37,7 @@ import {
 import { PreviewList } from "./components/PreviewList";
 import { ExtensionSelector } from "./components/ExtensionSelector";
 import { SettingsAccordion } from "./components/SettingsAccordion";
+import { CsvConfigForm } from "@/components/common/CsvConfigForm";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -82,6 +84,13 @@ export const EmptyFiles = () => {
     useUUID: false,
     uuidPosition: "suffix",
     overwrite: false,
+    
+    // CSV Defaults
+    csvDelimiter: ",",
+    csvColumnOrder: [],
+    csvColumnConfig: {},
+    csvRows: [],
+    csvHeaders: []
   });
 
   const [previewFiles, setPreviewFiles] = useState<GeneratedFile[]>([]);
@@ -263,7 +272,7 @@ export const EmptyFiles = () => {
     if (!presetName.trim()) return;
     const newPreset: ConfigPreset = {
       name: presetName.trim(),
-      config: { ...config },
+      config: { ...config, csvRows: [] }, // Exclude csvRows
     };
     const updatedPresets = [...presets, newPreset];
     savePresets(updatedPresets);
@@ -366,7 +375,7 @@ export const EmptyFiles = () => {
             <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
               Creation Mode
             </Label>
-            <div className="grid grid-cols-2 gap-2 p-1 bg-muted rounded-lg">
+            <div className="grid grid-cols-3 gap-2 p-1 bg-muted rounded-lg">
               <button
                 onClick={() => setConfig(prev => ({ ...prev, creationMode: 'pattern' }))}
                 className={`flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium rounded-md transition-all ${
@@ -391,10 +400,35 @@ export const EmptyFiles = () => {
                 <List className="h-4 w-4" />
                 List
               </button>
+              <button
+                onClick={() => setConfig(prev => ({ ...prev, creationMode: 'csv' }))}
+                className={`flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium rounded-md transition-all ${
+                  config.creationMode === 'csv'
+                    ? 'bg-background text-foreground shadow-sm'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+                disabled={isGenerating}
+              >
+                <FileSpreadsheet className="h-4 w-4" />
+                CSV
+              </button>
             </div>
           </section>
 
           <Separator />
+
+          
+          {/* CSV Config */}
+          {config.creationMode === 'csv' && (
+             <>
+                 <CsvConfigForm 
+                     config={config} 
+                     setConfig={setConfig} 
+                     isCreating={isGenerating} 
+                 />
+                 <Separator />
+             </>
+          )}
 
           {/* List Mode Input */}
           {config.creationMode === 'list' && (
@@ -423,7 +457,7 @@ export const EmptyFiles = () => {
             </Label>
 
             <div className="grid gap-4">
-              {config.creationMode !== 'list' && (
+              {config.creationMode !== 'list' && config.creationMode !== 'csv' && (
                   <div className="space-y-2">
                     <Label>Base Name</Label>
                     <Input
@@ -460,7 +494,7 @@ export const EmptyFiles = () => {
                     </SelectContent>
                   </Select>
                 </div>
-                {config.creationMode !== 'list' && (
+                {config.creationMode !== 'list' && config.creationMode !== 'csv' && (
                   <div className="space-y-2">
                     <Label>Count</Label>
                     <Input

@@ -20,8 +20,9 @@ import {
 import { Separator } from "../../../components/ui/separator";
 import { Switch } from "../../../components/ui/switch";
 import { Slider } from "../../../components/ui/slider";
-import { FolderOpen, Save, Download, Upload, XCircle, List, Type } from "lucide-react";
+import { FolderOpen, Save, Download, Upload, XCircle, List, Type, FileSpreadsheet } from "lucide-react";
 import { motion } from "framer-motion";
+import { CsvConfigForm } from "../../../components/common/CsvConfigForm";
 
 interface ConfigPreset {
   name: string;
@@ -103,7 +104,7 @@ export const FolderForm = ({
         <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
           Creation Mode
         </Label>
-        <div className="grid grid-cols-2 gap-2 p-1 bg-muted rounded-lg">
+        <div className="grid grid-cols-3 gap-2 p-1 bg-muted rounded-lg">
           <button
             onClick={() => setConfig({ ...config, creationMode: 'pattern' })}
             className={`flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium rounded-md transition-all ${
@@ -127,6 +128,18 @@ export const FolderForm = ({
           >
             <List className="h-4 w-4" />
             List
+          </button>
+          <button
+            onClick={() => setConfig({ ...config, creationMode: 'csv' })}
+            className={`flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium rounded-md transition-all ${
+              config.creationMode === 'csv'
+                ? 'bg-background text-foreground shadow-sm'
+                : 'text-muted-foreground hover:text-foreground'
+            }`}
+            disabled={isCreating}
+          >
+            <FileSpreadsheet className="h-4 w-4" />
+            CSV
           </button>
         </div>
       </section>
@@ -156,6 +169,15 @@ export const FolderForm = ({
         </motion.div>
       )}
 
+      {/* CSV Mode Config */}
+      {config.creationMode === 'csv' && (
+        <CsvConfigForm 
+            config={config} 
+            setConfig={setConfig} 
+            isCreating={isCreating} 
+        />
+      )}
+
       <Separator />
 
       {/* Core Naming */}
@@ -165,7 +187,7 @@ export const FolderForm = ({
         </Label>
 
         <div className="grid gap-4">
-          {config.creationMode !== 'list' && (
+          {config.creationMode === 'pattern' && (
              <div className="space-y-2">
                 <Label>Base Name</Label>
                 <Input
@@ -204,7 +226,7 @@ export const FolderForm = ({
                 </SelectContent>
               </Select>
             </div>
-            {config.creationMode !== 'list' && (
+            {config.creationMode === 'pattern' && (
               <div className="space-y-2">
                 <Label>Count</Label>
                 <Input
