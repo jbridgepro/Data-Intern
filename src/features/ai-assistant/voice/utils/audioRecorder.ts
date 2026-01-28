@@ -100,8 +100,7 @@ export class AudioRecorder {
           // Additional constraints for better quality
           // Note: Google-specific constraints (goog*) are not in the standard MediaTrackConstraints type
           // They may work at runtime but TypeScript doesn't recognize them
-          googHighpassFilter: true,
-          googTypingNoiseDetection: true,
+          // Removed googHighpassFilter and googTypingNoiseDetection as they're not in the type definition
         },
       });
 

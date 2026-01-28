@@ -23,7 +23,8 @@ export class VoiceService {
   private isListening = false;
   private isPaused = false;
   private audioRecorder: AudioRecorder | null = null;
-  private recordingInterval: NodeJS.Timeout | null = null;
+  // Use browser-safe timeout type instead of NodeJS.Timeout
+  private recordingInterval: ReturnType<typeof setTimeout> | null = null;
   private onAudioLevel?: (level: number) => void;
   private onVoiceActivity?: (isActive: boolean) => void;
   private currentAudioLevel: number = 0;

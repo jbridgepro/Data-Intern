@@ -28,7 +28,8 @@ export const useVoiceServiceManager = (settings: VoiceSettings) => {
     error: null,
     pid: null,
   });
-  const checkIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  // Use browser-safe timeout type instead of NodeJS.Timeout
+  const checkIntervalRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const startAttemptsRef = useRef(0);
   const maxStartAttempts = 3;
 
