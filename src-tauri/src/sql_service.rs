@@ -86,7 +86,7 @@ pub async fn test_mssql_connection(
 
     // If we got here, connection is successful.
     // Let's try a simple query to get version.
-    let mut stream = client.simple_query("SELECT @@VERSION").await
+    let stream = client.simple_query("SELECT @@VERSION").await
         .map_err(|e| format!("Query failed: {}", e))?;
 
     let row = stream.into_row().await

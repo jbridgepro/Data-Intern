@@ -6,6 +6,8 @@
 use serde::{Deserialize, Serialize};
 use std::process::{Command, Stdio};
 use std::path::PathBuf;
+use tauri::Emitter;
+use futures::StreamExt;
 
 /// Voice service configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -37,6 +39,11 @@ pub struct TranscribeRequest {
     pub model_size: Option<String>,
     pub device: Option<String>,
     pub compute_type: Option<String>,
+    // VibeVoice-ASR support
+    pub provider: Option<String>, // "faster-whisper" or "vibevoice-asr"
+    pub hotwords: Option<Vec<String>>, // Custom terms for VibeVoice accuracy
+    pub enable_diarization: Option<bool>, // Enable speaker identification
+    pub stream: Option<bool>, // Streaming mode
 }
 
 /// Transcription response
@@ -48,6 +55,9 @@ pub struct TranscribeResponse {
     pub language_probability: Option<f64>,
     pub segments: Option<Vec<TranscriptionSegment>>,
     pub error: Option<String>,
+    // VibeVoice-ASR fields
+    pub provider: Option<String>,
+    pub speakers: Option<Vec<String>>,
 }
 
 /// Transcription segment
@@ -57,6 +67,8 @@ pub struct TranscriptionSegment {
     pub end: f64,
     pub text: String,
     pub confidence: f64,
+    // VibeVoice: optional speaker for diarization
+    pub speaker: Option<String>,
 }
 
 /// Synthesis request
@@ -86,12 +98,17 @@ pub struct HealthResponse {
     pub error: Option<String>,
 }
 
-/// Tauri command: Transcribe audio using Faster-Whisper
+/// Tauri command: Transcribe audio using Faster-Whisper or VibeVoice-ASR
 #[tauri::command]
 pub async fn transcribe_audio(
+    app_handle: tauri::AppHandle,
     audio_base64: String,
     language: Option<String>,
     service_url: Option<String>,
+    provider: Option<String>,
+    hotwords: Option<Vec<String>>,
+    enable_diarization: Option<bool>,
+    stream: Option<bool>,
 ) -> Result<TranscribeResponse, String> {
     let url = service_url.unwrap_or_else(|| "http://127.0.0.1:8765".to_string());
     
@@ -101,11 +118,15 @@ pub async fn transcribe_audio(
         model_size: None,
         device: None,
         compute_type: None,
+        provider,
+        hotwords,
+        enable_diarization,
+        stream,
     };
 
     // Create client with timeout
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(60)) // 60 second timeout for transcription
+        .timeout(std::time::Duration::from_secs(120)) // Increased timeout for long-form
         .build()
         .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
 
@@ -115,17 +136,16 @@ pub async fn transcribe_audio(
         .send()
         .await
         .map_err(|e| {
-            // Provide more detailed error messages
             if e.is_timeout() {
-                format!("Transcription timeout: The voice service did not respond within 60 seconds. The Whisper model may still be loading or the audio is too long.")
+                format!("Transcription timeout: The service did not respond via HTTP.")
             } else if e.is_connect() {
-                format!("Cannot connect to voice service at {}. Make sure the service is running and the Whisper model is loaded.", url)
+                format!("Cannot connect to voice service at {}.", url)
             } else {
                 format!("Failed to connect to voice service: {}", e)
             }
         })?;
 
-    if !response.status().is_success() {
+    if !response.status().is_success() && stream != Some(true) {
         let status = response.status();
         let error_text = response.text().await.unwrap_or_else(|_| {
             format!("HTTP {}: Transcription request failed", status.as_u16())
@@ -138,32 +158,112 @@ pub async fn transcribe_audio(
             language_probability: None,
             segments: None,
             error: Some(error_text),
+            provider: None,
+            speakers: None,
         });
     }
 
-    let result: TranscribeResponse = response
-        .json()
-        .await
-        .map_err(|e| {
-            format!("Failed to parse transcription response: {}. The service may have returned invalid JSON.", e)
-        })?;
+    if stream == Some(true) {
+        let mut stream = response.bytes_stream();
+        let mut buffer = String::new();
+        let mut final_response = None;
 
-    // Check if the result itself indicates an error
-    if !result.success {
-        let error_msg = result.error.unwrap_or_else(|| {
-            "Transcription failed: The service returned an error but no error message was provided.".to_string()
-        });
-        return Ok(TranscribeResponse {
-            success: false,
-            text: None,
-            language: None,
-            language_probability: None,
-            segments: None,
-            error: Some(error_msg),
-        });
+        while let Some(item) = stream.next().await {
+            let chunk: Vec<u8> = item.map_err(|e| format!("Stream error: {}", e))?.to_vec();
+            let s = String::from_utf8_lossy(&chunk);
+            buffer.push_str(&s);
+
+            while let Some(pos) = buffer.find('\n') {
+                let line = buffer[..pos].to_string();
+                buffer.drain(..pos + 1);
+                
+                if !line.trim().is_empty() {
+                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&line) {
+                        // Emit event
+                        app_handle.emit("transcription-stream", &json).ok();
+
+                        // Check if done
+                        if json.get("type").and_then(|v| v.as_str()) == Some("done") {
+                            // Parse text: prefer "text" field, else build from segments
+                            let text = json.get("text").and_then(|v| v.as_str()).map(|s| s.to_string());
+                            let segments_value = json.get("segments");
+                            let segments: Option<Vec<TranscriptionSegment>> = segments_value
+                                .and_then(|arr| arr.as_array())
+                                .map(|arr| {
+                                    arr.iter()
+                                        .filter_map(|v| {
+                                            let o = v.as_object()?;
+                                            let start = o.get("start").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                                            let end = o.get("end").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                                            let text = o.get("text").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                                            let confidence = o.get("confidence").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                                            let speaker = o.get("speaker").and_then(|v| v.as_str()).map(|s| s.to_string());
+                                            Some(TranscriptionSegment { start, end, text, confidence, speaker })
+                                        })
+                                        .collect()
+                                })
+                                .filter(|v: &Vec<TranscriptionSegment>| !v.is_empty());
+                            let text = text.filter(|s: &String| !s.trim().is_empty())
+                                .or_else(|| {
+                                    segments.as_ref().map(|segs: &Vec<TranscriptionSegment>| {
+                                        segs.iter().map(|s| s.text.as_str()).collect::<Vec<_>>().join(" ").trim().to_string()
+                                    })
+                                });
+                            final_response = Some(TranscribeResponse {
+                                success: true,
+                                text,
+                                language: json.get("language").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                                language_probability: None,
+                                segments,
+                                error: None,
+                                provider: json.get("provider").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                                speakers: None,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        
+        if let Some(resp) = final_response {
+            return Ok(resp);
+        } else {
+             return Ok(TranscribeResponse {
+                success: true,
+                text: Some("".to_string()),
+                language: None,
+                language_probability: None,
+                segments: None,
+                error: None,
+                provider: None,
+                speakers: None,
+            });
+        }
+
+    } else {
+        // Non-streaming - assume single JSON response
+        let result: TranscribeResponse = response
+            .json()
+            .await
+            .map_err(|e| {
+                format!("Failed to parse transcription response: {}", e)
+            })?;
+
+        if !result.success {
+             let error_msg = result.error.unwrap_or_else(|| "Unknown error".to_string());
+             return Ok(TranscribeResponse {
+                 success: false,
+                 text: None,
+                 language: None,
+                 language_probability: None,
+                 segments: None,
+                 error: Some(error_msg),
+                 provider: None,
+                 speakers: None,
+             });
+        }
+        Ok(result)
     }
-
-    Ok(result)
 }
 
 /// Tauri command: Synthesize text to speech using Piper

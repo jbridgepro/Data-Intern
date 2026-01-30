@@ -64,15 +64,43 @@ import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { testAPIKey, listAvailableModels } from "../utils/aiService";
-import type { AISettings, ContextSettings, CacheSettings, ToolPermissionsSettings, ToolPermission, ToolRiskLevel, OperationHistorySettings, AuditLogSettings, AuditLogLevel, WorkflowSettings, OpenRouterSettings, OpenRouterModel } from "../types";
-import { DEFAULT_CONTEXT_SETTINGS, DEFAULT_CACHE_SETTINGS, DEFAULT_TOOL_PERMISSIONS, TOOL_METADATA, DEFAULT_OPERATION_HISTORY_SETTINGS, DEFAULT_AUDIT_LOG_SETTINGS, DEFAULT_WORKFLOW_SETTINGS, DEFAULT_OPENROUTER_SETTINGS, OPENROUTER_POPULAR_MODELS } from "../types";
+import type {
+  AISettings,
+  ContextSettings,
+  CacheSettings,
+  ToolPermissionsSettings,
+  ToolPermission,
+  ToolRiskLevel,
+  OperationHistorySettings,
+  AuditLogSettings,
+  AuditLogLevel,
+  WorkflowSettings,
+  OpenRouterSettings,
+  OpenRouterModel,
+} from "../types";
+import {
+  DEFAULT_CONTEXT_SETTINGS,
+  DEFAULT_CACHE_SETTINGS,
+  DEFAULT_TOOL_PERMISSIONS,
+  TOOL_METADATA,
+  DEFAULT_OPERATION_HISTORY_SETTINGS,
+  DEFAULT_AUDIT_LOG_SETTINGS,
+  DEFAULT_WORKFLOW_SETTINGS,
+  DEFAULT_OPENROUTER_SETTINGS,
+  OPENROUTER_POPULAR_MODELS,
+} from "../types";
 import { Slider } from "@/components/ui/slider";
 import { directoryCache } from "../utils/directoryCache";
 import { toolPermissionManager } from "../utils/toolPermissions";
 import { operationHistory } from "../utils/operationHistory";
 import { auditLogger } from "../utils/auditLogger";
 import { workflowManager } from "../utils/workflowManager";
-import { openRouterService, formatModelPricing, formatContextLength, getProviderDisplayName } from "../utils/openRouterService";
+import {
+  openRouterService,
+  formatModelPricing,
+  formatContextLength,
+  getProviderDisplayName,
+} from "../utils/openRouterService";
 
 interface SettingsPanelProps {
   settings: AISettings;
@@ -95,7 +123,9 @@ export const SettingsPanel = ({
   const [newExclusion, setNewExclusion] = useState("");
   const [cacheStats, setCacheStats] = useState(directoryCache.getStats());
   const [toolPermissions, setToolPermissions] = useState<ToolPermission[]>([]);
-  const [permissionFilter, setPermissionFilter] = useState<'all' | 'safe' | 'moderate' | 'destructive'>('all');
+  const [permissionFilter, setPermissionFilter] = useState<
+    "all" | "safe" | "moderate" | "destructive"
+  >("all");
 
   // Update cache stats periodically when component is mounted
   useEffect(() => {
@@ -120,14 +150,17 @@ export const SettingsPanel = ({
   };
 
   // Handle changing a tool's permission
-  const handleToolPermissionChange = (toolName: string, status: 'allowed' | 'confirm' | 'disabled') => {
+  const handleToolPermissionChange = (
+    toolName: string,
+    status: "allowed" | "confirm" | "disabled",
+  ) => {
     const currentOverrides = settings.toolPermissions?.toolOverrides || {};
     const currentDisabled = settings.toolPermissions?.disabledTools || [];
-    
+
     let newOverrides = { ...currentOverrides };
     let newDisabled = [...currentDisabled];
-    
-    if (status === 'disabled') {
+
+    if (status === "disabled") {
       // Add to disabled list, remove from overrides
       if (!newDisabled.includes(toolName)) {
         newDisabled.push(toolName);
@@ -135,10 +168,10 @@ export const SettingsPanel = ({
       delete newOverrides[toolName];
     } else {
       // Remove from disabled, add to overrides
-      newDisabled = newDisabled.filter(t => t !== toolName);
+      newDisabled = newDisabled.filter((t) => t !== toolName);
       newOverrides[toolName] = status;
     }
-    
+
     onUpdate({
       toolPermissions: {
         ...DEFAULT_TOOL_PERMISSIONS,
@@ -151,12 +184,14 @@ export const SettingsPanel = ({
 
   // Handle resetting a tool's permission
   const handleResetToolPermission = (toolName: string) => {
-    const currentOverrides = { ...settings.toolPermissions?.toolOverrides || {} };
+    const currentOverrides = {
+      ...(settings.toolPermissions?.toolOverrides || {}),
+    };
     const currentDisabled = settings.toolPermissions?.disabledTools || [];
-    
+
     delete currentOverrides[toolName];
-    const newDisabled = currentDisabled.filter(t => t !== toolName);
-    
+    const newDisabled = currentDisabled.filter((t) => t !== toolName);
+
     onUpdate({
       toolPermissions: {
         ...DEFAULT_TOOL_PERMISSIONS,
@@ -175,38 +210,48 @@ export const SettingsPanel = ({
   };
 
   // Filter tools by risk level
-  const filteredTools = toolPermissions.filter(tool => 
-    permissionFilter === 'all' || tool.riskLevel === permissionFilter
+  const filteredTools = toolPermissions.filter(
+    (tool) => permissionFilter === "all" || tool.riskLevel === permissionFilter,
   );
 
   // Get permission stats
   const permissionStats = {
     total: toolPermissions.length,
-    allowed: toolPermissions.filter(t => t.status === 'allowed').length,
-    confirm: toolPermissions.filter(t => t.status === 'confirm').length,
-    disabled: toolPermissions.filter(t => t.status === 'disabled').length,
+    allowed: toolPermissions.filter((t) => t.status === "allowed").length,
+    confirm: toolPermissions.filter((t) => t.status === "confirm").length,
+    disabled: toolPermissions.filter((t) => t.status === "disabled").length,
   };
 
   // Get risk level icon
   const getRiskIcon = (level: ToolRiskLevel) => {
     switch (level) {
-      case 'safe': return <ShieldCheck className="h-3.5 w-3.5 text-green-500" />;
-      case 'moderate': return <ShieldAlert className="h-3.5 w-3.5 text-yellow-500" />;
-      case 'destructive': return <ShieldOff className="h-3.5 w-3.5 text-red-500" />;
+      case "safe":
+        return <ShieldCheck className="h-3.5 w-3.5 text-green-500" />;
+      case "moderate":
+        return <ShieldAlert className="h-3.5 w-3.5 text-yellow-500" />;
+      case "destructive":
+        return <ShieldOff className="h-3.5 w-3.5 text-red-500" />;
     }
   };
 
   // Get status icon
-  const getStatusIcon = (status: 'allowed' | 'confirm' | 'disabled') => {
+  const getStatusIcon = (status: "allowed" | "confirm" | "disabled") => {
     switch (status) {
-      case 'allowed': return <Unlock className="h-3.5 w-3.5 text-green-500" />;
-      case 'confirm': return <Lock className="h-3.5 w-3.5 text-yellow-500" />;
-      case 'disabled': return <ShieldOff className="h-3.5 w-3.5 text-red-500" />;
+      case "allowed":
+        return <Unlock className="h-3.5 w-3.5 text-green-500" />;
+      case "confirm":
+        return <Lock className="h-3.5 w-3.5 text-yellow-500" />;
+      case "disabled":
+        return <ShieldOff className="h-3.5 w-3.5 text-red-500" />;
     }
   };
 
   // History stats state
-  const [historyStats, setHistoryStats] = useState({ undoCount: 0, redoCount: 0, total: 0 });
+  const [historyStats, setHistoryStats] = useState({
+    undoCount: 0,
+    redoCount: 0,
+    total: 0,
+  });
 
   // Load history stats
   useEffect(() => {
@@ -215,9 +260,13 @@ export const SettingsPanel = ({
       setHistoryStats(operationHistory.getStackInfo());
     };
     loadStats();
-    
+
     const unsubscribe = operationHistory.addListener((_, undo, redo) => {
-      setHistoryStats({ undoCount: undo, redoCount: redo, total: operationHistory.getHistory().length });
+      setHistoryStats({
+        undoCount: undo,
+        redoCount: redo,
+        total: operationHistory.getHistory().length,
+      });
     });
     return () => unsubscribe();
   }, []);
@@ -229,10 +278,10 @@ export const SettingsPanel = ({
   };
 
   // Audit log stats state
-  const [auditStats, setAuditStats] = useState({ 
-    totalEntries: 0, 
-    errorCount: 0, 
-    successRate: 100 
+  const [auditStats, setAuditStats] = useState({
+    totalEntries: 0,
+    errorCount: 0,
+    successRate: 100,
   });
 
   // Load audit stats
@@ -247,7 +296,7 @@ export const SettingsPanel = ({
       });
     };
     loadAuditStats();
-    
+
     const unsubscribe = auditLogger.addListener((_, stats) => {
       setAuditStats({
         totalEntries: stats.totalEntries,
@@ -265,15 +314,17 @@ export const SettingsPanel = ({
   };
 
   // Handle export audit logs
-  const handleExportAuditLogs = (format: 'json' | 'csv' | 'txt') => {
+  const handleExportAuditLogs = (format: "json" | "csv" | "txt") => {
     const exportData = auditLogger.exportLogs(format);
-    const blob = new Blob([exportData.data], { 
-      type: format === 'json' ? 'application/json' : 'text/plain' 
+    const blob = new Blob([exportData.data], {
+      type: format === "json" ? "application/json" : "text/plain",
     });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
+    const a = document.createElement("a");
     a.href = url;
-    a.download = `audit-log-${new Date().toISOString().split('T')[0]}.${format}`;
+    a.download = `audit-log-${
+      new Date().toISOString().split("T")[0]
+    }.${format}`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -281,7 +332,11 @@ export const SettingsPanel = ({
   };
 
   // Workflow stats state
-  const [workflowStats, setWorkflowStats] = useState({ total: 0, favorites: 0, totalRuns: 0 });
+  const [workflowStats, setWorkflowStats] = useState({
+    total: 0,
+    favorites: 0,
+    totalRuns: 0,
+  });
 
   // Load workflow stats
   useEffect(() => {
@@ -290,16 +345,16 @@ export const SettingsPanel = ({
       const workflows = workflowManager.getAllWorkflows();
       setWorkflowStats({
         total: workflows.length,
-        favorites: workflows.filter(w => w.isFavorite).length,
+        favorites: workflows.filter((w) => w.isFavorite).length,
         totalRuns: workflows.reduce((sum, w) => sum + w.runCount, 0),
       });
     };
     loadWorkflowStats();
-    
+
     const unsubscribe = workflowManager.addWorkflowListener((workflows) => {
       setWorkflowStats({
         total: workflows.length,
-        favorites: workflows.filter(w => w.isFavorite).length,
+        favorites: workflows.filter((w) => w.isFavorite).length,
         totalRuns: workflows.reduce((sum, w) => sum + w.runCount, 0),
       });
     });
@@ -309,11 +364,11 @@ export const SettingsPanel = ({
   // Handle export workflows
   const handleExportWorkflows = () => {
     const data = workflowManager.exportWorkflows();
-    const blob = new Blob([data], { type: 'application/json' });
+    const blob = new Blob([data], { type: "application/json" });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
+    const a = document.createElement("a");
     a.href = url;
-    a.download = `workflows-${new Date().toISOString().split('T')[0]}.json`;
+    a.download = `workflows-${new Date().toISOString().split("T")[0]}.json`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -321,9 +376,14 @@ export const SettingsPanel = ({
   };
 
   // OpenRouter state
-  const [openRouterApiKeyValid, setOpenRouterApiKeyValid] = useState<boolean | null>(null);
-  const [isValidatingOpenRouterKey, setIsValidatingOpenRouterKey] = useState(false);
-  const [openRouterCredits, setOpenRouterCredits] = useState<number | null>(null);
+  const [openRouterApiKeyValid, setOpenRouterApiKeyValid] = useState<
+    boolean | null
+  >(null);
+  const [isValidatingOpenRouterKey, setIsValidatingOpenRouterKey] =
+    useState(false);
+  const [openRouterCredits, setOpenRouterCredits] = useState<number | null>(
+    null,
+  );
   const [showOpenRouterKey, setShowOpenRouterKey] = useState(false);
 
   // Validate OpenRouter API key
@@ -336,11 +396,11 @@ export const SettingsPanel = ({
 
     setIsValidatingOpenRouterKey(true);
     openRouterService.updateSettings({ apiKey });
-    
+
     try {
       const result = await openRouterService.validateApiKey();
       setOpenRouterApiKeyValid(result.valid);
-      
+
       if (result.valid) {
         const credits = await openRouterService.getCredits();
         setOpenRouterCredits(credits?.credits || null);
@@ -365,7 +425,9 @@ export const SettingsPanel = ({
 
   // Get selected OpenRouter model info
   const selectedOpenRouterModel = OPENROUTER_POPULAR_MODELS.find(
-    m => m.id === (settings.openRouter?.model || DEFAULT_OPENROUTER_SETTINGS.model)
+    (m) =>
+      m.id ===
+      (settings.openRouter?.model || DEFAULT_OPENROUTER_SETTINGS.model),
   );
 
   const addExclusion = () => {
@@ -465,7 +527,12 @@ export const SettingsPanel = ({
                     <Select
                       value={settings.provider || "anthropic"}
                       onValueChange={(value) => {
-                        onUpdate({ provider: value as "anthropic" | "ollama" | "openrouter" });
+                        onUpdate({
+                          provider: value as
+                            | "anthropic"
+                            | "ollama"
+                            | "openrouter",
+                        });
                         setKeyTestResult(null); // Clear test result when provider changes
                       }}
                     >
@@ -506,9 +573,10 @@ export const SettingsPanel = ({
                       OpenRouter Configuration
                     </Label>
                   </div>
-                  
+
                   {/* Setup Required Alert - Show when API key is not configured */}
-                  {(!settings.openRouter?.apiKey || settings.openRouter.apiKey.trim() === "") && (
+                  {(!settings.openRouter?.apiKey ||
+                    settings.openRouter.apiKey.trim() === "") && (
                     <div className="mb-4 p-3 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800">
                       <div className="flex items-start gap-2">
                         <AlertCircle className="h-4 w-4 text-blue-600 dark:text-blue-400 flex-shrink-0 mt-0.5" />
@@ -517,14 +585,19 @@ export const SettingsPanel = ({
                             API Key Required
                           </p>
                           <p className="text-blue-700 dark:text-blue-300 mb-2">
-                            OpenRouter provides access to 100+ AI models through a single API.
-                            Get your free API key to get started.
+                            OpenRouter provides access to 100+ AI models through
+                            a single API. Get your free API key to get started.
                           </p>
                           <Button
                             size="sm"
                             variant="outline"
                             className="h-7 text-xs border-blue-300 dark:border-blue-700 text-blue-700 dark:text-blue-300"
-                            onClick={() => window.open("https://openrouter.ai/keys", "_blank")}
+                            onClick={() =>
+                              window.open(
+                                "https://openrouter.ai/keys",
+                                "_blank",
+                              )
+                            }
                           >
                             Get API Key →
                           </Button>
@@ -532,11 +605,14 @@ export const SettingsPanel = ({
                       </div>
                     </div>
                   )}
-                  
+
                   <div className="space-y-4">
                     {/* API Key */}
                     <div>
-                      <Label htmlFor="openrouter-api-key" className="flex items-center gap-2">
+                      <Label
+                        htmlFor="openrouter-api-key"
+                        className="flex items-center gap-2"
+                      >
                         <Key className="h-3.5 w-3.5" />
                         API Key
                       </Label>
@@ -547,7 +623,9 @@ export const SettingsPanel = ({
                             type={showOpenRouterKey ? "text" : "password"}
                             value={settings.openRouter?.apiKey || ""}
                             onChange={(e) => {
-                              updateOpenRouterSettings({ apiKey: e.target.value });
+                              updateOpenRouterSettings({
+                                apiKey: e.target.value,
+                              });
                               setOpenRouterApiKeyValid(null);
                             }}
                             placeholder="sk-or-v1-..."
@@ -557,16 +635,25 @@ export const SettingsPanel = ({
                             variant="ghost"
                             size="sm"
                             className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7 p-0"
-                            onClick={() => setShowOpenRouterKey(!showOpenRouterKey)}
+                            onClick={() =>
+                              setShowOpenRouterKey(!showOpenRouterKey)
+                            }
                           >
-                            {showOpenRouterKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                            {showOpenRouterKey ? (
+                              <EyeOff className="h-4 w-4" />
+                            ) : (
+                              <Eye className="h-4 w-4" />
+                            )}
                           </Button>
                         </div>
                         <Button
                           variant="outline"
                           size="sm"
                           onClick={handleValidateOpenRouterKey}
-                          disabled={isValidatingOpenRouterKey || !settings.openRouter?.apiKey}
+                          disabled={
+                            isValidatingOpenRouterKey ||
+                            !settings.openRouter?.apiKey
+                          }
                         >
                           {isValidatingOpenRouterKey ? (
                             <Loader2 className="h-4 w-4 animate-spin" />
@@ -581,9 +668,9 @@ export const SettingsPanel = ({
                       </div>
                       <p className="text-xs text-muted-foreground mt-1">
                         Get your API key from{" "}
-                        <a 
-                          href="https://openrouter.ai/keys" 
-                          target="_blank" 
+                        <a
+                          href="https://openrouter.ai/keys"
+                          target="_blank"
                           rel="noopener noreferrer"
                           className="text-blue-500 hover:underline"
                         >
@@ -597,7 +684,10 @@ export const SettingsPanel = ({
                             <XCircle className="h-3.5 w-3.5" />
                             Invalid API Key
                           </div>
-                          <p className="mt-1">Please check that you've copied the full API key correctly.</p>
+                          <p className="mt-1">
+                            Please check that you've copied the full API key
+                            correctly.
+                          </p>
                         </div>
                       )}
                       {openRouterApiKeyValid === true && (
@@ -618,13 +708,21 @@ export const SettingsPanel = ({
 
                     {/* Model Selection */}
                     <div>
-                      <Label htmlFor="openrouter-model" className="flex items-center gap-2">
+                      <Label
+                        htmlFor="openrouter-model"
+                        className="flex items-center gap-2"
+                      >
                         <Cpu className="h-3.5 w-3.5" />
                         Model
                       </Label>
                       <Select
-                        value={settings.openRouter?.model || DEFAULT_OPENROUTER_SETTINGS.model}
-                        onValueChange={(value) => updateOpenRouterSettings({ model: value })}
+                        value={
+                          settings.openRouter?.model ||
+                          DEFAULT_OPENROUTER_SETTINGS.model
+                        }
+                        onValueChange={(value) =>
+                          updateOpenRouterSettings({ model: value })
+                        }
                       >
                         <SelectTrigger className="mt-1">
                           <SelectValue />
@@ -633,7 +731,9 @@ export const SettingsPanel = ({
                           {OPENROUTER_POPULAR_MODELS.map((model) => (
                             <SelectItem key={model.id} value={model.id}>
                               <div className="flex items-center gap-2">
-                                <span className="font-medium">{model.name}</span>
+                                <span className="font-medium">
+                                  {model.name}
+                                </span>
                                 <span className="text-xs text-muted-foreground">
                                   ({getProviderDisplayName(model.provider)})
                                 </span>
@@ -644,10 +744,15 @@ export const SettingsPanel = ({
                       </Select>
                       {selectedOpenRouterModel && (
                         <div className="mt-2 p-2 bg-slate-50 dark:bg-slate-800 rounded text-xs space-y-1">
-                          <p className="text-muted-foreground">{selectedOpenRouterModel.description}</p>
+                          <p className="text-muted-foreground">
+                            {selectedOpenRouterModel.description}
+                          </p>
                           <div className="flex flex-wrap gap-2">
                             <span className="bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 px-2 py-0.5 rounded">
-                              {formatContextLength(selectedOpenRouterModel.contextLength)} context
+                              {formatContextLength(
+                                selectedOpenRouterModel.contextLength,
+                              )}{" "}
+                              context
                             </span>
                             {selectedOpenRouterModel.supportsTools && (
                               <span className="bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 px-2 py-0.5 rounded">
@@ -672,7 +777,10 @@ export const SettingsPanel = ({
                       <div className="flex items-center justify-between mb-2">
                         <Label htmlFor="openrouter-temp">Temperature</Label>
                         <span className="text-sm text-muted-foreground">
-                          {(settings.openRouter?.temperature ?? DEFAULT_OPENROUTER_SETTINGS.temperature).toFixed(1)}
+                          {(
+                            settings.openRouter?.temperature ??
+                            DEFAULT_OPENROUTER_SETTINGS.temperature
+                          ).toFixed(1)}
                         </span>
                       </div>
                       <Slider
@@ -680,8 +788,13 @@ export const SettingsPanel = ({
                         min={0}
                         max={2}
                         step={0.1}
-                        value={[settings.openRouter?.temperature ?? DEFAULT_OPENROUTER_SETTINGS.temperature]}
-                        onValueChange={(value) => updateOpenRouterSettings({ temperature: value[0] })}
+                        value={[
+                          settings.openRouter?.temperature ??
+                            DEFAULT_OPENROUTER_SETTINGS.temperature,
+                        ]}
+                        onValueChange={(value) =>
+                          updateOpenRouterSettings({ temperature: value[0] })
+                        }
                       />
                       <p className="text-xs text-muted-foreground mt-1">
                         Lower = more focused, Higher = more creative
@@ -693,7 +806,8 @@ export const SettingsPanel = ({
                       <div className="flex items-center justify-between mb-2">
                         <Label htmlFor="openrouter-tokens">Max Tokens</Label>
                         <span className="text-sm text-muted-foreground">
-                          {settings.openRouter?.maxTokens ?? DEFAULT_OPENROUTER_SETTINGS.maxTokens}
+                          {settings.openRouter?.maxTokens ??
+                            DEFAULT_OPENROUTER_SETTINGS.maxTokens}
                         </span>
                       </div>
                       <Slider
@@ -701,18 +815,27 @@ export const SettingsPanel = ({
                         min={256}
                         max={16384}
                         step={256}
-                        value={[settings.openRouter?.maxTokens ?? DEFAULT_OPENROUTER_SETTINGS.maxTokens]}
-                        onValueChange={(value) => updateOpenRouterSettings({ maxTokens: value[0] })}
+                        value={[
+                          settings.openRouter?.maxTokens ??
+                            DEFAULT_OPENROUTER_SETTINGS.maxTokens,
+                        ]}
+                        onValueChange={(value) =>
+                          updateOpenRouterSettings({ maxTokens: value[0] })
+                        }
                       />
                     </div>
 
                     {/* Site Info (for rankings) */}
                     <div>
-                      <Label htmlFor="openrouter-site">Site Name (Optional)</Label>
+                      <Label htmlFor="openrouter-site">
+                        Site Name (Optional)
+                      </Label>
                       <Input
                         id="openrouter-site"
                         value={settings.openRouter?.siteName || ""}
-                        onChange={(e) => updateOpenRouterSettings({ siteName: e.target.value })}
+                        onChange={(e) =>
+                          updateOpenRouterSettings({ siteName: e.target.value })
+                        }
                         placeholder="File Pro"
                         className="mt-1"
                       />
@@ -724,15 +847,22 @@ export const SettingsPanel = ({
                     {/* Enable Fallback */}
                     <div className="flex items-center justify-between">
                       <div className="space-y-0.5">
-                        <Label htmlFor="openrouter-fallback">Enable Fallback</Label>
+                        <Label htmlFor="openrouter-fallback">
+                          Enable Fallback
+                        </Label>
                         <p className="text-xs text-muted-foreground">
                           Automatically try backup models on failure
                         </p>
                       </div>
                       <Switch
                         id="openrouter-fallback"
-                        checked={settings.openRouter?.enableFallback ?? DEFAULT_OPENROUTER_SETTINGS.enableFallback}
-                        onCheckedChange={(checked) => updateOpenRouterSettings({ enableFallback: checked })}
+                        checked={
+                          settings.openRouter?.enableFallback ??
+                          DEFAULT_OPENROUTER_SETTINGS.enableFallback
+                        }
+                        onCheckedChange={(checked) =>
+                          updateOpenRouterSettings({ enableFallback: checked })
+                        }
                       />
                     </div>
                   </div>
@@ -855,7 +985,9 @@ export const SettingsPanel = ({
                             className="h-6 px-2"
                           >
                             <RefreshCw
-                              className={`h-3 w-3 mr-1 ${isLoadingModels ? "animate-spin" : ""}`}
+                              className={`h-3 w-3 mr-1 ${
+                                isLoadingModels ? "animate-spin" : ""
+                              }`}
                             />
                             Refresh
                           </Button>
@@ -1442,19 +1574,27 @@ export const SettingsPanel = ({
                   <div className="p-3 bg-slate-100 dark:bg-slate-800 rounded-lg">
                     <div className="grid grid-cols-4 gap-2 text-center text-xs">
                       <div>
-                        <div className="font-semibold text-slate-700 dark:text-slate-300">{permissionStats.total}</div>
+                        <div className="font-semibold text-slate-700 dark:text-slate-300">
+                          {permissionStats.total}
+                        </div>
                         <div className="text-muted-foreground">Total</div>
                       </div>
                       <div>
-                        <div className="font-semibold text-green-600">{permissionStats.allowed}</div>
+                        <div className="font-semibold text-green-600">
+                          {permissionStats.allowed}
+                        </div>
                         <div className="text-muted-foreground">Allowed</div>
                       </div>
                       <div>
-                        <div className="font-semibold text-yellow-600">{permissionStats.confirm}</div>
+                        <div className="font-semibold text-yellow-600">
+                          {permissionStats.confirm}
+                        </div>
                         <div className="text-muted-foreground">Confirm</div>
                       </div>
                       <div>
-                        <div className="font-semibold text-red-600">{permissionStats.disabled}</div>
+                        <div className="font-semibold text-red-600">
+                          {permissionStats.disabled}
+                        </div>
                         <div className="text-muted-foreground">Disabled</div>
                       </div>
                     </div>
@@ -1463,14 +1603,19 @@ export const SettingsPanel = ({
                   {/* Enable Permission Checking */}
                   <div className="flex items-center justify-between">
                     <div className="space-y-0.5">
-                      <Label htmlFor="permissions-enabled">Enable Permission Checking</Label>
+                      <Label htmlFor="permissions-enabled">
+                        Enable Permission Checking
+                      </Label>
                       <p className="text-xs text-muted-foreground">
                         Enforce tool permissions and confirmations
                       </p>
                     </div>
                     <Switch
                       id="permissions-enabled"
-                      checked={settings.toolPermissions?.enabled ?? DEFAULT_TOOL_PERMISSIONS.enabled}
+                      checked={
+                        settings.toolPermissions?.enabled ??
+                        DEFAULT_TOOL_PERMISSIONS.enabled
+                      }
                       onCheckedChange={(checked) =>
                         onUpdate({
                           toolPermissions: {
@@ -1486,14 +1631,19 @@ export const SettingsPanel = ({
                   {/* Require Confirmation for Destructive */}
                   <div className="flex items-center justify-between">
                     <div className="space-y-0.5">
-                      <Label htmlFor="confirm-destructive">Confirm Destructive Operations</Label>
+                      <Label htmlFor="confirm-destructive">
+                        Confirm Destructive Operations
+                      </Label>
                       <p className="text-xs text-muted-foreground">
                         Require confirmation for delete/move operations
                       </p>
                     </div>
                     <Switch
                       id="confirm-destructive"
-                      checked={!settings.toolPermissions?.allowDestructiveWithoutConfirmation}
+                      checked={
+                        !settings.toolPermissions
+                          ?.allowDestructiveWithoutConfirmation
+                      }
                       onCheckedChange={(checked) =>
                         onUpdate({
                           toolPermissions: {
@@ -1503,7 +1653,12 @@ export const SettingsPanel = ({
                           },
                         })
                       }
-                      disabled={!(settings.toolPermissions?.enabled ?? DEFAULT_TOOL_PERMISSIONS.enabled)}
+                      disabled={
+                        !(
+                          settings.toolPermissions?.enabled ??
+                          DEFAULT_TOOL_PERMISSIONS.enabled
+                        )
+                      }
                     />
                   </div>
 
@@ -1511,19 +1666,31 @@ export const SettingsPanel = ({
                   <div>
                     <Label>Filter by Risk Level</Label>
                     <div className="flex gap-2 mt-2">
-                      {(['all', 'safe', 'moderate', 'destructive'] as const).map((filter) => (
+                      {(
+                        ["all", "safe", "moderate", "destructive"] as const
+                      ).map((filter) => (
                         <Button
                           key={filter}
-                          variant={permissionFilter === filter ? 'default' : 'outline'}
+                          variant={
+                            permissionFilter === filter ? "default" : "outline"
+                          }
                           size="sm"
                           onClick={() => setPermissionFilter(filter)}
                           className="text-xs capitalize"
                         >
-                          {filter === 'all' ? 'All' : (
+                          {filter === "all" ? (
+                            "All"
+                          ) : (
                             <>
-                              {filter === 'safe' && <ShieldCheck className="h-3 w-3 mr-1" />}
-                              {filter === 'moderate' && <ShieldAlert className="h-3 w-3 mr-1" />}
-                              {filter === 'destructive' && <ShieldOff className="h-3 w-3 mr-1" />}
+                              {filter === "safe" && (
+                                <ShieldCheck className="h-3 w-3 mr-1" />
+                              )}
+                              {filter === "moderate" && (
+                                <ShieldAlert className="h-3 w-3 mr-1" />
+                              )}
+                              {filter === "destructive" && (
+                                <ShieldOff className="h-3 w-3 mr-1" />
+                              )}
                               {filter}
                             </>
                           )}
@@ -1542,17 +1709,28 @@ export const SettingsPanel = ({
                         <div className="flex items-center gap-2 flex-1 min-w-0">
                           {getRiskIcon(tool.riskLevel)}
                           <div className="min-w-0">
-                            <div className="text-sm font-medium truncate">{tool.displayName}</div>
-                            <div className="text-xs text-muted-foreground truncate">{tool.description}</div>
+                            <div className="text-sm font-medium truncate">
+                              {tool.displayName}
+                            </div>
+                            <div className="text-xs text-muted-foreground truncate">
+                              {tool.description}
+                            </div>
                           </div>
                         </div>
                         <div className="flex items-center gap-1 ml-2">
                           <Select
                             value={tool.status}
-                            onValueChange={(value: 'allowed' | 'confirm' | 'disabled') =>
+                            onValueChange={(
+                              value: "allowed" | "confirm" | "disabled",
+                            ) =>
                               handleToolPermissionChange(tool.toolName, value)
                             }
-                            disabled={!(settings.toolPermissions?.enabled ?? DEFAULT_TOOL_PERMISSIONS.enabled) || !tool.canDisable}
+                            disabled={
+                              !(
+                                settings.toolPermissions?.enabled ??
+                                DEFAULT_TOOL_PERMISSIONS.enabled
+                              ) || !tool.canDisable
+                            }
                           >
                             <SelectTrigger className="h-7 w-24 text-xs">
                               <SelectValue />
@@ -1584,8 +1762,15 @@ export const SettingsPanel = ({
                             variant="ghost"
                             size="icon"
                             className="h-7 w-7"
-                            onClick={() => handleResetToolPermission(tool.toolName)}
-                            disabled={!(settings.toolPermissions?.enabled ?? DEFAULT_TOOL_PERMISSIONS.enabled)}
+                            onClick={() =>
+                              handleResetToolPermission(tool.toolName)
+                            }
+                            disabled={
+                              !(
+                                settings.toolPermissions?.enabled ??
+                                DEFAULT_TOOL_PERMISSIONS.enabled
+                              )
+                            }
                             title="Reset to default"
                           >
                             <RotateCcw className="h-3 w-3" />
@@ -1623,15 +1808,21 @@ export const SettingsPanel = ({
                   <div className="p-3 bg-slate-100 dark:bg-slate-800 rounded-lg">
                     <div className="grid grid-cols-3 gap-2 text-center text-xs">
                       <div>
-                        <div className="font-semibold text-slate-700 dark:text-slate-300">{historyStats.total}</div>
+                        <div className="font-semibold text-slate-700 dark:text-slate-300">
+                          {historyStats.total}
+                        </div>
                         <div className="text-muted-foreground">Total</div>
                       </div>
                       <div>
-                        <div className="font-semibold text-blue-600">{historyStats.undoCount}</div>
+                        <div className="font-semibold text-blue-600">
+                          {historyStats.undoCount}
+                        </div>
                         <div className="text-muted-foreground">Undo</div>
                       </div>
                       <div>
-                        <div className="font-semibold text-green-600">{historyStats.redoCount}</div>
+                        <div className="font-semibold text-green-600">
+                          {historyStats.redoCount}
+                        </div>
                         <div className="text-muted-foreground">Redo</div>
                       </div>
                     </div>
@@ -1651,14 +1842,19 @@ export const SettingsPanel = ({
                   {/* Enable History */}
                   <div className="flex items-center justify-between">
                     <div className="space-y-0.5">
-                      <Label htmlFor="history-enabled">Enable History Tracking</Label>
+                      <Label htmlFor="history-enabled">
+                        Enable History Tracking
+                      </Label>
                       <p className="text-xs text-muted-foreground">
                         Record operations for undo/redo
                       </p>
                     </div>
                     <Switch
                       id="history-enabled"
-                      checked={settings.operationHistory?.enabled ?? DEFAULT_OPERATION_HISTORY_SETTINGS.enabled}
+                      checked={
+                        settings.operationHistory?.enabled ??
+                        DEFAULT_OPERATION_HISTORY_SETTINGS.enabled
+                      }
                       onCheckedChange={(checked) =>
                         onUpdate({
                           operationHistory: {
@@ -1681,7 +1877,10 @@ export const SettingsPanel = ({
                     </div>
                     <Switch
                       id="auto-backup"
-                      checked={settings.operationHistory?.autoBackup ?? DEFAULT_OPERATION_HISTORY_SETTINGS.autoBackup}
+                      checked={
+                        settings.operationHistory?.autoBackup ??
+                        DEFAULT_OPERATION_HISTORY_SETTINGS.autoBackup
+                      }
                       onCheckedChange={(checked) =>
                         onUpdate({
                           operationHistory: {
@@ -1691,7 +1890,12 @@ export const SettingsPanel = ({
                           },
                         })
                       }
-                      disabled={!(settings.operationHistory?.enabled ?? DEFAULT_OPERATION_HISTORY_SETTINGS.enabled)}
+                      disabled={
+                        !(
+                          settings.operationHistory?.enabled ??
+                          DEFAULT_OPERATION_HISTORY_SETTINGS.enabled
+                        )
+                      }
                     />
                   </div>
 
@@ -1705,7 +1909,10 @@ export const SettingsPanel = ({
                     </div>
                     <Switch
                       id="persist-history"
-                      checked={settings.operationHistory?.persistHistory ?? DEFAULT_OPERATION_HISTORY_SETTINGS.persistHistory}
+                      checked={
+                        settings.operationHistory?.persistHistory ??
+                        DEFAULT_OPERATION_HISTORY_SETTINGS.persistHistory
+                      }
                       onCheckedChange={(checked) =>
                         onUpdate({
                           operationHistory: {
@@ -1715,7 +1922,12 @@ export const SettingsPanel = ({
                           },
                         })
                       }
-                      disabled={!(settings.operationHistory?.enabled ?? DEFAULT_OPERATION_HISTORY_SETTINGS.enabled)}
+                      disabled={
+                        !(
+                          settings.operationHistory?.enabled ??
+                          DEFAULT_OPERATION_HISTORY_SETTINGS.enabled
+                        )
+                      }
                     />
                   </div>
 
@@ -1724,7 +1936,9 @@ export const SettingsPanel = ({
                     <div className="flex items-center justify-between mb-2">
                       <Label htmlFor="history-size">History Size</Label>
                       <span className="text-sm text-muted-foreground">
-                        {settings.operationHistory?.maxHistorySize ?? DEFAULT_OPERATION_HISTORY_SETTINGS.maxHistorySize} operations
+                        {settings.operationHistory?.maxHistorySize ??
+                          DEFAULT_OPERATION_HISTORY_SETTINGS.maxHistorySize}{" "}
+                        operations
                       </span>
                     </div>
                     <Slider
@@ -1732,7 +1946,10 @@ export const SettingsPanel = ({
                       min={10}
                       max={200}
                       step={10}
-                      value={[settings.operationHistory?.maxHistorySize ?? DEFAULT_OPERATION_HISTORY_SETTINGS.maxHistorySize]}
+                      value={[
+                        settings.operationHistory?.maxHistorySize ??
+                          DEFAULT_OPERATION_HISTORY_SETTINGS.maxHistorySize,
+                      ]}
                       onValueChange={(value) =>
                         onUpdate({
                           operationHistory: {
@@ -1742,7 +1959,12 @@ export const SettingsPanel = ({
                           },
                         })
                       }
-                      disabled={!(settings.operationHistory?.enabled ?? DEFAULT_OPERATION_HISTORY_SETTINGS.enabled)}
+                      disabled={
+                        !(
+                          settings.operationHistory?.enabled ??
+                          DEFAULT_OPERATION_HISTORY_SETTINGS.enabled
+                        )
+                      }
                       className="mt-2"
                     />
                     <p className="text-xs text-muted-foreground mt-1">
@@ -1767,15 +1989,21 @@ export const SettingsPanel = ({
                   <div className="p-3 bg-slate-100 dark:bg-slate-800 rounded-lg">
                     <div className="grid grid-cols-3 gap-2 text-center text-xs">
                       <div>
-                        <div className="font-semibold text-slate-700 dark:text-slate-300">{auditStats.totalEntries}</div>
+                        <div className="font-semibold text-slate-700 dark:text-slate-300">
+                          {auditStats.totalEntries}
+                        </div>
                         <div className="text-muted-foreground">Entries</div>
                       </div>
                       <div>
-                        <div className="font-semibold text-red-600">{auditStats.errorCount}</div>
+                        <div className="font-semibold text-red-600">
+                          {auditStats.errorCount}
+                        </div>
                         <div className="text-muted-foreground">Errors</div>
                       </div>
                       <div>
-                        <div className="font-semibold text-green-600">{auditStats.successRate.toFixed(0)}%</div>
+                        <div className="font-semibold text-green-600">
+                          {auditStats.successRate.toFixed(0)}%
+                        </div>
                         <div className="text-muted-foreground">Success</div>
                       </div>
                     </div>
@@ -1784,7 +2012,7 @@ export const SettingsPanel = ({
                         <Button
                           variant="outline"
                           size="sm"
-                          onClick={() => handleExportAuditLogs('json')}
+                          onClick={() => handleExportAuditLogs("json")}
                           className="flex-1"
                         >
                           <Download className="h-3 w-3 mr-1" />
@@ -1806,14 +2034,19 @@ export const SettingsPanel = ({
                   {/* Enable Audit Logging */}
                   <div className="flex items-center justify-between">
                     <div className="space-y-0.5">
-                      <Label htmlFor="audit-enabled">Enable Audit Logging</Label>
+                      <Label htmlFor="audit-enabled">
+                        Enable Audit Logging
+                      </Label>
                       <p className="text-xs text-muted-foreground">
                         Track all AI operations for compliance
                       </p>
                     </div>
                     <Switch
                       id="audit-enabled"
-                      checked={settings.auditLog?.enabled ?? DEFAULT_AUDIT_LOG_SETTINGS.enabled}
+                      checked={
+                        settings.auditLog?.enabled ??
+                        DEFAULT_AUDIT_LOG_SETTINGS.enabled
+                      }
                       onCheckedChange={(checked) =>
                         onUpdate({
                           auditLog: {
@@ -1830,7 +2063,10 @@ export const SettingsPanel = ({
                   <div>
                     <Label htmlFor="log-level">Minimum Log Level</Label>
                     <Select
-                      value={settings.auditLog?.logLevel ?? DEFAULT_AUDIT_LOG_SETTINGS.logLevel}
+                      value={
+                        settings.auditLog?.logLevel ??
+                        DEFAULT_AUDIT_LOG_SETTINGS.logLevel
+                      }
                       onValueChange={(value) =>
                         onUpdate({
                           auditLog: {
@@ -1840,7 +2076,12 @@ export const SettingsPanel = ({
                           },
                         })
                       }
-                      disabled={!(settings.auditLog?.enabled ?? DEFAULT_AUDIT_LOG_SETTINGS.enabled)}
+                      disabled={
+                        !(
+                          settings.auditLog?.enabled ??
+                          DEFAULT_AUDIT_LOG_SETTINGS.enabled
+                        )
+                      }
                     >
                       <SelectTrigger className="mt-1">
                         <SelectValue />
@@ -1865,7 +2106,10 @@ export const SettingsPanel = ({
                     </div>
                     <Switch
                       id="persist-audit"
-                      checked={settings.auditLog?.persistLogs ?? DEFAULT_AUDIT_LOG_SETTINGS.persistLogs}
+                      checked={
+                        settings.auditLog?.persistLogs ??
+                        DEFAULT_AUDIT_LOG_SETTINGS.persistLogs
+                      }
                       onCheckedChange={(checked) =>
                         onUpdate({
                           auditLog: {
@@ -1875,7 +2119,12 @@ export const SettingsPanel = ({
                           },
                         })
                       }
-                      disabled={!(settings.auditLog?.enabled ?? DEFAULT_AUDIT_LOG_SETTINGS.enabled)}
+                      disabled={
+                        !(
+                          settings.auditLog?.enabled ??
+                          DEFAULT_AUDIT_LOG_SETTINGS.enabled
+                        )
+                      }
                     />
                   </div>
 
@@ -1889,12 +2138,17 @@ export const SettingsPanel = ({
                       )}
                       Privacy Options
                     </Label>
-                    
+
                     <div className="flex items-center justify-between">
-                      <Label htmlFor="include-args" className="text-sm">Include Tool Arguments</Label>
+                      <Label htmlFor="include-args" className="text-sm">
+                        Include Tool Arguments
+                      </Label>
                       <Switch
                         id="include-args"
-                        checked={settings.auditLog?.includeArguments ?? DEFAULT_AUDIT_LOG_SETTINGS.includeArguments}
+                        checked={
+                          settings.auditLog?.includeArguments ??
+                          DEFAULT_AUDIT_LOG_SETTINGS.includeArguments
+                        }
                         onCheckedChange={(checked) =>
                           onUpdate({
                             auditLog: {
@@ -1904,15 +2158,25 @@ export const SettingsPanel = ({
                             },
                           })
                         }
-                        disabled={!(settings.auditLog?.enabled ?? DEFAULT_AUDIT_LOG_SETTINGS.enabled)}
+                        disabled={
+                          !(
+                            settings.auditLog?.enabled ??
+                            DEFAULT_AUDIT_LOG_SETTINGS.enabled
+                          )
+                        }
                       />
                     </div>
-                    
+
                     <div className="flex items-center justify-between">
-                      <Label htmlFor="include-paths" className="text-sm">Include File Paths</Label>
+                      <Label htmlFor="include-paths" className="text-sm">
+                        Include File Paths
+                      </Label>
                       <Switch
                         id="include-paths"
-                        checked={settings.auditLog?.includeFilePaths ?? DEFAULT_AUDIT_LOG_SETTINGS.includeFilePaths}
+                        checked={
+                          settings.auditLog?.includeFilePaths ??
+                          DEFAULT_AUDIT_LOG_SETTINGS.includeFilePaths
+                        }
                         onCheckedChange={(checked) =>
                           onUpdate({
                             auditLog: {
@@ -1922,15 +2186,25 @@ export const SettingsPanel = ({
                             },
                           })
                         }
-                        disabled={!(settings.auditLog?.enabled ?? DEFAULT_AUDIT_LOG_SETTINGS.enabled)}
+                        disabled={
+                          !(
+                            settings.auditLog?.enabled ??
+                            DEFAULT_AUDIT_LOG_SETTINGS.enabled
+                          )
+                        }
                       />
                     </div>
-                    
+
                     <div className="flex items-center justify-between">
-                      <Label htmlFor="include-prompts" className="text-sm">Include User Prompts</Label>
+                      <Label htmlFor="include-prompts" className="text-sm">
+                        Include User Prompts
+                      </Label>
                       <Switch
                         id="include-prompts"
-                        checked={settings.auditLog?.includeUserPrompts ?? DEFAULT_AUDIT_LOG_SETTINGS.includeUserPrompts}
+                        checked={
+                          settings.auditLog?.includeUserPrompts ??
+                          DEFAULT_AUDIT_LOG_SETTINGS.includeUserPrompts
+                        }
                         onCheckedChange={(checked) =>
                           onUpdate({
                             auditLog: {
@@ -1940,7 +2214,12 @@ export const SettingsPanel = ({
                             },
                           })
                         }
-                        disabled={!(settings.auditLog?.enabled ?? DEFAULT_AUDIT_LOG_SETTINGS.enabled)}
+                        disabled={
+                          !(
+                            settings.auditLog?.enabled ??
+                            DEFAULT_AUDIT_LOG_SETTINGS.enabled
+                          )
+                        }
                       />
                     </div>
                   </div>
@@ -1950,7 +2229,8 @@ export const SettingsPanel = ({
                     <div className="flex items-center justify-between mb-2">
                       <Label htmlFor="max-audit-entries">Max Log Entries</Label>
                       <span className="text-sm text-muted-foreground">
-                        {settings.auditLog?.maxEntries ?? DEFAULT_AUDIT_LOG_SETTINGS.maxEntries}
+                        {settings.auditLog?.maxEntries ??
+                          DEFAULT_AUDIT_LOG_SETTINGS.maxEntries}
                       </span>
                     </div>
                     <Slider
@@ -1958,7 +2238,10 @@ export const SettingsPanel = ({
                       min={100}
                       max={5000}
                       step={100}
-                      value={[settings.auditLog?.maxEntries ?? DEFAULT_AUDIT_LOG_SETTINGS.maxEntries]}
+                      value={[
+                        settings.auditLog?.maxEntries ??
+                          DEFAULT_AUDIT_LOG_SETTINGS.maxEntries,
+                      ]}
                       onValueChange={(value) =>
                         onUpdate({
                           auditLog: {
@@ -1968,7 +2251,12 @@ export const SettingsPanel = ({
                           },
                         })
                       }
-                      disabled={!(settings.auditLog?.enabled ?? DEFAULT_AUDIT_LOG_SETTINGS.enabled)}
+                      disabled={
+                        !(
+                          settings.auditLog?.enabled ??
+                          DEFAULT_AUDIT_LOG_SETTINGS.enabled
+                        )
+                      }
                       className="mt-2"
                     />
                   </div>
@@ -1978,9 +2266,13 @@ export const SettingsPanel = ({
                     <div className="flex items-center justify-between mb-2">
                       <Label htmlFor="retention-days">Retention Period</Label>
                       <span className="text-sm text-muted-foreground">
-                        {(settings.auditLog?.retentionDays ?? DEFAULT_AUDIT_LOG_SETTINGS.retentionDays) === 0
+                        {(settings.auditLog?.retentionDays ??
+                          DEFAULT_AUDIT_LOG_SETTINGS.retentionDays) === 0
                           ? "Unlimited"
-                          : `${settings.auditLog?.retentionDays ?? DEFAULT_AUDIT_LOG_SETTINGS.retentionDays} days`}
+                          : `${
+                              settings.auditLog?.retentionDays ??
+                              DEFAULT_AUDIT_LOG_SETTINGS.retentionDays
+                            } days`}
                       </span>
                     </div>
                     <Slider
@@ -1988,7 +2280,10 @@ export const SettingsPanel = ({
                       min={0}
                       max={365}
                       step={7}
-                      value={[settings.auditLog?.retentionDays ?? DEFAULT_AUDIT_LOG_SETTINGS.retentionDays]}
+                      value={[
+                        settings.auditLog?.retentionDays ??
+                          DEFAULT_AUDIT_LOG_SETTINGS.retentionDays,
+                      ]}
                       onValueChange={(value) =>
                         onUpdate({
                           auditLog: {
@@ -1998,7 +2293,12 @@ export const SettingsPanel = ({
                           },
                         })
                       }
-                      disabled={!(settings.auditLog?.enabled ?? DEFAULT_AUDIT_LOG_SETTINGS.enabled)}
+                      disabled={
+                        !(
+                          settings.auditLog?.enabled ??
+                          DEFAULT_AUDIT_LOG_SETTINGS.enabled
+                        )
+                      }
                       className="mt-2"
                     />
                     <p className="text-xs text-muted-foreground mt-1">
@@ -2023,15 +2323,21 @@ export const SettingsPanel = ({
                   <div className="p-3 bg-slate-100 dark:bg-slate-800 rounded-lg">
                     <div className="grid grid-cols-3 gap-2 text-center text-xs">
                       <div>
-                        <div className="font-semibold text-slate-700 dark:text-slate-300">{workflowStats.total}</div>
+                        <div className="font-semibold text-slate-700 dark:text-slate-300">
+                          {workflowStats.total}
+                        </div>
                         <div className="text-muted-foreground">Workflows</div>
                       </div>
                       <div>
-                        <div className="font-semibold text-yellow-600">{workflowStats.favorites}</div>
+                        <div className="font-semibold text-yellow-600">
+                          {workflowStats.favorites}
+                        </div>
                         <div className="text-muted-foreground">Favorites</div>
                       </div>
                       <div>
-                        <div className="font-semibold text-green-600">{workflowStats.totalRuns}</div>
+                        <div className="font-semibold text-green-600">
+                          {workflowStats.totalRuns}
+                        </div>
                         <div className="text-muted-foreground">Total Runs</div>
                       </div>
                     </div>
@@ -2051,14 +2357,19 @@ export const SettingsPanel = ({
                   {/* Enable Workflows */}
                   <div className="flex items-center justify-between">
                     <div className="space-y-0.5">
-                      <Label htmlFor="workflows-enabled">Enable Workflows</Label>
+                      <Label htmlFor="workflows-enabled">
+                        Enable Workflows
+                      </Label>
                       <p className="text-xs text-muted-foreground">
                         Use workflow templates for automation
                       </p>
                     </div>
                     <Switch
                       id="workflows-enabled"
-                      checked={settings.workflows?.enabled ?? DEFAULT_WORKFLOW_SETTINGS.enabled}
+                      checked={
+                        settings.workflows?.enabled ??
+                        DEFAULT_WORKFLOW_SETTINGS.enabled
+                      }
                       onCheckedChange={(checked) =>
                         onUpdate({
                           workflows: {
@@ -2081,7 +2392,10 @@ export const SettingsPanel = ({
                     </div>
                     <Switch
                       id="show-suggestions"
-                      checked={settings.workflows?.showSuggestions ?? DEFAULT_WORKFLOW_SETTINGS.showSuggestions}
+                      checked={
+                        settings.workflows?.showSuggestions ??
+                        DEFAULT_WORKFLOW_SETTINGS.showSuggestions
+                      }
                       onCheckedChange={(checked) =>
                         onUpdate({
                           workflows: {
@@ -2091,21 +2405,31 @@ export const SettingsPanel = ({
                           },
                         })
                       }
-                      disabled={!(settings.workflows?.enabled ?? DEFAULT_WORKFLOW_SETTINGS.enabled)}
+                      disabled={
+                        !(
+                          settings.workflows?.enabled ??
+                          DEFAULT_WORKFLOW_SETTINGS.enabled
+                        )
+                      }
                     />
                   </div>
 
                   {/* Persist Workflows */}
                   <div className="flex items-center justify-between">
                     <div className="space-y-0.5">
-                      <Label htmlFor="persist-workflows">Persist Workflows</Label>
+                      <Label htmlFor="persist-workflows">
+                        Persist Workflows
+                      </Label>
                       <p className="text-xs text-muted-foreground">
                         Save workflows across sessions
                       </p>
                     </div>
                     <Switch
                       id="persist-workflows"
-                      checked={settings.workflows?.persistWorkflows ?? DEFAULT_WORKFLOW_SETTINGS.persistWorkflows}
+                      checked={
+                        settings.workflows?.persistWorkflows ??
+                        DEFAULT_WORKFLOW_SETTINGS.persistWorkflows
+                      }
                       onCheckedChange={(checked) =>
                         onUpdate({
                           workflows: {
@@ -2115,21 +2439,31 @@ export const SettingsPanel = ({
                           },
                         })
                       }
-                      disabled={!(settings.workflows?.enabled ?? DEFAULT_WORKFLOW_SETTINGS.enabled)}
+                      disabled={
+                        !(
+                          settings.workflows?.enabled ??
+                          DEFAULT_WORKFLOW_SETTINGS.enabled
+                        )
+                      }
                     />
                   </div>
 
                   {/* Auto-save Repeated Operations */}
                   <div className="flex items-center justify-between">
                     <div className="space-y-0.5">
-                      <Label htmlFor="auto-save-repeated">Auto-save Repeated</Label>
+                      <Label htmlFor="auto-save-repeated">
+                        Auto-save Repeated
+                      </Label>
                       <p className="text-xs text-muted-foreground">
                         Suggest saving repeated operations
                       </p>
                     </div>
                     <Switch
                       id="auto-save-repeated"
-                      checked={settings.workflows?.autoSaveRepeated ?? DEFAULT_WORKFLOW_SETTINGS.autoSaveRepeated}
+                      checked={
+                        settings.workflows?.autoSaveRepeated ??
+                        DEFAULT_WORKFLOW_SETTINGS.autoSaveRepeated
+                      }
                       onCheckedChange={(checked) =>
                         onUpdate({
                           workflows: {
@@ -2139,7 +2473,12 @@ export const SettingsPanel = ({
                           },
                         })
                       }
-                      disabled={!(settings.workflows?.enabled ?? DEFAULT_WORKFLOW_SETTINGS.enabled)}
+                      disabled={
+                        !(
+                          settings.workflows?.enabled ??
+                          DEFAULT_WORKFLOW_SETTINGS.enabled
+                        )
+                      }
                     />
                   </div>
 
@@ -2148,7 +2487,8 @@ export const SettingsPanel = ({
                     <div className="flex items-center justify-between mb-2">
                       <Label htmlFor="max-workflows">Max Workflows</Label>
                       <span className="text-sm text-muted-foreground">
-                        {settings.workflows?.maxWorkflows ?? DEFAULT_WORKFLOW_SETTINGS.maxWorkflows}
+                        {settings.workflows?.maxWorkflows ??
+                          DEFAULT_WORKFLOW_SETTINGS.maxWorkflows}
                       </span>
                     </div>
                     <Slider
@@ -2156,7 +2496,10 @@ export const SettingsPanel = ({
                       min={10}
                       max={200}
                       step={10}
-                      value={[settings.workflows?.maxWorkflows ?? DEFAULT_WORKFLOW_SETTINGS.maxWorkflows]}
+                      value={[
+                        settings.workflows?.maxWorkflows ??
+                          DEFAULT_WORKFLOW_SETTINGS.maxWorkflows,
+                      ]}
                       onValueChange={(value) =>
                         onUpdate({
                           workflows: {
@@ -2166,7 +2509,12 @@ export const SettingsPanel = ({
                           },
                         })
                       }
-                      disabled={!(settings.workflows?.enabled ?? DEFAULT_WORKFLOW_SETTINGS.enabled)}
+                      disabled={
+                        !(
+                          settings.workflows?.enabled ??
+                          DEFAULT_WORKFLOW_SETTINGS.enabled
+                        )
+                      }
                       className="mt-2"
                     />
                     <p className="text-xs text-muted-foreground mt-1">
@@ -2421,23 +2769,39 @@ export const SettingsPanel = ({
                             ) : (
                               <AlertCircle className="h-4 w-4 flex-shrink-0" />
                             )}
-                            <span className="font-medium">{keyTestResult.message}</span>
+                            <span className="font-medium">
+                              {keyTestResult.message}
+                            </span>
                           </div>
                           {/* Show troubleshooting tips when connection fails */}
                           {!keyTestResult.valid && (
                             <div className="mt-2 pt-2 border-t border-red-200 dark:border-red-800 space-y-2">
                               <p className="font-medium">Troubleshooting:</p>
                               <ul className="list-disc list-inside space-y-1 text-red-700 dark:text-red-300">
-                                <li>Make sure Ollama is installed and running</li>
-                                <li>Check if the Ollama app is in your menu bar (macOS)</li>
-                                <li>Try running <code className="bg-red-100 dark:bg-red-900 px-1 rounded">ollama serve</code> in terminal</li>
-                                <li>Verify the base URL is correct (default: localhost:11434)</li>
+                                <li>
+                                  Make sure Ollama is installed and running
+                                </li>
+                                <li>
+                                  Check if the Ollama app is in your menu bar
+                                  (macOS)
+                                </li>
+                                <li>
+                                  Try running{" "}
+                                  <code className="bg-red-100 dark:bg-red-900 px-1 rounded">
+                                    ollama serve
+                                  </code>{" "}
+                                  in terminal
+                                </li>
+                                <li>
+                                  Verify the base URL is correct (default:
+                                  localhost:11434)
+                                </li>
                               </ul>
                             </div>
                           )}
                         </div>
                       )}
-                      
+
                       {/* Quick Setup Guide */}
                       <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
                         <p className="text-xs font-medium text-slate-700 dark:text-slate-300 mb-2">
@@ -2445,7 +2809,9 @@ export const SettingsPanel = ({
                         </p>
                         <ol className="text-xs text-muted-foreground space-y-2">
                           <li className="flex items-start gap-2">
-                            <span className="bg-violet-100 dark:bg-violet-900/50 text-violet-700 dark:text-violet-300 w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 text-[10px] font-bold">1</span>
+                            <span className="bg-violet-100 dark:bg-violet-900/50 text-violet-700 dark:text-violet-300 w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 text-[10px] font-bold">
+                              1
+                            </span>
                             <span>
                               Download from{" "}
                               <a
@@ -2459,11 +2825,15 @@ export const SettingsPanel = ({
                             </span>
                           </li>
                           <li className="flex items-start gap-2">
-                            <span className="bg-violet-100 dark:bg-violet-900/50 text-violet-700 dark:text-violet-300 w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 text-[10px] font-bold">2</span>
+                            <span className="bg-violet-100 dark:bg-violet-900/50 text-violet-700 dark:text-violet-300 w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 text-[10px] font-bold">
+                              2
+                            </span>
                             <span>Install and launch Ollama</span>
                           </li>
                           <li className="flex items-start gap-2">
-                            <span className="bg-violet-100 dark:bg-violet-900/50 text-violet-700 dark:text-violet-300 w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 text-[10px] font-bold">3</span>
+                            <span className="bg-violet-100 dark:bg-violet-900/50 text-violet-700 dark:text-violet-300 w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 text-[10px] font-bold">
+                              3
+                            </span>
                             <span>
                               Pull a model in terminal:{" "}
                               <code className="bg-slate-200 dark:bg-slate-700 px-1.5 py-0.5 rounded font-mono">
@@ -2472,13 +2842,17 @@ export const SettingsPanel = ({
                             </span>
                           </li>
                           <li className="flex items-start gap-2">
-                            <span className="bg-violet-100 dark:bg-violet-900/50 text-violet-700 dark:text-violet-300 w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 text-[10px] font-bold">4</span>
+                            <span className="bg-violet-100 dark:bg-violet-900/50 text-violet-700 dark:text-violet-300 w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 text-[10px] font-bold">
+                              4
+                            </span>
                             <span>Click "Test Connection" above</span>
                           </li>
                         </ol>
                         <div className="mt-3 pt-2 border-t border-slate-200 dark:border-slate-600">
                           <p className="text-xs text-muted-foreground">
-                            <strong>Recommended models:</strong> llama3.2:3b (fast), llama3.1:8b (balanced), qwen2.5:14b (powerful)
+                            <strong>Recommended models:</strong> llama3.2:3b
+                            (fast), llama3.1:8b (balanced), qwen2.5:14b
+                            (powerful)
                           </p>
                         </div>
                       </div>

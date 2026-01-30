@@ -13,6 +13,7 @@ export type VoiceProvider =
   | 'claude-voice'
   | 'browser-stt'
   | 'faster-whisper'  // Faster-Whisper for STT
+  | 'vibevoice-asr'   // Microsoft VibeVoice-ASR for long-form STT
   | 'piper';          // Piper for TTS (used automatically with faster-whisper)
 
 /**
@@ -66,10 +67,17 @@ export interface VoiceSettings {
   whisperModelSize?: 'tiny' | 'base' | 'small' | 'medium' | 'large-v2' | 'large-v3';
   whisperDevice?: 'cpu' | 'cuda';
   whisperComputeType?: 'int8' | 'int8_float16' | 'int16' | 'float16' | 'float32';
+  // VibeVoice-ASR specific settings (Microsoft long-form ASR)
+  vibevoiceHotwords?: string[];  // Custom terms for improved accuracy (e.g., "File Pro", "Tauri")
+  vibevoiceEnableDiarization?: boolean;  // Enable speaker identification
   // Piper specific settings
   piperVoice?: string; // e.g., 'en_US-lessac-medium'
   // Voice service URL
   voiceServiceUrl?: string; // Default: http://127.0.0.1:8765
+  // Advanced VAD (Silero neural network-based)
+  advancedVAD?: boolean; // Use Silero VAD instead of amplitude-based
+  vadSensitivity?: 'low' | 'medium' | 'high'; // VAD sensitivity level
+  adaptiveThreshold?: boolean; // Auto-adjust based on ambient noise
 }
 
 /**

@@ -7,8 +7,10 @@
  */
 
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import type { VoiceSettings, VoiceRecognitionResult, VoiceState } from './types';
 import { AudioRecorder } from './utils/audioRecorder';
+import { SileroVAD } from './utils/sileroVAD';
 
 /**
  * Voice service class.
@@ -23,6 +25,7 @@ export class VoiceService {
   private isListening = false;
   private isPaused = false;
   private audioRecorder: AudioRecorder | null = null;
+  private sileroVAD: SileroVAD | null = null;
   // Use browser-safe timeout type instead of NodeJS.Timeout
   private recordingInterval: ReturnType<typeof setTimeout> | null = null;
   private onAudioLevel?: (level: number) => void;
@@ -250,7 +253,7 @@ export class VoiceService {
       // Configure VAD based on settings - TUNED FOR NATURAL CONVERSATION
       // Higher thresholds reduce false positives from ambient noise
       // Increased silence duration to allow natural pauses within sentences
-      
+
       // Calculate VAD threshold from micSensitivity (1-10)
       // Default sensitivity is now 3 (less sensitive) to avoid ambient noise triggers
       // Sensitivity 1 = threshold 0.25 (very insensitive, only loud speech)
@@ -259,7 +262,7 @@ export class VoiceService {
       // Sensitivity 10 = threshold 0.03 (very sensitive, picks up quiet sounds)
       const sensitivity = this.settings.micSensitivity ?? 3; // Default to 3 (less sensitive)
       const baseThreshold = 0.28 - (sensitivity * 0.025); // Range: 0.255 to 0.03
-      
+
       if (this.settings.noiseCancellation) {
         // Noisy environment: Increase threshold more
         this.audioRecorder.setVADThreshold(Math.min(baseThreshold + 0.05, 0.30));
@@ -269,7 +272,7 @@ export class VoiceService {
         this.audioRecorder.setVADThreshold(baseThreshold);
         this.audioRecorder.setVADSilenceDuration(3000); // 3.0s for normal environments
       }
-      
+
       console.log(`[Voice] VAD configured: threshold=${baseThreshold.toFixed(3)}, sensitivity=${sensitivity}, noiseCancellation=${this.settings.noiseCancellation}`);
 
       // Handle Silence Detection (End of Thought)
@@ -297,6 +300,56 @@ export class VoiceService {
       await this.audioRecorder.startRecording();
       this.isListening = true;
       this.setState('listening');
+
+      // Initialize Silero VAD if Advanced VAD is enabled
+      if (this.settings.advancedVAD) {
+        console.log('[Voice] Initializing Silero VAD (Advanced mode)...');
+        this.sileroVAD = new SileroVAD({
+          sensitivity: this.settings.vadSensitivity || 'medium',
+          adaptiveThreshold: this.settings.adaptiveThreshold ?? true,
+        });
+
+        this.sileroVAD.setCallbacks({
+          onSpeechStart: () => {
+            console.log('[SileroVAD] Speech started');
+            this.isVoiceActive = true;
+            if (this.onVoiceActivity) this.onVoiceActivity(true);
+            if (this.currentState !== 'speaking') {
+              this.setState('listening');
+            }
+            // Handle barge-in
+            if (this.currentState === 'speaking' && this.settings.allowInterruptions) {
+              this.stopSpeaking();
+              this.setState('listening');
+            }
+          },
+          onSpeechEnd: async (audio: Float32Array) => {
+            console.log('[SileroVAD] Speech ended, processing...');
+            this.isVoiceActive = false;
+            if (this.onVoiceActivity) this.onVoiceActivity(false);
+
+            // Convert Silero's audio to base64 and transcribe
+            if (this.settings.activationMode === 'continuous' && this.isListening && !this.isPaused) {
+              const audioBase64 = SileroVAD.audioToBase64Wav(audio);
+              await this.transcribeAudioData(audioBase64);
+            }
+          },
+          onError: (error) => {
+            console.error('[SileroVAD] Error:', error);
+            // Fall back to amplitude-based VAD
+            console.warn('[Voice] Falling back to amplitude-based VAD');
+          },
+        });
+
+        try {
+          await this.sileroVAD.start();
+          console.log('[Voice] Silero VAD started successfully');
+        } catch (sileroError) {
+          console.error('[Voice] Failed to start Silero VAD:', sileroError);
+          console.warn('[Voice] Falling back to amplitude-based VAD');
+          this.sileroVAD = null;
+        }
+      }
 
       // No more fixed interval loop!
 
@@ -373,6 +426,42 @@ export class VoiceService {
   }
 
   /**
+   * Transcribes pre-captured audio data (used by Silero VAD).
+   * Unlike processConversationTurn, this doesn't flush from the recorder.
+   */
+  private async transcribeAudioData(audioBase64: string) {
+    if (!audioBase64 || audioBase64.length === 0) {
+      console.debug('No audio data to transcribe');
+      return;
+    }
+
+    // Prevent concurrent processing
+    if (this.isProcessingTurn) {
+      console.debug('Already processing a turn, skipping...');
+      return;
+    }
+
+    this.isProcessingTurn = true;
+
+    try {
+      if (this.currentState !== 'speaking') {
+        this.setState('processing');
+      }
+
+      await this.transcribeWithFasterWhisper(audioBase64);
+    } catch (error: any) {
+      console.warn('Error transcribing audio data:', error.message || error);
+      if (this.isListening) {
+        this.setState('listening');
+      } else {
+        this.setState('idle');
+      }
+    } finally {
+      this.isProcessingTurn = false;
+    }
+  }
+
+  /**
    * Stops listening for voice input.
    */
   async stopListening() {
@@ -400,6 +489,12 @@ export class VoiceService {
         // Don't throw - just log and reset state
       }
 
+      // Stop Silero VAD if active
+      if (this.sileroVAD) {
+        await this.sileroVAD.stop();
+        this.sileroVAD = null;
+      }
+
       this.audioRecorder = null;
       this.isListening = false;
       this.currentAudioLevel = 0;
@@ -422,7 +517,7 @@ export class VoiceService {
   }
 
   /**
-   * Transcribes audio using Faster-Whisper via Tauri backend.
+   * Transcribes audio using Faster-Whisper or VibeVoice-ASR via Tauri backend.
    */
   private async transcribeWithFasterWhisper(audioBase64: string) {
     try {
@@ -445,30 +540,98 @@ export class VoiceService {
       const serviceUrl = this.settings.voiceServiceUrl || 'http://127.0.0.1:8765';
       const language = this.settings.language === 'auto' ? null : this.settings.language;
 
-      // Add timeout for transcription (30 seconds)
+      // Determine provider - use vibevoice-asr if explicitly set, otherwise default to faster-whisper
+      const provider = this.settings.provider === 'vibevoice-asr' ? 'vibevoice-asr' : 'faster-whisper';
+
+      // VibeVoice-specific parameters
+      const hotwords = this.settings.vibevoiceHotwords || null;
+      const enableDiarization = this.settings.vibevoiceEnableDiarization ?? true;
+
+      // Add timeout for transcription (60 seconds for VibeVoice which may need to download model)
+      const timeoutMs = provider === 'vibevoice-asr' ? 120000 : 30000;
+
+      // Route to Remote VibeVoice if configured (External vLLM service)
+      // We assume it's external if the URL is different from the default Python backend port 8765
+      // OR if we explicitly detect a VibeVoice/vLLM URL pattern
+      const isExternalService = serviceUrl && !serviceUrl.includes(':8765');
+
+      if (provider === 'vibevoice-asr' && isExternalService) {
+        await this.transcribeWithVibeVoiceRemote(audioBase64, serviceUrl, language, hotwords, enableDiarization);
+        return;
+      }
+
+      // Streaming support
+      let unlisten: (() => void) | undefined;
+      const currentTranscript = { text: '' };
+
+      try {
+        unlisten = await listen<any>('transcription-stream', (event) => {
+          const payload = event.payload;
+          if (!payload) return;
+
+          if (payload.type === 'token') {
+            // VibeVoice token
+            currentTranscript.text += payload.text;
+            if (this.onTranscript) {
+              this.onTranscript({
+                text: currentTranscript.text,
+                confidence: 0.9,
+                isFinal: false,
+                interimResults: [currentTranscript.text]
+              });
+            }
+          } else if (payload.type === 'segment') {
+            // Faster-Whisper segment
+            currentTranscript.text += payload.text;
+            if (this.onTranscript) {
+              this.onTranscript({
+                text: currentTranscript.text,
+                confidence: payload.confidence || 0.8,
+                isFinal: false,
+                interimResults: [currentTranscript.text]
+              });
+            }
+          }
+        });
+      } catch (err) {
+        console.warn('Failed to setup transcription listener:', err);
+      }
+
       const transcriptionPromise = invoke<{
         success: boolean;
         text?: string;
         language?: string;
         language_probability?: number;
+        provider?: string;
+        speakers?: string[];
         segments?: Array<{
           start: number;
           end: number;
           text: string;
           confidence: number;
+          speaker?: string;
         }>;
         error?: string;
       }>('transcribe_audio', {
         audioBase64,
         language,
         serviceUrl,
+        provider,
+        hotwords,
+        enableDiarization,
+        stream: true,
       });
 
       const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error('Transcription timeout: Service did not respond within 30 seconds')), 30000);
+        setTimeout(() => reject(new Error(`Transcription timeout: Service did not respond within ${timeoutMs / 1000} seconds`)), timeoutMs);
       });
 
       const result = await Promise.race([transcriptionPromise, timeoutPromise]);
+
+      if (unlisten) {
+        unlisten();
+        unlisten = undefined;
+      }
 
       if (result.success && result.text) {
         const confidence = result.segments && result.segments.length > 0
@@ -557,8 +720,8 @@ export class VoiceService {
         return;
       }
 
-      // Automatic fallback to browser-stt only if connection errors
-      if (this.recognition && (errorMessage.includes('connect') || errorMessage.includes('ECONNREFUSED'))) {
+      // Automatic fallback to browser-stt only if connection errors and NOT VibeVoice (since VibeVoice is often remote)
+      if (this.recognition && (errorMessage.includes('connect') || errorMessage.includes('ECONNREFUSED')) && this.settings.provider !== 'vibevoice-asr') {
         console.log('Falling back to browser-stt provider due to connection error');
         // Update settings to use browser-stt
         this.updateSettings({ provider: 'browser-stt' });
@@ -577,6 +740,173 @@ export class VoiceService {
       if (this.isListening && this.settings.provider === 'faster-whisper') {
         this.setState('listening');
       } else if (!this.isListening) {
+        this.setState('idle');
+      }
+    }
+  }
+
+  /**
+   * Transcribe using VibeVoice-ASR via remote OpenAI-compatible API (vLLM).
+   */
+  private async transcribeWithVibeVoiceRemote(
+    audioBase64: string,
+    serviceUrl: string,
+    language: string | null,
+    hotwords: string[] | null,
+    enableDiarization: boolean
+  ) {
+    try {
+      this.setState('processing');
+
+      // Construct endpoint URL
+      let endpoint = serviceUrl;
+      if (!endpoint.endsWith('/v1/chat/completions')) {
+        // Try to handle common base URL patterns
+        if (endpoint.endsWith('/v1')) {
+          endpoint = `${endpoint}/chat/completions`;
+        } else if (!endpoint.endsWith('/')) {
+          endpoint = `${endpoint}/v1/chat/completions`;
+        } else {
+          endpoint = `${endpoint}v1/chat/completions`;
+        }
+      }
+
+      // Prepare payload matches VibeVoice vLLM test_api.py format
+      // It expects audio_url with data URI format
+      const mimeType = "audio/wav"; // We always send WAV from flushAudio
+      const dataUrl = `data:${mimeType};base64,${audioBase64}`;
+
+      const payload = {
+        model: "vibevoice",
+        messages: [
+          {
+            role: "system",
+            content: "You are a helpful assistant that transcribes audio input into text output in JSON format."
+          },
+          {
+            role: "user",
+            content: [
+              { type: "audio_url", audio_url: { url: dataUrl } },
+              { type: "text", text: hotwords && hotwords.length > 0 ? `Please transcribe this audio. Context: ${hotwords.join(', ')}` : "Please transcribe this audio." }
+            ]
+          }
+        ],
+        max_tokens: 32768,
+        temperature: 0.0,
+        stream: true
+      };
+
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload)
+      });
+
+      if (!response.ok) {
+        throw new Error(`Service returned ${response.status}: ${response.statusText}`);
+      }
+
+      if (!response.body) {
+        throw new Error('No response body for streaming');
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let accumulatedText = "";
+
+      // Stream processing
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value);
+        const lines = chunk.split('\n');
+
+        for (const line of lines) {
+          if (line.startsWith('data: ') && line !== 'data: [DONE]') {
+            try {
+              const data = JSON.parse(line.slice(6));
+              const content = data.choices?.[0]?.delta?.content || "";
+              if (content) {
+                accumulatedText += content;
+
+                // Notify progress
+                if (this.onTranscript) {
+                  this.onTranscript({
+                    text: accumulatedText,
+                    confidence: 0.9,
+                    isFinal: false,
+                    interimResults: [accumulatedText]
+                  });
+                }
+              }
+            } catch (e) {
+              // Ignore parse errors for partial chunks
+            }
+          }
+        }
+      }
+
+      // Parsing final result (Segments & Diarization)
+      // Logic mirrored from Python backend (parse_vibevoice_output)
+      const segments: Array<{ start: number, end: number, text: string, speaker?: string, confidence: number }> = [];
+      const pattern = /\[([^\]]+)\]\s*\((\d+:\d+)-(\d+:\d+)\):\s*(.+?)(?=\[|$)/gs;
+      let match;
+
+      while ((match = pattern.exec(accumulatedText)) !== null) {
+        const [_, speaker, startTime, endTime, text] = match;
+
+        const parseTime = (t: string) => {
+          const parts = t.split(':');
+          if (parts.length === 2) {
+            return parseInt(parts[0]) * 60 + parseInt(parts[1]);
+          }
+          return 0;
+        };
+
+        const segment = {
+          text: text.trim(),
+          start: parseTime(startTime),
+          end: parseTime(endTime),
+          confidence: 0.95,
+          speaker: enableDiarization ? speaker.trim() : undefined
+        };
+        segments.push(segment);
+      }
+
+      // If text exists but no segments found (maybe raw text mode), create one segment
+      if (segments.length === 0 && accumulatedText.trim()) {
+        segments.push({
+          text: accumulatedText.trim(),
+          start: 0,
+          end: 0,
+          confidence: 0.9
+        });
+      }
+
+      // Clean up text if segments were found (rebuild from segments for clean output)
+      const finalText = segments.length > 0
+        ? segments.map(s => s.text).join(" ")
+        : accumulatedText.trim();
+
+      if (this.onTranscript) {
+        this.onTranscript({
+          text: finalText,
+          confidence: 0.95,
+          isFinal: true,
+          interimResults: undefined
+        });
+      }
+
+    } catch (error: any) {
+      console.error('Remote VibeVoice error:', error);
+      throw error;
+    } finally {
+      if (this.isListening) {
+        this.setState('listening');
+      } else {
         this.setState('idle');
       }
     }
@@ -661,10 +991,10 @@ export class VoiceService {
         const errorMessage = result.error || '';
         const isHTMLResponse = errorMessage.includes('<!DOCTYPE HTML>') || errorMessage.includes('<html');
         const isVoiceNotFound = isHTMLResponse ||
-                              errorMessage.includes('not found') || 
-                              errorMessage.includes('404') ||
-                              errorMessage.includes('Voice model');
-        
+          errorMessage.includes('not found') ||
+          errorMessage.includes('404') ||
+          errorMessage.includes('Voice model');
+
         if (isVoiceNotFound) {
           // Extract error message from HTML if present
           let extractedMessage = errorMessage;
@@ -674,30 +1004,30 @@ export class VoiceService {
               extractedMessage = match[1];
             }
           }
-          
+
           console.warn(`Voice model '${voice}' not found: ${extractedMessage}`);
           console.warn('Falling back to browser TTS. To use Piper TTS, please download the voice model and place it in the voices directory.');
         } else {
           console.error('Piper synthesis failed:', result.error);
         }
-        
+
         // Fallback to browser TTS
         this.fallbackToBrowserTTS(text);
       }
     } catch (error: any) {
       console.error('Piper TTS error:', error);
-      
+
       // Check if error is about missing voice model
       const errorMessage = error?.message || String(error) || '';
       const isHTMLResponse = errorMessage.includes('<!DOCTYPE HTML>') || errorMessage.includes('<html');
       const isVoiceNotFound = isHTMLResponse ||
-                            errorMessage.includes('not found') || 
-                            errorMessage.includes('404') ||
-                            errorMessage.includes('Voice model');
-      
+        errorMessage.includes('not found') ||
+        errorMessage.includes('404') ||
+        errorMessage.includes('Voice model');
+
       if (isVoiceNotFound) {
         const voice = this.settings.piperVoice || 'en_US-lessac-medium';
-        
+
         // Extract error message from HTML if present
         let extractedMessage = errorMessage;
         if (isHTMLResponse) {
@@ -706,11 +1036,11 @@ export class VoiceService {
             extractedMessage = match[1];
           }
         }
-        
+
         console.warn(`Voice model '${voice}' not found: ${extractedMessage}`);
         console.warn('Falling back to browser TTS. To use Piper TTS, please download the voice model and place it in the voices directory.');
       }
-      
+
       // Fallback to browser TTS
       this.fallbackToBrowserTTS(text);
     }
@@ -731,20 +1061,20 @@ export class VoiceService {
       utterance.rate = this.settings.voiceSpeed;
       utterance.volume = this.settings.volume / 100;
       utterance.lang = this.settings.language === 'auto' ? 'en-US' : this.settings.language;
-      
+
       utterance.onstart = () => {
         this.setState('speaking');
       };
-      
+
       utterance.onend = () => {
         this.setState('idle');
       };
-      
+
       utterance.onerror = (error) => {
         console.error('Browser TTS error:', error);
         this.setState('idle');
       };
-      
+
       this.synthesis.speak(utterance);
     } catch (error) {
       console.error('Failed to use browser TTS:', error);

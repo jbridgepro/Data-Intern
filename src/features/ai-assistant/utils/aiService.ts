@@ -1684,6 +1684,112 @@ ${trimmed}`;
   return null;
 }
 
+/** System instruction for prompt improvement: ask the model to output only the improved prompt. */
+const PROMPT_IMPROVEMENT_SYSTEM = `You are a prompt engineering expert. Your task is to improve the user's prompt so that an AI will give better, more relevant responses.
+
+Rules:
+- Output ONLY the improved prompt. No preamble, no explanation, no "Here is the improved prompt:", no markdown code blocks.
+- Preserve the user's intent and key details.
+- Add clarity, specificity, and structure where helpful (e.g. context, format, constraints).
+- Keep the improved prompt concise; do not over-expand.
+- If the prompt is already clear and specific, return a lightly polished version.`;
+
+/**
+ * Improves a user prompt using the configured AI provider.
+ * Used by the Prompt Optimizer quick tool to suggest a clearer, more effective prompt.
+ * Supports Ollama, Anthropic, and OpenRouter. Throws on error or unsupported provider.
+ */
+export async function improvePromptWithAI(
+  userPrompt: string,
+  settings: AISettings
+): Promise<string> {
+  const trimmed = userPrompt.replace(/\s+/g, ' ').trim();
+  if (!trimmed) {
+    throw new Error('Please enter a prompt to improve.');
+  }
+
+  const userMessage = `Improve this prompt:\n\n${trimmed}`;
+
+  if (settings.provider === 'ollama') {
+    const baseUrl = settings.ollamaBaseUrl || 'http://localhost:11434';
+    const model = settings.ollamaModel || settings.model || 'llama3.2:3b';
+    const res = await fetch(`${baseUrl}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: 'system', content: PROMPT_IMPROVEMENT_SYSTEM },
+          { role: 'user', content: userMessage },
+        ],
+        stream: false,
+      }),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Ollama request failed: ${res.status}. ${text || res.statusText}`);
+    }
+    const data = await res.json();
+    const text = data?.message?.content;
+    if (typeof text !== 'string') throw new Error('Invalid response from Ollama');
+    return text.trim();
+  }
+
+  if (settings.provider === 'anthropic') {
+    if (!anthropicClient || !settings.apiKey) {
+      throw new Error('Anthropic API key is not configured. Set it in Chat/Settings.');
+    }
+    const response = await anthropicClient.messages.create({
+      model: getModelName(settings),
+      max_tokens: 1024,
+      temperature: 0.4,
+      system: PROMPT_IMPROVEMENT_SYSTEM,
+      messages: [{ role: 'user', content: userMessage }],
+    });
+    const part = response.content[0];
+    const text = part && part.type === 'text' ? part.text : '';
+    if (!text) throw new Error('Empty response from Anthropic');
+    return text.trim();
+  }
+
+  if (settings.provider === 'openrouter') {
+    const openRouter = settings.openRouter ?? DEFAULT_OPENROUTER_SETTINGS;
+    const apiKey = openRouter.apiKey?.trim();
+    const model = openRouter.model || 'anthropic/claude-3.5-sonnet';
+    if (!apiKey) {
+      throw new Error('OpenRouter API key is not configured. Set it in Chat/Settings.');
+    }
+    const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': openRouter.siteUrl || (typeof window !== 'undefined' ? window.location.origin : ''),
+        'X-Title': openRouter.siteName || 'File Pro',
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: 'system', content: PROMPT_IMPROVEMENT_SYSTEM },
+          { role: 'user', content: userMessage },
+        ],
+        max_tokens: 1024,
+        temperature: 0.4,
+      }),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`OpenRouter request failed: ${res.status}. ${text || res.statusText}`);
+    }
+    const data = await res.json();
+    const text = data?.choices?.[0]?.message?.content;
+    if (typeof text !== 'string') throw new Error('Invalid response from OpenRouter');
+    return text.trim();
+  }
+
+  throw new Error(`Unsupported AI provider: ${settings.provider}. Use Ollama, Anthropic, or OpenRouter in Chat/Settings.`);
+}
+
 /**
  * Tests the API key or connection by making a simple request.
  * Supports both Anthropic and Ollama providers.

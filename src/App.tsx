@@ -24,6 +24,7 @@ import { AgentFloatingButton } from "./features/agents/components/AgentFloatingB
 import { PanelConfiguration } from "./features/panel-configuration/components/PanelConfiguration";
 import { usePanelConfiguration } from "./features/panel-configuration/hooks/usePanelConfiguration";
 import { ChatPanel } from "./components/panels/ChatPanel";
+import { QuickToolsTabs } from "./features/quick-tools/components/QuickToolsTabs";
 
 import { BottomPanel } from "./components/panels/BottomPanel";
 import { TitleBar } from "./components/layout/TitleBar";
@@ -33,6 +34,7 @@ import { ResizablePanel } from "./components/ui/resizable-panel";
 import { AgentSelectionProvider } from "./features/agents/contexts/AgentSelectionContext";
 import { ChatProvider } from "./features/chat/contexts/ChatContext";
 import { EditorProvider } from "./contexts/EditorContext";
+import { AudioTranscriptionProvider } from "./features/quick-tools/contexts/AudioTranscriptionContext";
 
 function App() {
   // Use persistent state for active tab
@@ -158,6 +160,15 @@ function App() {
       );
   }, []);
 
+  // Handle URL parameters for navigation
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const toolParam = params.get("tool");
+    if (toolParam === "quick-tools") {
+      setActiveTab("quick-tools");
+    }
+  }, [setActiveTab]);
+
   const renderContent = () => {
     switch (activeTab) {
       case "mapper":
@@ -190,6 +201,8 @@ function App() {
             onNavigateToSettings={() => setActiveTab("settings")}
           />
         );
+      case "quick-tools":
+        return <QuickToolsTabs />;
       default:
         return <FileMapper />;
     }
@@ -205,6 +218,7 @@ function App() {
   const shouldShowAgentSidebar = agentSidebarVisible;
 
   return (
+    <AudioTranscriptionProvider>
     <AgentSelectionProvider>
       <ChatProvider>
         <EditorProvider>
@@ -397,6 +411,7 @@ function App() {
         </EditorProvider>
       </ChatProvider>
     </AgentSelectionProvider>
+    </AudioTranscriptionProvider>
   );
 }
 

@@ -35,6 +35,7 @@ import {
   ChevronLeft,
   Pin,
   PinOff,
+  Zap,
 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
@@ -199,6 +200,14 @@ export const Sidebar = ({
       category: "ai",
       description: "AI-powered file operations",
       shortcut: "8",
+    },
+    {
+      id: "quick-tools",
+      label: "Quick Tools",
+      icon: Zap,
+      category: "tools",
+      description: "Productivity utilities",
+      shortcut: "t",
     },
     {
       id: "panel-config",

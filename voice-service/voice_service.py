@@ -2,7 +2,11 @@
 """
 File: voice-service/voice_service.py
 
-Python backend service for voice processing using Faster-Whisper (STT) and Piper (TTS).
+Python backend service for voice processing using:
+- Faster-Whisper (STT) - Fast, lightweight transcription
+- VibeVoice-ASR (STT) - Microsoft's long-form ASR with speaker diarization
+- Piper (TTS) - Text-to-speech synthesis
+
 This service provides HTTP endpoints for speech-to-text and text-to-speech operations.
 """
 
@@ -24,10 +28,29 @@ try:
     from faster_whisper import WhisperModel
     import numpy as np
     import soundfile as sf
+    FASTER_WHISPER_AVAILABLE = True
 except ImportError as e:
-    print(f"Error importing dependencies: {e}")
-    print("Please install: pip install faster-whisper soundfile numpy")
-    sys.exit(1)
+    print(f"Warning: faster-whisper not available: {e}")
+    FASTER_WHISPER_AVAILABLE = False
+    WhisperModel = None
+    np = None
+    sf = None
+
+# Try to import VibeVoice-ASR dependencies
+VIBEVOICE_AVAILABLE = False
+vibevoice_model = None
+vibevoice_processor = None
+vibevoice_lock = threading.Lock()
+
+try:
+    import torch
+    import torchaudio
+    from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor, TextIteratorStreamer
+    VIBEVOICE_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: VibeVoice-ASR dependencies not available: {e}")
+    torch = None
+    torchaudio = None
 
 # Global model instances
 whisper_model: Optional[WhisperModel] = None
@@ -85,12 +108,235 @@ class VoiceServiceHandler(BaseHTTPRequestHandler):
             self.send_error(404, "Not Found")
     
     def handle_transcribe(self, body: bytes):
-        """Handle speech-to-text transcription using Faster-Whisper."""
-        global whisper_model
-        
+        """Handle speech-to-text transcription. Routes to appropriate provider."""
         try:
             # Parse request
             data = json.loads(body.decode('utf-8'))
+            provider = data.get('provider', 'faster-whisper')  # Default to faster-whisper
+            
+            if provider == 'vibevoice' or provider == 'vibevoice-asr':
+                self.handle_transcribe_vibevoice(data)
+            else:
+                self.handle_transcribe_whisper(data)
+                
+        except json.JSONDecodeError as e:
+            self.send_error(400, f"Invalid JSON in request: {str(e)}")
+        except Exception as e:
+            self.send_error(500, f"Transcription error: {str(e)}")
+    
+    def handle_transcribe_vibevoice(self, data: Dict[str, Any]):
+        """Handle transcription using Microsoft VibeVoice-ASR."""
+        global vibevoice_model, vibevoice_processor
+        
+        if not VIBEVOICE_AVAILABLE:
+            self.send_error(503, "VibeVoice-ASR not available. Please install: pip install transformers torch torchaudio")
+            return
+        
+        try:
+            audio_data = data.get('audio')
+            hotwords = data.get('hotwords', [])  # Custom terms for accuracy
+            enable_diarization = data.get('enable_diarization', True)
+            stream = data.get('stream', False)
+            
+            if not audio_data:
+                self.send_error(400, "Missing audio data")
+                return
+            
+            # Decode base64 audio
+            audio_bytes = base64.b64decode(audio_data)
+            
+            # Save to temporary file
+            with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp_file:
+                tmp_file.write(audio_bytes)
+                tmp_path = tmp_file.name
+            
+            try:
+                # Initialize VibeVoice model if needed (with GPU detection)
+                if vibevoice_model is None:
+                    with vibevoice_lock:
+                        if vibevoice_model is None:
+                            print("Loading VibeVoice-ASR model (this may take a moment on first run)...")
+                            device = "cuda" if torch.cuda.is_available() else "cpu"
+                            dtype = torch.float16 if device == "cuda" else torch.float32
+                            
+                            vibevoice_processor = AutoProcessor.from_pretrained(
+                                "microsoft/VibeVoice-ASR",
+                                trust_remote_code=True
+                            )
+                            vibevoice_model = AutoModelForSpeechSeq2Seq.from_pretrained(
+                                "microsoft/VibeVoice-ASR",
+                                torch_dtype=dtype,
+                                low_cpu_mem_usage=True,
+                                trust_remote_code=True
+                            ).to(device)
+                            print(f"VibeVoice-ASR loaded on {device}!")
+                
+                # Load and preprocess audio
+                waveform, sample_rate = torchaudio.load(tmp_path)
+                
+                # Resample to 16kHz if needed (VibeVoice expects 16kHz)
+                if sample_rate != 16000:
+                    resampler = torchaudio.transforms.Resample(sample_rate, 16000)
+                    waveform = resampler(waveform)
+                    sample_rate = 16000
+                
+                # Convert to mono if stereo
+                if waveform.shape[0] > 1:
+                    waveform = torch.mean(waveform, dim=0, keepdim=True)
+                
+                # Prepare inputs with hotwords if provided
+                prompt = ""
+                if hotwords:
+                    prompt = f"Context: {', '.join(hotwords)}. "
+                
+                # Process with VibeVoice
+                device = vibevoice_model.device
+                inputs = vibevoice_processor(
+                    waveform.squeeze().numpy(),
+                    sampling_rate=sample_rate,
+                    return_tensors="pt"
+                ).to(device)
+                
+                if stream:
+                    # Streaming mode
+                    streamer = TextIteratorStreamer(vibevoice_processor.tokenizer, skip_special_tokens=True)
+                    generation_kwargs = dict(inputs, streamer=streamer, max_length=8192, num_beams=5, do_sample=False)
+                    
+                    thread = threading.Thread(target=vibevoice_model.generate, kwargs=generation_kwargs)
+                    thread.start()
+                    
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/x-ndjson')
+                    self.send_header('Cache-Control', 'no-cache')
+                    self.end_headers()
+                    
+                    full_text = ""
+                    for new_text in streamer:
+                        full_text += new_text
+                        # Send simplified token event
+                        chunk = {"type": "token", "text": new_text}
+                        self.wfile.write((json.dumps(chunk) + "\n").encode('utf-8'))
+                        self.wfile.flush()
+                        
+                    # Parse segments for "done" event (diarization)
+                    segments = self.parse_vibevoice_output(full_text, enable_diarization)
+                    
+                    result = {
+                        "type": "done",
+                        "text": full_text.strip(),
+                        "segments": segments,
+                        "speakers": list(set([s.get('speaker') for s in segments if s.get('speaker')])),
+                        "provider": "vibevoice-asr"
+                    }
+                    self.wfile.write((json.dumps(result) + "\n").encode('utf-8'))
+                    self.wfile.flush()
+                    
+                else:
+                    # Non-streaming mode (Existing)
+                    with torch.no_grad():
+                        generated_ids = vibevoice_model.generate(
+                            **inputs,
+                            max_length=8192,
+                            num_beams=5,
+                            do_sample=False
+                        )
+                    
+                    # Decode output
+                    transcription = vibevoice_processor.batch_decode(
+                        generated_ids,
+                        skip_special_tokens=True
+                    )[0]
+                    
+                    # Parse structured output (VibeVoice returns Who/When/What format)
+                    segments = self.parse_vibevoice_output(transcription, enable_diarization)
+                    
+                    # Extract plain text
+                    full_text = " ".join([s.get('text', '') for s in segments])
+                    
+                    response = {
+                        'success': True,
+                        'text': full_text.strip(),
+                        'provider': 'vibevoice-asr',
+                        'segments': segments,
+                        'language': 'auto',  # VibeVoice auto-detects
+                        'language_probability': 1.0,
+                        'speakers': list(set([s.get('speaker') for s in segments if s.get('speaker')]))
+                    }
+                    
+                    self.send_json_response(response)
+                
+            finally:
+                # Clean up temp file
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+                    
+        except Exception as e:
+            error_msg = str(e)
+            if "out of memory" in error_msg.lower():
+                error_msg = "GPU out of memory. Try shorter audio or use CPU mode."
+            elif "model" in error_msg.lower() and "download" in error_msg.lower():
+                error_msg = "VibeVoice model downloading... Please try again in a few minutes."
+            
+            # Use simple print as fallback if streaming already started
+            if stream:
+                 print(f"Streaming error: {error_msg}")
+            else:
+                 self.send_error(500, f"VibeVoice transcription error: {error_msg}")
+    
+    def parse_vibevoice_output(self, transcription: str, include_diarization: bool) -> list:
+        """Parse VibeVoice structured output into segments."""
+        segments = []
+        
+        # VibeVoice outputs structured format like:
+        # [Speaker 1] (0:00-0:05): Hello, how are you?
+        # [Speaker 2] (0:05-0:08): I'm doing great!
+        
+        import re
+        pattern = r'\[([^\]]+)\]\s*\((\d+:\d+)-(\d+:\d+)\):\s*(.+?)(?=\[|$)'
+        matches = re.findall(pattern, transcription, re.DOTALL)
+        
+        if matches:
+            for match in matches:
+                speaker, start_time, end_time, text = match
+                
+                # Parse timestamps (MM:SS format to seconds)
+                def parse_time(t):
+                    parts = t.split(':')
+                    if len(parts) == 2:
+                        return int(parts[0]) * 60 + int(parts[1])
+                    return 0
+                
+                segment = {
+                    'text': text.strip(),
+                    'start': parse_time(start_time),
+                    'end': parse_time(end_time),
+                    'confidence': 0.95
+                }
+                
+                if include_diarization:
+                    segment['speaker'] = speaker.strip()
+                
+                segments.append(segment)
+        else:
+            # Fallback: treat entire transcription as single segment
+            segments.append({
+                'text': transcription.strip(),
+                'start': 0.0,
+                'end': 0.0,
+                'confidence': 0.9
+            })
+        
+        return segments
+    
+    def handle_transcribe_whisper(self, data: Dict[str, Any]):
+        """Handle speech-to-text transcription using Faster-Whisper."""
+        global whisper_model
+        
+        if not FASTER_WHISPER_AVAILABLE:
+            self.send_error(503, "Faster-Whisper not available. Please install: pip install faster-whisper")
+            return
+        
+        try:
             audio_data = data.get('audio')
             language = data.get('language', 'en')
             if language and '-' in language:
@@ -98,6 +344,7 @@ class VoiceServiceHandler(BaseHTTPRequestHandler):
             model_size = data.get('model_size', 'base')
             device = data.get('device', 'cpu')
             compute_type = data.get('compute_type', 'int8')
+            stream = data.get('stream', False)
             
             if not audio_data:
                 self.send_error(400, "Missing audio data")
@@ -132,37 +379,81 @@ class VoiceServiceHandler(BaseHTTPRequestHandler):
                     vad_filter=True,
                     vad_parameters=dict(min_silence_duration_ms=500)
                 )
-                
-                # Collect results
-                full_text = ""
-                segments_list = []
-                for segment in segments:
-                    segments_list.append({
-                        'start': segment.start,
-                        'end': segment.end,
-                        'text': segment.text.strip(),
-                        'confidence': getattr(segment, 'confidence', 0.0)
-                    })
-                    full_text += segment.text.strip() + " "
-                
-                # Send response
-                response = {
-                    'success': True,
-                    'text': full_text.strip(),
-                    'language': info.language,
-                    'language_probability': info.language_probability,
-                    'segments': segments_list
-                }
-                
-                self.send_json_response(response)
+
+                if stream:
+                    # Streaming mode
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/x-ndjson')
+                    self.send_header('Cache-Control', 'no-cache')
+                    self.end_headers()
+                    
+                    # Send info first
+                    start_evt = {
+                        "type": "start",
+                        "language": info.language,
+                        "language_probability": info.language_probability
+                    }
+                    self.wfile.write((json.dumps(start_evt) + "\n").encode('utf-8'))
+                    self.wfile.flush()
+                    
+                    full_text = ""
+                    all_segments = []
+                    
+                    for segment in segments:
+                        chunk = {
+                            "type": "segment",
+                            "text": segment.text.strip(),
+                            "start": segment.start,
+                            "end": segment.end
+                        }
+                        self.wfile.write((json.dumps(chunk) + "\n").encode('utf-8'))
+                        self.wfile.flush()
+                        
+                        full_text += segment.text.strip() + " "
+                        all_segments.append(chunk)
+                    
+                    # Done event
+                    done_evt = {
+                        "type": "done",
+                        "text": full_text.strip(),
+                        "language": info.language,
+                        "segments": all_segments,
+                        "provider": "faster-whisper"
+                    }
+                    self.wfile.write((json.dumps(done_evt) + "\n").encode('utf-8'))
+                    self.wfile.flush()
+                    
+                else:
+                    # Non-streaming mode (Existing)
+                    # Collect results
+                    full_text = ""
+                    segments_list = []
+                    for segment in segments:
+                        segments_list.append({
+                            'start': segment.start,
+                            'end': segment.end,
+                            'text': segment.text.strip(),
+                            'confidence': getattr(segment, 'confidence', 0.0)
+                        })
+                        full_text += segment.text.strip() + " "
+                    
+                    # Send response
+                    response = {
+                        'success': True,
+                        'text': full_text.strip(),
+                        'provider': 'faster-whisper',
+                        'language': info.language,
+                        'language_probability': info.language_probability,
+                        'segments': segments_list
+                    }
+                    
+                    self.send_json_response(response)
                 
             finally:
                 # Clean up temp file
                 if os.path.exists(tmp_path):
                     os.unlink(tmp_path)
                     
-        except json.JSONDecodeError as e:
-            self.send_error(400, f"Invalid JSON in request: {str(e)}")
         except base64.binascii.Error as e:
             self.send_error(400, f"Invalid base64 audio data: {str(e)}")
         except ImportError as e:
@@ -176,7 +467,11 @@ class VoiceServiceHandler(BaseHTTPRequestHandler):
                 error_msg = f"GPU/CUDA error: {error_msg}. Try using CPU device instead."
             elif "memory" in error_msg.lower():
                 error_msg = f"Memory error: {error_msg}. Try using a smaller model size or reducing audio length."
-            self.send_error(500, f"Transcription error: {error_msg}")
+            
+            try:
+                self.send_error(500, f"Transcription error: {error_msg}")
+            except:
+                print(f"Failed to send error response (streaming started?): {error_msg}")
     
     def handle_synthesize(self, body: bytes):
         """Handle text-to-speech synthesis using Piper."""
@@ -357,9 +652,20 @@ class VoiceServiceHandler(BaseHTTPRequestHandler):
         """Handle health check requests."""
         response = {
             'status': 'healthy',
-            'whisper_available': whisper_model is not None,
+            'whisper_available': whisper_model is not None or FASTER_WHISPER_AVAILABLE,
+            'vibevoice_available': vibevoice_model is not None or VIBEVOICE_AVAILABLE,
             'piper_available': piper_available or self.command_exists('piper'),
-            'service': 'voice-service'
+            'service': 'voice-service',
+            'providers': {
+                'faster-whisper': {
+                    'available': FASTER_WHISPER_AVAILABLE,
+                    'loaded': whisper_model is not None
+                },
+                'vibevoice-asr': {
+                    'available': VIBEVOICE_AVAILABLE,
+                    'loaded': vibevoice_model is not None
+                }
+            }
         }
         self.send_json_response(response)
     

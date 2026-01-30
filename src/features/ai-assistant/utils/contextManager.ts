@@ -10,10 +10,13 @@
  * - Tool execution message prioritization
  * - Confirmation/clarification context preservation
  * - Optional context summarization for long conversations
+ * - Persistent memory integration for cross-session context
  * - Configurable through ContextSettings
  */
 
 import type { ContextSettings, DEFAULT_CONTEXT_SETTINGS } from '../types';
+import { getMemoryService, type MemoryEntry } from './memoryService';
+import { getEmbeddingService } from './embeddingService';
 
 /**
  * Conversation message with metadata for context management.
@@ -43,6 +46,7 @@ export interface ContextSelectionResult {
   contextSummary?: string;
   truncated: boolean;
   relevanceScores?: Map<string, number>;
+  memoryContext?: string; // Relevant context from persistent memory
 }
 
 /**
@@ -66,6 +70,8 @@ const IMPORTANT_KEYWORDS = {
  */
 export class ContextManager {
   private settings: ContextSettings;
+  private memoryEnabled: boolean = false;
+  private semanticSearchEnabled: boolean = false;
 
   constructor(settings?: Partial<ContextSettings>) {
     // Merge provided settings with defaults
@@ -77,6 +83,10 @@ export class ContextManager {
       enableContextSummarization: settings?.enableContextSummarization ?? true,
       relevanceThreshold: settings?.relevanceThreshold ?? 0.3,
     };
+
+    // Initialize memory integration
+    this.memoryEnabled = this.settings.memoryMode === 'persistent';
+    this.semanticSearchEnabled = true;
   }
 
   /**
@@ -85,6 +95,90 @@ export class ContextManager {
    */
   updateSettings(newSettings: Partial<ContextSettings>): void {
     this.settings = { ...this.settings, ...newSettings };
+    this.memoryEnabled = this.settings.memoryMode === 'persistent';
+  }
+
+  /**
+   * Enables or disables persistent memory.
+   */
+  setMemoryEnabled(enabled: boolean): void {
+    this.memoryEnabled = enabled;
+    this.settings.memoryMode = enabled ? 'persistent' : 'session';
+  }
+
+  /**
+   * Saves a message to persistent memory if enabled.
+   */
+  saveToMemory(message: ConversationMessage): void {
+    if (!this.memoryEnabled) return;
+
+    const memoryService = getMemoryService();
+    memoryService.addMessage(
+      message.content,
+      message.role,
+      {
+        topics: message.metadata?.topics,
+        importance: message.metadata?.importance,
+      }
+    );
+  }
+
+  /**
+   * Retrieves relevant context from persistent memory.
+   */
+  getMemoryContext(query: string, limit = 5): string | undefined {
+    if (!this.memoryEnabled) return undefined;
+
+    const memoryService = getMemoryService();
+    const relevantMemories = memoryService.search(query, { limit, minImportance: 0.4 });
+
+    if (relevantMemories.length === 0) return undefined;
+
+    const contextParts = relevantMemories.map((entry, i) => {
+      const role = entry.role === 'user' ? 'User' : 'Assistant';
+      return `[${role}]: ${entry.content.substring(0, 200)}${entry.content.length > 200 ? '...' : ''}`;
+    });
+
+    return `Relevant context from previous conversations:\n${contextParts.join('\n')}\n`;
+  }
+
+  /**
+   * Builds semantic search index from memory entries.
+   */
+  buildSemanticIndex(): void {
+    if (!this.semanticSearchEnabled || !this.memoryEnabled) return;
+
+    const memoryService = getMemoryService();
+    const embeddingService = getEmbeddingService();
+    const entries = memoryService.getAll();
+
+    if (entries.length > 0) {
+      embeddingService.buildIndex(
+        entries.map((e) => ({
+          id: e.id,
+          content: e.content,
+          metadata: { role: e.role, importance: e.importance },
+        }))
+      );
+      console.log(`[ContextManager] Built semantic index with ${entries.length} entries`);
+    }
+  }
+
+  /**
+   * Finds semantically similar memories.
+   */
+  findSimilarMemories(query: string, limit = 5): MemoryEntry[] {
+    if (!this.semanticSearchEnabled || !this.memoryEnabled) return [];
+
+    const embeddingService = getEmbeddingService();
+    const results = embeddingService.findSimilar(query, { limit, minSimilarity: 0.15 });
+
+    const memoryService = getMemoryService();
+    const allEntries = memoryService.getAll();
+
+    return results
+      .map((r) => allEntries.find((e) => e.id === r.document.id))
+      .filter((e): e is MemoryEntry => e !== undefined);
   }
 
   /**
@@ -136,10 +230,10 @@ export class ContextManager {
     // Always include the most recent messages (last 3-5)
     const recentCount = Math.min(5, Math.floor(maxMessages / 2));
     const recentMessages = scoredMessages.slice(-recentCount);
-    
+
     // Get remaining slots for older messages
     const remainingSlots = maxMessages - recentCount;
-    
+
     // Sort older messages by score and select top ones
     const olderMessages = scoredMessages
       .slice(0, -recentCount)
@@ -246,16 +340,16 @@ export class ContextManager {
    */
   private isConfirmationMessage(message: ConversationMessage): boolean {
     if (message.metadata?.isConfirmation) return true;
-    
+
     const content = message.content.toLowerCase().trim();
-    
+
     // Check for short confirmation responses
     if (content.length < 20) {
-      return IMPORTANT_KEYWORDS.confirmation.some(kw => 
+      return IMPORTANT_KEYWORDS.confirmation.some(kw =>
         content === kw || content.startsWith(kw + ' ') || content.startsWith(kw + ',')
       );
     }
-    
+
     return false;
   }
 
@@ -266,9 +360,9 @@ export class ContextManager {
    */
   private isClarificationMessage(message: ConversationMessage): boolean {
     if (message.metadata?.isClarification) return true;
-    
+
     const content = message.content.toLowerCase();
-    
+
     // Check for clarification patterns
     const clarificationPatterns = [
       /what type of file/i,
@@ -278,7 +372,7 @@ export class ContextManager {
       /\.txt|\.docx|\.md|\.pdf/i,
       /plain text|word document|markdown/i,
     ];
-    
+
     return clarificationPatterns.some(pattern => pattern.test(content));
   }
 
@@ -291,7 +385,7 @@ export class ContextManager {
   private calculateKeywordOverlap(content: string, command: string): number {
     // Extract significant words (length > 3, not common words)
     const commonWords = new Set(['the', 'and', 'for', 'are', 'but', 'not', 'you', 'all', 'can', 'had', 'her', 'was', 'one', 'our', 'out', 'has', 'have', 'been', 'would', 'could', 'there', 'their', 'what', 'about', 'which', 'when', 'make', 'like', 'time', 'just', 'know', 'take', 'people', 'into', 'year', 'your', 'good', 'some', 'them', 'see', 'other', 'than', 'then', 'now', 'look', 'only', 'come', 'its', 'over', 'think', 'also', 'back', 'after', 'use', 'two', 'how', 'our', 'work', 'first', 'well', 'way', 'even', 'new', 'want', 'because', 'any', 'these', 'give', 'day', 'most', 'this', 'that', 'with', 'from']);
-    
+
     const extractWords = (text: string): Set<string> => {
       return new Set(
         text.split(/\s+/)
@@ -299,19 +393,19 @@ export class ContextManager {
           .filter(w => w.length > 3 && !commonWords.has(w))
       );
     };
-    
+
     const contentWords = extractWords(content);
     const commandWords = extractWords(command);
-    
+
     if (commandWords.size === 0) return 0;
-    
+
     let matchCount = 0;
     for (const word of commandWords) {
       if (contentWords.has(word)) {
         matchCount++;
       }
     }
-    
+
     return matchCount / commandWords.size;
   }
 
@@ -375,27 +469,27 @@ export class ContextManager {
 
     // Build summary
     const summaryParts: string[] = [];
-    
+
     if (truncatedMessages.length > 0) {
       summaryParts.push(`Earlier conversation included ${truncatedMessages.length} messages`);
     }
-    
+
     if (topicsDiscussed.size > 0) {
       summaryParts.push(`Topics: ${Array.from(topicsDiscussed).join(', ')}`);
     }
-    
+
     if (filesCreated > 0 || foldersCreated > 0) {
       const ops = [];
       if (filesCreated > 0) ops.push(`${filesCreated} files created`);
       if (foldersCreated > 0) ops.push(`${foldersCreated} folders created`);
       summaryParts.push(`Operations: ${ops.join(', ')}`);
     }
-    
+
     if (errorsEncountered > 0) {
       summaryParts.push(`${errorsEncountered} error(s) encountered`);
     }
 
-    return summaryParts.length > 0 
+    return summaryParts.length > 0
       ? `[Context Summary: ${summaryParts.join('. ')}]`
       : '';
   }
@@ -409,7 +503,7 @@ export class ContextManager {
    */
   enrichMessageMetadata(message: ConversationMessage): ConversationMessage {
     const enriched = { ...message };
-    
+
     if (!enriched.metadata) {
       enriched.metadata = {};
     }
@@ -427,7 +521,7 @@ export class ContextManager {
 
     // Detect tool execution indicators
     const content = message.content.toLowerCase();
-    enriched.metadata.hasToolExecution = 
+    enriched.metadata.hasToolExecution =
       IMPORTANT_KEYWORDS.tools.some(kw => content.includes(kw)) ||
       content.includes('i created') ||
       content.includes('i organized') ||

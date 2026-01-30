@@ -6,9 +6,9 @@
  */
 
 import type { ToolDefinition, ToolContext } from './toolsRegistry';
-import { 
-  isFileCreationRequest, 
-  parseFileCreationRequest, 
+import {
+  isFileCreationRequest,
+  parseFileCreationRequest,
   isCompositeCreationRequest,
   parseCompositeCreationRequest,
   isFolderCreationRequest,
@@ -155,7 +155,8 @@ export async function processCommandWithOllama(
   systemPrompt: string, // Kept for signature compatibility
   skillContext?: string,
   abortSignal?: AbortSignal,
-  conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>
+  conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>,
+  onChunk?: (chunk: string) => void
 ): Promise<{ content: string; operation?: any; metadata?: any }> {
 
   // 1. Determine Needs
@@ -227,6 +228,7 @@ export async function processCommandWithOllama(
           tools: needsTools && ollamaTools.length > 0 ? ollamaTools : undefined,
           temperature: settings.creativityLevel === 'conservative' ? 0.3 : settings.creativityLevel === 'balanced' ? 0.7 : 1.0,
           stream: false,
+          keep_alive: -1, // Keep model loaded permanently for faster responses
         }),
         signal: abortSignal,
       });
@@ -234,10 +236,10 @@ export async function processCommandWithOllama(
       if (!response.ok) {
         const errorText = await response.text();
         // Check for various error messages indicating tool support issues
-        if (errorText.includes('does not support tools') || 
-            errorText.includes('tool calling') ||
-            errorText.includes('function calling') ||
-            errorText.includes('tools not supported')) {
+        if (errorText.includes('does not support tools') ||
+          errorText.includes('tool calling') ||
+          errorText.includes('function calling') ||
+          errorText.includes('tools not supported')) {
           throw new Error(`MODEL_TOOLS_NOT_SUPPORTED:${modelToUse}:${errorText}`);
         }
         throw new Error(`Ollama API error: ${response.status} - ${errorText}`);
@@ -311,6 +313,10 @@ export async function processCommandWithOllama(
         const cleanedText = ResponseParser.cleanResponse(text);
 
         if (cleanedText.length > 0) {
+          // Stream the response if callback is provided
+          if (onChunk) {
+            onChunk(cleanedText);
+          }
           finalResponse += cleanedText + '\n\n';
           messages.push({ role: 'assistant', content: cleanedText });
         }
@@ -324,7 +330,7 @@ export async function processCommandWithOllama(
     // BUT: Skip fallback if file type clarification is needed - let AI ask the user
     const executedToolsCountNative = toolExecutions.length;
     const requiresClarification = needsFileTypeClarification(command);
-    
+
     if (requiresClarification) {
       console.log('[Native Fallback] File type clarification needed - skipping auto-execution');
       // Don't auto-execute - the AI should ask the user what file type they want
@@ -333,12 +339,12 @@ export async function processCommandWithOllama(
     else if (isCompositeCreationRequest(command)) {
       const createdFolders = toolExecutions.filter((e) => e.tool === 'create_directory' || e.tool === 'folder_creation_tab');
       const createdFiles = toolExecutions.filter((e) => e.tool === 'write_file_content');
-      
+
       if ((createdFolders.length === 0 || createdFiles.length === 0) && currentDirectory) {
         console.log('[Native Fallback] Composite creation request detected, executing directly...');
         const parsed = parseCompositeCreationRequest(command);
         const createdItems: string[] = [];
-        
+
         for (const folder of parsed.folders) {
           const folderPath = `${currentDirectory}/${folder.folderName}`;
           const { result: folderResult, executionInfo: folderInfo } = await ToolExecutionService.executeToolCall(
@@ -347,7 +353,7 @@ export async function processCommandWithOllama(
             context
           );
           toolExecutions.push(folderInfo);
-          
+
           if (folderResult.success) {
             createdItems.push(`📁 ${folder.folderName}`);
             for (const file of folder.filesInside) {
@@ -364,7 +370,7 @@ export async function processCommandWithOllama(
             }
           }
         }
-        
+
         if (createdItems.length > 0) {
           finalResponse = `Done! I created:\n${createdItems.join('\n')}`;
         }
@@ -373,7 +379,7 @@ export async function processCommandWithOllama(
     // Check for folder-only creation requests (folders don't need type clarification)
     else if (isFolderCreationRequest(command) && !isCompositeCreationRequest(command)) {
       const createdFolders = toolExecutions.filter((e) => e.tool === 'create_directory' || e.tool === 'folder_creation_tab');
-      
+
       if (createdFolders.length === 0 && currentDirectory) {
         console.log('[Native Fallback] Folder creation request detected, executing directly...');
         const folder = parseFolderCreationRequest(command);
@@ -416,7 +422,7 @@ export async function processCommandWithOllama(
         }
       }
     }
-    
+
     // If we executed fallback tools and there's no response yet, generate one
     if (toolExecutions.length > executedToolsCountNative && (!finalResponse || finalResponse.trim().length === 0)) {
       finalResponse = 'Done! I completed the operation.';
@@ -428,13 +434,13 @@ export async function processCommandWithOllama(
     // Trigger when: no tools executed OR all tools failed
     const allToolsFailed = toolExecutions.length > 0 && toolExecutions.every(t => t.status === 'error');
     const noSuccessfulTools = toolExecutions.length === 0 || allToolsFailed;
-    
+
     if (requiresClarification && noSuccessfulTools) {
       const alreadyAsking = /what\s+(?:type|kind|format)\s+(?:of\s+)?(?:file|document)/i.test(finalResponse);
-      
+
       if (!alreadyAsking) {
         console.log('[Native Fallback] Clarification needed and no successful tools. Forcing clarification prompt.');
-        
+
         // Parse the request to get folder and file names for the clarification message
         if (isCompositeCreationRequest(command)) {
           const parsed = parseCompositeCreationRequest(command);
@@ -503,7 +509,7 @@ async function processCommandWithJsonMode(
 ): Promise<{ content: string; operation?: any; metadata?: any }> {
   const modelToUse = settings.ollamaModel || settings.model || ollamaConfig.model;
   const baseUrlToUse = settings.ollamaBaseUrl || ollamaConfig.baseUrl || 'http://localhost:11434';
-  
+
   // Use JSON command mode prompt
   const systemPrompt = PromptBuilder.buildJsonSystemPrompt(tools, settings, skillContext);
   const userPrompt = PromptBuilder.buildUserPrompt(
@@ -554,6 +560,7 @@ async function processCommandWithJsonMode(
           messages: convertMessagesToOllamaFormat(messages),
           temperature: settings.creativityLevel === 'conservative' ? 0.3 : settings.creativityLevel === 'balanced' ? 0.7 : 1.0,
           stream: false,
+          keep_alive: -1, // Keep model loaded permanently for faster responses
         }),
         signal: abortSignal,
       });
@@ -608,7 +615,7 @@ async function processCommandWithJsonMode(
         });
         messages.push({
           role: 'user',
-          content: result.success 
+          content: result.success
             ? `Tool execution result: ${JSON.stringify(result.data || { success: true })}`
             : `Tool execution error: ${result.error}`,
         });
@@ -619,12 +626,12 @@ async function processCommandWithJsonMode(
       } else {
         // No JSON command found - this is a text response
         const cleanedText = ResponseParser.cleanResponse(textResponse);
-        
+
         if (cleanedText.length > 0) {
           finalResponse += cleanedText + '\n\n';
           messages.push({ role: 'assistant', content: cleanedText });
         }
-        
+
         // Check if we should continue (maybe the model is describing what it will do)
         // If it mentions tools but didn't output JSON, we might need to prompt again
         const mentionsTools = /(?:use|call|execute|run).*(?:tool|function|command)/i.test(textResponse);
@@ -637,7 +644,7 @@ async function processCommandWithJsonMode(
           iteration++;
           continue;
         }
-        
+
         break; // Done
       }
     }
@@ -647,7 +654,7 @@ async function processCommandWithJsonMode(
     // BUT: Skip fallback if file type clarification is needed - let AI ask the user
     const executedToolsCount = toolExecutions.length;
     const requiresClarificationJson = needsFileTypeClarification(command);
-    
+
     if (requiresClarificationJson) {
       console.log('[JSON Fallback] File type clarification needed - skipping auto-execution');
       // Don't auto-execute - the AI should ask the user what file type they want
@@ -656,13 +663,13 @@ async function processCommandWithJsonMode(
     else if (isCompositeCreationRequest(command)) {
       const createdFolders = toolExecutions.filter((e) => e.tool === 'create_directory' || e.tool === 'folder_creation_tab');
       const createdFiles = toolExecutions.filter((e) => e.tool === 'write_file_content');
-      
+
       // Only do fallback if the AI didn't already create the folder and file
       if ((createdFolders.length === 0 || createdFiles.length === 0) && currentDirectory) {
         console.log('[Fallback] Composite creation request detected, executing directly...');
         const parsed = parseCompositeCreationRequest(command);
         const createdItems: string[] = [];
-        
+
         for (const folder of parsed.folders) {
           // Create the folder first
           const folderPath = `${currentDirectory}/${folder.folderName}`;
@@ -672,10 +679,10 @@ async function processCommandWithJsonMode(
             context
           );
           toolExecutions.push(folderInfo);
-          
+
           if (folderResult.success) {
             createdItems.push(`📁 ${folder.folderName}`);
-            
+
             // Create files inside the folder
             for (const file of folder.filesInside) {
               const filePath = `${folderPath}/${file.fileName}`;
@@ -685,14 +692,14 @@ async function processCommandWithJsonMode(
                 context
               );
               toolExecutions.push(fileInfo);
-              
+
               if (fileResult.success) {
                 createdItems.push(`  📄 ${file.fileName}`);
               }
             }
           }
         }
-        
+
         if (createdItems.length > 0) {
           finalResponse = `Done! I created:\n${createdItems.join('\n')}`;
         }
@@ -701,7 +708,7 @@ async function processCommandWithJsonMode(
     // Check for folder-only creation requests (folders don't need type clarification)
     else if (isFolderCreationRequest(command) && !isCompositeCreationRequest(command)) {
       const createdFolders = toolExecutions.filter((e) => e.tool === 'create_directory' || e.tool === 'folder_creation_tab');
-      
+
       if (createdFolders.length === 0 && currentDirectory) {
         console.log('[Fallback] Folder creation request detected, executing directly...');
         const folder = parseFolderCreationRequest(command);
@@ -713,7 +720,7 @@ async function processCommandWithJsonMode(
             context
           );
           toolExecutions.push(executionInfo);
-          
+
           if (result.success) {
             finalResponse = `Done! I created the folder: 📁 ${folder.folderName}`;
           }
@@ -745,7 +752,7 @@ async function processCommandWithJsonMode(
         }
       }
     }
-    
+
     // If we executed fallback tools and there's no response yet, generate one
     if (toolExecutions.length > executedToolsCount && (!finalResponse || finalResponse.trim().length === 0)) {
       const lastTool = toolExecutions[toolExecutions.length - 1];
@@ -762,13 +769,13 @@ async function processCommandWithJsonMode(
     // Trigger when: no tools executed OR all tools failed
     const allToolsFailedJson = toolExecutions.length > 0 && toolExecutions.every(t => t.status === 'error');
     const noSuccessfulToolsJson = toolExecutions.length === 0 || allToolsFailedJson;
-    
+
     if (requiresClarificationJson && noSuccessfulToolsJson) {
       const alreadyAskingJson = /what\s+(?:type|kind|format)\s+(?:of\s+)?(?:file|document)/i.test(finalResponse);
-      
+
       if (!alreadyAskingJson) {
         console.log('[JSON Fallback] Clarification needed and no successful tools. Forcing clarification prompt.');
-        
+
         // Parse the request to get folder and file names for the clarification message
         if (isCompositeCreationRequest(command)) {
           const parsed = parseCompositeCreationRequest(command);
@@ -822,6 +829,7 @@ export async function testOllamaConnection(config: Partial<OllamaConfig>): Promi
         model: testConfig.model,
         messages: [{ role: 'user', content: 'Say "OK"' }],
         stream: false,
+        keep_alive: -1, // Keep model loaded permanently for faster responses
       }),
     });
 

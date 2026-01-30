@@ -334,6 +334,12 @@ export interface ContextSettings {
   enableContextSummarization: boolean;
   /** Minimum relevance score (0-1) for including older messages (default: 0.3) */
   relevanceThreshold: number;
+  /** Enable persistent memory across sessions (default: false) */
+  enablePersistentMemory?: boolean;
+  /** Number of days to retain memory entries (default: 30) */
+  memoryRetentionDays?: number;
+  /** Enable semantic search for memory retrieval (default: true) */
+  enableSemanticSearch?: boolean;
 }
 
 /**
@@ -346,6 +352,9 @@ export const DEFAULT_CONTEXT_SETTINGS: ContextSettings = {
   prioritizeToolMessages: true,
   enableContextSummarization: true,
   relevanceThreshold: 0.3,
+  enablePersistentMemory: false,
+  memoryRetentionDays: 30,
+  enableSemanticSearch: true,
 };
 
 /**

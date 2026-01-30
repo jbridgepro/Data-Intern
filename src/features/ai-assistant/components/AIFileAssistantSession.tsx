@@ -6,7 +6,15 @@
  */
 
 import { useState, useCallback, useRef, useEffect } from "react";
-import { FolderOpen, Settings, Sparkles, Loader2, Mic, AlertCircle, ExternalLink } from "lucide-react";
+import {
+  FolderOpen,
+  Settings,
+  Sparkles,
+  Loader2,
+  Mic,
+  AlertCircle,
+  ExternalLink,
+} from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -74,11 +82,7 @@ const CONTEXTUAL_NAME_MAX_LENGTH = 40;
 function isGenericAgentOrTabName(name: string): boolean {
   if (!name || typeof name !== "string") return true;
   const n = name.trim();
-  return (
-    n === "Agent Chat" ||
-    n.startsWith("New Task") ||
-    /^Chat \d+$/.test(n)
-  );
+  return n === "Agent Chat" || n.startsWith("New Task") || /^Chat \d+$/.test(n);
 }
 
 /**
@@ -230,7 +234,7 @@ export const AIFileAssistantSession = ({
     return shouldShowSetupWizard(settings);
   });
   const [providerConfigStatus, setProviderConfigStatus] = useState(() =>
-    checkProviderConfiguration(settings)
+    checkProviderConfiguration(settings),
   );
 
   // Re-check provider configuration when settings change
@@ -702,7 +706,7 @@ export const AIFileAssistantSession = ({
     // Fallback: first user message (skip welcome / empty)
     if (!rawContext) {
       const firstUser = messages.find(
-        (m) => m.role === "user" && m.content?.trim() && m.id !== "welcome"
+        (m) => m.role === "user" && m.content?.trim() && m.id !== "welcome",
       );
       if (firstUser?.content?.trim()) {
         rawContext = firstUser.content.trim().replace(/\s+/g, " ");
@@ -712,7 +716,8 @@ export const AIFileAssistantSession = ({
     if (!rawContext) return;
 
     const currentAgent = agentService.getAgent(activeAgentId);
-    const agentNameGeneric = currentAgent && isGenericAgentOrTabName(currentAgent.name);
+    const agentNameGeneric =
+      currentAgent && isGenericAgentOrTabName(currentAgent.name);
     const tabNameGeneric = isGenericAgentOrTabName(tabName ?? "");
     if (!currentAgent || !agentNameGeneric || !tabNameGeneric) return;
 
@@ -722,7 +727,8 @@ export const AIFileAssistantSession = ({
       const summary = await generateChatTitleSummary(rawContext!, settings);
       if (cancelled) return;
       const contextualName = summary
-        ? summary.trim().slice(0, CONTEXTUAL_NAME_MAX_LENGTH) || sanitizeContextualName(rawContext!)
+        ? summary.trim().slice(0, CONTEXTUAL_NAME_MAX_LENGTH) ||
+          sanitizeContextualName(rawContext!)
         : sanitizeContextualName(rawContext!);
       if (currentAgent.name === contextualName) return;
 
@@ -733,13 +739,7 @@ export const AIFileAssistantSession = ({
     return () => {
       cancelled = true;
     };
-  }, [
-    activeAgentId,
-    activeSession?.messages,
-    onRename,
-    tabName,
-    settings,
-  ]);
+  }, [activeAgentId, activeSession?.messages, onRename, tabName, settings]);
 
   const handleQuickAction = async (action: string) => {
     const command = getQuickActionCommand(action);
@@ -752,7 +752,9 @@ export const AIFileAssistantSession = ({
 
   const getQuickActionCommand = (action: string): string => {
     const actionMap: Record<string, string> = {
-      "auto-organize": `Organize files in ${currentDirectory || "the current directory"} by file type`,
+      "auto-organize": `Organize files in ${
+        currentDirectory || "the current directory"
+      } by file type`,
       "find-duplicates": "Find all duplicate files",
       "smart-rename": "Rename files to match a standard naming convention",
       "create-project": "Create a new project folder structure",
@@ -937,16 +939,22 @@ export const AIFileAssistantSession = ({
 
           {/* Provider Indicator */}
           <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-100/50 dark:bg-slate-800/50 border border-slate-200/50 dark:border-slate-700/50">
-            <div className={cn(
-              "w-2 h-2 rounded-full",
-              settings.provider === 'anthropic' ? "bg-violet-500" :
-              settings.provider === 'openrouter' ? "bg-blue-500" :
-              "bg-emerald-500"
-            )} />
+            <div
+              className={cn(
+                "w-2 h-2 rounded-full",
+                settings.provider === "anthropic"
+                  ? "bg-violet-500"
+                  : settings.provider === "openrouter"
+                  ? "bg-blue-500"
+                  : "bg-emerald-500",
+              )}
+            />
             <span className="text-xs font-medium text-slate-600 dark:text-slate-400">
-              {settings.provider === 'anthropic' ? 'Claude' :
-               settings.provider === 'openrouter' ? 'OpenRouter' :
-               'Ollama'}
+              {settings.provider === "anthropic"
+                ? "Claude"
+                : settings.provider === "openrouter"
+                ? "OpenRouter"
+                : "Ollama"}
             </span>
           </div>
         </div>
@@ -960,9 +968,9 @@ export const AIFileAssistantSession = ({
             title="Voice Settings"
             className={cn(
               "h-9 w-9 p-0 rounded-xl transition-all duration-200",
-              showVoiceSettings 
-                ? "bg-violet-100 dark:bg-violet-900/50 text-violet-600 dark:text-violet-400" 
-                : "hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 dark:text-slate-400"
+              showVoiceSettings
+                ? "bg-violet-100 dark:bg-violet-900/50 text-violet-600 dark:text-violet-400"
+                : "hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 dark:text-slate-400",
             )}
           >
             <Mic className="h-4 w-4" />
@@ -976,9 +984,9 @@ export const AIFileAssistantSession = ({
             title="AI Settings"
             className={cn(
               "h-9 w-9 p-0 rounded-xl transition-all duration-200",
-              showSettings 
-                ? "bg-violet-100 dark:bg-violet-900/50 text-violet-600 dark:text-violet-400" 
-                : "hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 dark:text-slate-400"
+              showSettings
+                ? "bg-violet-100 dark:bg-violet-900/50 text-violet-600 dark:text-violet-400"
+                : "hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 dark:text-slate-400",
             )}
           >
             <Settings className="h-4 w-4" />
@@ -1082,57 +1090,64 @@ export const AIFileAssistantSession = ({
                 )}
 
                 {/* Provider Configuration Warning Banner - Show when provider needs attention */}
-                {!showSetupWizard && !providerConfigStatus.isConfigured && messages.length === 1 && (
-                  <div className="mb-4 p-4 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200/50 dark:border-amber-800/50">
-                    <div className="flex items-start gap-3">
-                      <AlertCircle className="h-5 w-5 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
-                      <div className="flex-1 min-w-0">
-                        <p className="font-medium text-amber-800 dark:text-amber-200 mb-1">
-                          AI Provider Not Configured
-                        </p>
-                        <p className="text-sm text-amber-700 dark:text-amber-300 mb-3">
-                          {providerConfigStatus.message}
-                          {providerConfigStatus.details.length > 0 && (
-                            <span className="block mt-1">
-                              {providerConfigStatus.details.join(". ")}
-                            </span>
-                          )}
-                        </p>
-                        <div className="flex flex-wrap gap-2">
-                          <Button
-                            size="sm"
-                            variant="default"
-                            className="bg-amber-600 hover:bg-amber-700 text-white"
-                            onClick={() => setShowSetupWizard(true)}
-                          >
-                            <Sparkles className="h-4 w-4 mr-1.5" />
-                            Set Up AI Provider
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="border-amber-300 dark:border-amber-700 text-amber-700 dark:text-amber-300"
-                            onClick={() => setShowSettings(true)}
-                          >
-                            <Settings className="h-4 w-4 mr-1.5" />
-                            Open Settings
-                          </Button>
-                          {getProviderHelpUrl(settings.provider) && (
+                {!showSetupWizard &&
+                  !providerConfigStatus.isConfigured &&
+                  messages.length === 1 && (
+                    <div className="mb-4 p-4 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200/50 dark:border-amber-800/50">
+                      <div className="flex items-start gap-3">
+                        <AlertCircle className="h-5 w-5 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
+                        <div className="flex-1 min-w-0">
+                          <p className="font-medium text-amber-800 dark:text-amber-200 mb-1">
+                            AI Provider Not Configured
+                          </p>
+                          <p className="text-sm text-amber-700 dark:text-amber-300 mb-3">
+                            {providerConfigStatus.message}
+                            {providerConfigStatus.details.length > 0 && (
+                              <span className="block mt-1">
+                                {providerConfigStatus.details.join(". ")}
+                              </span>
+                            )}
+                          </p>
+                          <div className="flex flex-wrap gap-2">
                             <Button
                               size="sm"
-                              variant="ghost"
-                              className="text-amber-600 dark:text-amber-400"
-                              onClick={() => window.open(getProviderHelpUrl(settings.provider), "_blank")}
+                              variant="default"
+                              className="bg-amber-600 hover:bg-amber-700 text-white"
+                              onClick={() => setShowSetupWizard(true)}
                             >
-                              <ExternalLink className="h-4 w-4 mr-1.5" />
-                              Get Help
+                              <Sparkles className="h-4 w-4 mr-1.5" />
+                              Set Up AI Provider
                             </Button>
-                          )}
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="border-amber-300 dark:border-amber-700 text-amber-700 dark:text-amber-300"
+                              onClick={() => setShowSettings(true)}
+                            >
+                              <Settings className="h-4 w-4 mr-1.5" />
+                              Open Settings
+                            </Button>
+                            {getProviderHelpUrl(settings.provider) && (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="text-amber-600 dark:text-amber-400"
+                                onClick={() =>
+                                  window.open(
+                                    getProviderHelpUrl(settings.provider),
+                                    "_blank",
+                                  )
+                                }
+                              >
+                                <ExternalLink className="h-4 w-4 mr-1.5" />
+                                Get Help
+                              </Button>
+                            )}
+                          </div>
                         </div>
                       </div>
                     </div>
-                  </div>
-                )}
+                  )}
 
                 {/* Status Indicators - Compact and Modern */}
                 {!showSetupWizard && messages.length === 1 && (
@@ -1159,7 +1174,8 @@ export const AIFileAssistantSession = ({
                         <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200/50 dark:border-amber-800/50">
                           <div className="w-2 h-2 rounded-full bg-amber-500" />
                           <span className="text-xs font-medium text-amber-700 dark:text-amber-300">
-                            ClawdBot unavailable: {clawdbotStatus.error || "CLI not found"}
+                            ClawdBot unavailable:{" "}
+                            {clawdbotStatus.error || "CLI not found"}
                           </span>
                         </div>
                       )}
@@ -1190,7 +1206,8 @@ export const AIFileAssistantSession = ({
                           How can I help you today?
                         </h2>
                         <p className="text-sm text-slate-500 dark:text-slate-400 max-w-md mx-auto">
-                          I can organize files, find duplicates, rename with patterns, and more. Just describe what you need.
+                          I can organize files, find duplicates, rename with
+                          patterns, and more. Just describe what you need.
                         </p>
                       </div>
 
@@ -1243,8 +1260,9 @@ export const AIFileAssistantSession = ({
                               size="sm"
                               onClick={async () => {
                                 try {
-                                  const { Command } =
-                                    await import("@tauri-apps/plugin-shell");
+                                  const { Command } = await import(
+                                    "@tauri-apps/plugin-shell"
+                                  );
                                   const cmd = Command.create("clawdbot", [
                                     "plugins",
                                     "list",
@@ -1262,7 +1280,9 @@ export const AIFileAssistantSession = ({
                                       : 0;
                                     addMessage(
                                       "assistant",
-                                      `Found ${count} ClawdHub skill${count !== 1 ? "s" : ""} installed. Use "list ClawdHub skills" to see details.`,
+                                      `Found ${count} ClawdHub skill${
+                                        count !== 1 ? "s" : ""
+                                      } installed. Use "list ClawdHub skills" to see details.`,
                                     );
                                   } else {
                                     addMessage(
@@ -1273,7 +1293,9 @@ export const AIFileAssistantSession = ({
                                 } catch (error: any) {
                                   addMessage(
                                     "assistant",
-                                    `Error: ${error.message || "Failed to list skills"}`,
+                                    `Error: ${
+                                      error.message || "Failed to list skills"
+                                    }`,
                                   );
                                 }
                               }}
@@ -1300,7 +1322,9 @@ export const AIFileAssistantSession = ({
                     widgets={getWidgetsForMessage(message.id)}
                     aiName={settings.aiName}
                     userName={settings.userName}
-                    onDelete={() => activeAgentId && deleteMessage(activeAgentId, message.id)}
+                    onDelete={() =>
+                      activeAgentId && deleteMessage(activeAgentId, message.id)
+                    }
                     onWidgetUpdate={(widgetId, updates) => {
                       updateWidget(widgetId, updates, "user");
                       // If user is editing via natural language, process it
@@ -1326,7 +1350,11 @@ export const AIFileAssistantSession = ({
                       confirmWidget(widget.id);
                       // Execute the tool immediately with confirmed parameters
                       // Build a command that will trigger the tool execution
-                      const toolCommand = `Execute ${widget.toolName} with these parameters: ${JSON.stringify(widget.params)}`;
+                      const toolCommand = `Execute ${
+                        widget.toolName
+                      } with these parameters: ${JSON.stringify(
+                        widget.params,
+                      )}`;
                       await handleSendMessage(toolCommand);
                     }}
                     onWidgetDismiss={(widgetId) => {

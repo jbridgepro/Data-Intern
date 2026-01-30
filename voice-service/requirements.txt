@@ -1,10 +1,16 @@
 # Voice Service Dependencies
 # File: voice-service/requirements.txt
 #
-# Python dependencies for Faster-Whisper (STT) and Piper (TTS) voice service
+# Python dependencies for Faster-Whisper (STT), VibeVoice-ASR (STT), and Piper (TTS) voice service
 
 # Speech-to-Text: Faster-Whisper
 faster-whisper>=1.0.0
+
+# Speech-to-Text: VibeVoice-ASR (Microsoft)
+transformers>=4.45.0
+torch>=2.1.0
+torchaudio>=2.1.0
+accelerate>=0.27.0
 
 # Audio processing
 soundfile>=0.12.1

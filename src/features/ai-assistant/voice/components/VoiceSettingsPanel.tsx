@@ -393,6 +393,9 @@ export const VoiceSettingsPanel = ({
                     <SelectItem value="faster-whisper">
                       Faster-Whisper (Recommended)
                     </SelectItem>
+                    <SelectItem value="vibevoice-asr">
+                      Microsoft VibeVoice-ASR (Long-form)
+                    </SelectItem>
                     <SelectItem value="browser-stt">
                       Browser Speech Recognition (Fallback)
                     </SelectItem>
@@ -410,6 +413,8 @@ export const VoiceSettingsPanel = ({
                 <p className="text-xs text-muted-foreground mt-1">
                   {settings.provider === "faster-whisper" &&
                     "Fast, accurate local transcription with Piper TTS"}
+                  {settings.provider === "vibevoice-asr" &&
+                    "Best for long-form audio with speaker identification (Requires GPU recommended)"}
                   {settings.provider === "browser-stt" &&
                     "Uses browser built-in speech recognition"}
                   {settings.provider === "openai-realtime" &&
@@ -463,6 +468,82 @@ export const VoiceSettingsPanel = ({
                   })}
                 </div>
               </div>
+
+              {/* VibeVoice-ASR Configuration */}
+              {settings.provider === "vibevoice-asr" && (
+                <>
+                  <Separator />
+                  <div className="space-y-4">
+                    <Label className="text-base font-semibold">
+                      VibeVoice-ASR Settings
+                    </Label>
+
+                    <div>
+                      <Label htmlFor="vibevoice-hotwords">
+                        Hotwords / Context
+                      </Label>
+                      <textarea
+                        id="vibevoice-hotwords"
+                        value={settings.vibevoiceHotwords?.join(", ") || ""}
+                        onChange={(e) =>
+                          onUpdate({
+                            vibevoiceHotwords: e.target.value
+                              .split(",")
+                              .map((s) => s.trim())
+                              .filter((s) => s.length > 0),
+                          })
+                        }
+                        className="mt-1 w-full px-3 py-2 border border-slate-300 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-900 text-sm min-h-[80px]"
+                        placeholder="File Pro, Tauri, React, Header Component..."
+                      />
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Comma-separated list of technical terms or names to improve accuracy.
+                      </p>
+                    </div>
+
+                    <div className="flex items-center justify-between">
+                      <div className="space-y-0.5">
+                        <Label htmlFor="vibevoice-diarization">
+                          Speaker Diarization
+                        </Label>
+                        <p className="text-xs text-muted-foreground">
+                          Identify different speakers in the audio
+                        </p>
+                      </div>
+                      <Switch
+                        id="vibevoice-diarization"
+                        checked={settings.vibevoiceEnableDiarization ?? true}
+                        onCheckedChange={(checked) =>
+                          onUpdate({ vibevoiceEnableDiarization: checked })
+                        }
+                      />
+                    </div>
+
+                    <div>
+                      <Label htmlFor="whisper-device">Device</Label>
+                      <Select
+                        value={settings.whisperDevice || "cpu"}
+                        onValueChange={(value) =>
+                          onUpdate({
+                            whisperDevice: value as "cpu" | "cuda",
+                          })
+                        }
+                      >
+                        <SelectTrigger id="whisper-device" className="mt-1">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="cpu">CPU (Slower, Universal)</SelectItem>
+                          <SelectItem value="cuda">CUDA GPU (Faster, Requires NVIDIA)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        GPU acceleration is highly recommended for VibeVoice.
+                      </p>
+                    </div>
+                  </div>
+                </>
+              )}
 
               {/* Faster-Whisper Configuration */}
               {settings.provider === "faster-whisper" && (
@@ -1066,6 +1147,74 @@ export const VoiceSettingsPanel = ({
                         onUpdate({ noiseCancellation: checked })
                       }
                     />
+                  </div>
+
+                  {/* Advanced VAD Section */}
+                  <Separator className="my-4" />
+                  <div className="space-y-4">
+                    <div className="flex items-center gap-2">
+                      <Zap className="h-4 w-4 text-amber-500" />
+                      <Label className="text-sm font-semibold">Advanced VAD (Silero)</Label>
+                      <Badge variant="outline" className="text-[10px]">Neural Network</Badge>
+                    </div>
+
+                    <div className="flex items-center justify-between">
+                      <div className="space-y-0.5">
+                        <Label htmlFor="advanced-vad">Enable Advanced VAD</Label>
+                        <p className="text-xs text-muted-foreground">
+                          Uses Silero neural network for better speech detection
+                        </p>
+                      </div>
+                      <Switch
+                        id="advanced-vad"
+                        checked={settings.advancedVAD ?? false}
+                        onCheckedChange={(checked) =>
+                          onUpdate({ advancedVAD: checked })
+                        }
+                      />
+                    </div>
+
+                    {settings.advancedVAD && (
+                      <>
+                        <div>
+                          <Label htmlFor="vad-sensitivity">VAD Sensitivity</Label>
+                          <Select
+                            value={settings.vadSensitivity || "medium"}
+                            onValueChange={(value) =>
+                              onUpdate({ vadSensitivity: value as "low" | "medium" | "high" })
+                            }
+                          >
+                            <SelectTrigger id="vad-sensitivity" className="mt-1">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="low">Low (Strict - Speech only)</SelectItem>
+                              <SelectItem value="medium">Medium (Balanced)</SelectItem>
+                              <SelectItem value="high">High (Sensitive)</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            Low = ignores soft speech, High = may pick up background noise
+                          </p>
+                        </div>
+
+                        <div className="flex items-center justify-between">
+                          <div className="space-y-0.5">
+                            <Label htmlFor="adaptive-threshold">Adaptive Threshold</Label>
+                            <p className="text-xs text-muted-foreground">
+                              Auto-adjust based on ambient noise
+                            </p>
+                          </div>
+                          <Switch
+                            id="adaptive-threshold"
+                            checked={settings.adaptiveThreshold ?? true}
+                            onCheckedChange={(checked) =>
+                              onUpdate({ adaptiveThreshold: checked })
+                            }
+                          />
+                        </div>
+                      </>
+                    )}
                   </div>
 
                   {/* Microphone Sensitivity Slider */}

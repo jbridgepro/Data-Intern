@@ -31,7 +31,13 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { testAPIKey, listAvailableModels } from "../utils/aiService";
@@ -46,7 +52,11 @@ interface AIProviderSetupWizardProps {
   onSkip?: () => void;
 }
 
-type SetupStep = "select-provider" | "setup-provider" | "verify-connection" | "complete";
+type SetupStep =
+  | "select-provider"
+  | "setup-provider"
+  | "verify-connection"
+  | "complete";
 
 interface ProviderOption {
   id: AIProvider;
@@ -64,7 +74,8 @@ const PROVIDER_OPTIONS: ProviderOption[] = [
   {
     id: "ollama",
     name: "Ollama (Local)",
-    description: "Run AI models locally on your computer. Free, private, and works offline.",
+    description:
+      "Run AI models locally on your computer. Free, private, and works offline.",
     icon: <Server className="h-6 w-6" />,
     features: ["100% Private", "Works Offline", "No API Key", "Free Forever"],
     setup: "moderate",
@@ -74,9 +85,15 @@ const PROVIDER_OPTIONS: ProviderOption[] = [
   {
     id: "openrouter",
     name: "OpenRouter",
-    description: "Access 100+ AI models through one API. Pay-as-you-go pricing.",
+    description:
+      "Access 100+ AI models through one API. Pay-as-you-go pricing.",
     icon: <Globe className="h-6 w-6" />,
-    features: ["100+ Models", "Claude, GPT-4, Llama", "Pay Per Use", "Easy Setup"],
+    features: [
+      "100+ Models",
+      "Claude, GPT-4, Llama",
+      "Pay Per Use",
+      "Easy Setup",
+    ],
     setup: "easy",
     cost: "paid",
   },
@@ -85,7 +102,12 @@ const PROVIDER_OPTIONS: ProviderOption[] = [
     name: "Anthropic Claude",
     description: "Direct access to Claude models. Best for production use.",
     icon: <Cloud className="h-6 w-6" />,
-    features: ["Official API", "Fastest Response", "Direct Support", "Enterprise Ready"],
+    features: [
+      "Official API",
+      "Fastest Response",
+      "Direct Support",
+      "Enterprise Ready",
+    ],
     setup: "easy",
     cost: "paid",
   },
@@ -99,27 +121,31 @@ export const AIProviderSetupWizard = ({
 }: AIProviderSetupWizardProps) => {
   // Wizard state
   const [currentStep, setCurrentStep] = useState<SetupStep>("select-provider");
-  const [selectedProvider, setSelectedProvider] = useState<AIProvider | null>(null);
-  
+  const [selectedProvider, setSelectedProvider] = useState<AIProvider | null>(
+    null,
+  );
+
   // Connection state
   const [isConnecting, setIsConnecting] = useState(false);
   const [connectionResult, setConnectionResult] = useState<{
     success: boolean;
     message: string;
   } | null>(null);
-  
+
   // Ollama state
   const [ollamaModels, setOllamaModels] = useState<string[]>([]);
   const [isCheckingOllama, setIsCheckingOllama] = useState(false);
   const [ollamaInstalled, setOllamaInstalled] = useState<boolean | null>(null);
-  
+
   // OpenRouter state
   const [openRouterApiKey, setOpenRouterApiKey] = useState("");
-  const [openRouterCredits, setOpenRouterCredits] = useState<number | null>(null);
-  
+  const [openRouterCredits, setOpenRouterCredits] = useState<number | null>(
+    null,
+  );
+
   // Anthropic state
   const [anthropicApiKey, setAnthropicApiKey] = useState("");
-  
+
   // Clipboard state
   const [copiedCommand, setCopiedCommand] = useState(false);
 
@@ -128,11 +154,11 @@ export const AIProviderSetupWizard = ({
     setIsCheckingOllama(true);
     try {
       const baseUrl = settings.ollamaBaseUrl || "http://localhost:11434";
-      const response = await fetch(`${baseUrl}/api/tags`, { 
+      const response = await fetch(`${baseUrl}/api/tags`, {
         method: "GET",
         signal: AbortSignal.timeout(5000),
       });
-      
+
       if (response.ok) {
         const data = await response.json();
         const models = data.models?.map((m: any) => m.name) || [];
@@ -178,7 +204,7 @@ export const AIProviderSetupWizard = ({
   // Handle connection test
   const handleTestConnection = async () => {
     if (!selectedProvider) return;
-    
+
     setIsConnecting(true);
     setConnectionResult(null);
 
@@ -189,13 +215,17 @@ export const AIProviderSetupWizard = ({
           baseUrl: settings.ollamaBaseUrl || "http://localhost:11434",
           model: settings.ollamaModel || ollamaModels[0] || "llama3.2:3b",
         });
-        
+
         if (result.valid) {
-          onUpdate({ 
+          onUpdate({
             provider: "ollama",
-            ollamaModel: settings.ollamaModel || ollamaModels[0] || "llama3.2:3b",
+            ollamaModel:
+              settings.ollamaModel || ollamaModels[0] || "llama3.2:3b",
           });
-          setConnectionResult({ success: true, message: "Successfully connected to Ollama!" });
+          setConnectionResult({
+            success: true,
+            message: "Successfully connected to Ollama!",
+          });
           setCurrentStep("verify-connection");
         } else {
           setConnectionResult({ success: false, message: result.message });
@@ -203,18 +233,21 @@ export const AIProviderSetupWizard = ({
       } else if (selectedProvider === "openrouter") {
         // Validate OpenRouter API key
         if (!openRouterApiKey.trim()) {
-          setConnectionResult({ success: false, message: "Please enter your OpenRouter API key" });
+          setConnectionResult({
+            success: false,
+            message: "Please enter your OpenRouter API key",
+          });
           setIsConnecting(false);
           return;
         }
 
         openRouterService.updateSettings({ apiKey: openRouterApiKey });
         const result = await openRouterService.validateApiKey();
-        
+
         if (result.valid) {
           const credits = await openRouterService.getCredits();
           setOpenRouterCredits(credits?.credits || null);
-          
+
           onUpdate({
             provider: "openrouter",
             openRouter: {
@@ -223,36 +256,49 @@ export const AIProviderSetupWizard = ({
               apiKey: openRouterApiKey,
             },
           });
-          setConnectionResult({ success: true, message: "Successfully connected to OpenRouter!" });
+          setConnectionResult({
+            success: true,
+            message: "Successfully connected to OpenRouter!",
+          });
           setCurrentStep("verify-connection");
         } else {
-          setConnectionResult({ success: false, message: result.error || "Invalid API key" });
+          setConnectionResult({
+            success: false,
+            message: result.error || "Invalid API key",
+          });
         }
       } else if (selectedProvider === "anthropic") {
         // Validate Anthropic API key
         if (!anthropicApiKey.trim()) {
-          setConnectionResult({ success: false, message: "Please enter your Anthropic API key" });
+          setConnectionResult({
+            success: false,
+            message: "Please enter your Anthropic API key",
+          });
           setIsConnecting(false);
           return;
         }
 
         const result = await testAPIKey(anthropicApiKey, "anthropic");
-        
+
         if (result.valid) {
           onUpdate({
             provider: "anthropic",
             apiKey: anthropicApiKey,
           });
-          setConnectionResult({ success: true, message: "Successfully connected to Anthropic Claude!" });
+          setConnectionResult({
+            success: true,
+            message: "Successfully connected to Anthropic Claude!",
+          });
           setCurrentStep("verify-connection");
         } else {
           setConnectionResult({ success: false, message: result.message });
         }
       }
     } catch (error: any) {
-      setConnectionResult({ 
-        success: false, 
-        message: error.message || "Connection failed. Please check your settings." 
+      setConnectionResult({
+        success: false,
+        message:
+          error.message || "Connection failed. Please check your settings.",
       });
     } finally {
       setIsConnecting(false);
@@ -262,9 +308,12 @@ export const AIProviderSetupWizard = ({
   // Get cost badge color
   const getCostBadgeColor = (cost: "free" | "paid" | "freemium") => {
     switch (cost) {
-      case "free": return "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400";
-      case "paid": return "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400";
-      case "freemium": return "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400";
+      case "free":
+        return "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400";
+      case "paid":
+        return "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400";
+      case "freemium":
+        return "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400";
     }
   };
 
@@ -280,7 +329,8 @@ export const AIProviderSetupWizard = ({
           Set Up AI Assistant
         </h2>
         <p className="text-sm text-slate-500 dark:text-slate-400 max-w-md mx-auto">
-          Choose how you want to connect to AI models. You can change this later in settings.
+          Choose how you want to connect to AI models. You can change this later
+          in settings.
         </p>
       </div>
 
@@ -296,7 +346,7 @@ export const AIProviderSetupWizard = ({
               "focus:outline-none focus:ring-2 focus:ring-violet-500 focus:ring-offset-2",
               provider.recommended
                 ? "border-violet-300 dark:border-violet-700 bg-violet-50/30 dark:bg-violet-900/10"
-                : "border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50"
+                : "border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50",
             )}
           >
             {/* Recommended Badge */}
@@ -310,12 +360,14 @@ export const AIProviderSetupWizard = ({
 
             <div className="flex items-start gap-4">
               {/* Icon */}
-              <div className={cn(
-                "flex-shrink-0 w-12 h-12 rounded-xl flex items-center justify-center",
-                provider.recommended
-                  ? "bg-violet-100 dark:bg-violet-900/50 text-violet-600 dark:text-violet-400"
-                  : "bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-400"
-              )}>
+              <div
+                className={cn(
+                  "flex-shrink-0 w-12 h-12 rounded-xl flex items-center justify-center",
+                  provider.recommended
+                    ? "bg-violet-100 dark:bg-violet-900/50 text-violet-600 dark:text-violet-400"
+                    : "bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-400",
+                )}
+              >
                 {provider.icon}
               </div>
 
@@ -325,14 +377,21 @@ export const AIProviderSetupWizard = ({
                   <h3 className="font-semibold text-slate-900 dark:text-slate-100">
                     {provider.name}
                   </h3>
-                  <Badge variant="outline" className={cn("text-xs", getCostBadgeColor(provider.cost))}>
-                    {provider.cost === "free" ? "Free" : provider.cost === "paid" ? "Paid" : "Free Tier"}
+                  <Badge
+                    variant="outline"
+                    className={cn("text-xs", getCostBadgeColor(provider.cost))}
+                  >
+                    {provider.cost === "free"
+                      ? "Free"
+                      : provider.cost === "paid"
+                      ? "Paid"
+                      : "Free Tier"}
                   </Badge>
                 </div>
                 <p className="text-sm text-slate-500 dark:text-slate-400 mb-2">
                   {provider.description}
                 </p>
-                
+
                 {/* Features */}
                 <div className="flex flex-wrap gap-1.5">
                   {provider.features.map((feature, idx) => (
@@ -398,14 +457,16 @@ export const AIProviderSetupWizard = ({
       </div>
 
       {/* Connection Status */}
-      <Card className={cn(
-        "border-2 transition-colors",
-        ollamaInstalled === true
-          ? "border-green-200 dark:border-green-800 bg-green-50/50 dark:bg-green-900/20"
-          : ollamaInstalled === false
-          ? "border-amber-200 dark:border-amber-800 bg-amber-50/50 dark:bg-amber-900/20"
-          : "border-slate-200 dark:border-slate-700"
-      )}>
+      <Card
+        className={cn(
+          "border-2 transition-colors",
+          ollamaInstalled === true
+            ? "border-green-200 dark:border-green-800 bg-green-50/50 dark:bg-green-900/20"
+            : ollamaInstalled === false
+            ? "border-amber-200 dark:border-amber-800 bg-amber-50/50 dark:bg-amber-900/20"
+            : "border-slate-200 dark:border-slate-700",
+        )}
+      >
         <CardContent className="pt-4">
           {isCheckingOllama ? (
             <div className="flex items-center gap-3 text-slate-500">
@@ -421,11 +482,16 @@ export const AIProviderSetupWizard = ({
               {ollamaModels.length > 0 ? (
                 <div>
                   <p className="text-sm text-slate-600 dark:text-slate-400 mb-2">
-                    {ollamaModels.length} model{ollamaModels.length !== 1 ? "s" : ""} available:
+                    {ollamaModels.length} model
+                    {ollamaModels.length !== 1 ? "s" : ""} available:
                   </p>
                   <div className="flex flex-wrap gap-1.5">
                     {ollamaModels.slice(0, 5).map((model) => (
-                      <Badge key={model} variant="secondary" className="text-xs">
+                      <Badge
+                        key={model}
+                        variant="secondary"
+                        className="text-xs"
+                      >
                         {model}
                       </Badge>
                     ))}
@@ -450,7 +516,11 @@ export const AIProviderSetupWizard = ({
                       size="sm"
                       onClick={() => copyToClipboard("ollama pull llama3.2:3b")}
                     >
-                      {copiedCommand ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                      {copiedCommand ? (
+                        <Check className="h-4 w-4" />
+                      ) : (
+                        <Copy className="h-4 w-4" />
+                      )}
                     </Button>
                   </div>
                 </div>
@@ -462,12 +532,12 @@ export const AIProviderSetupWizard = ({
                 <AlertCircle className="h-5 w-5" />
                 <span className="font-medium">Ollama not detected</span>
               </div>
-              
+
               <div className="space-y-3">
                 <p className="text-sm text-slate-600 dark:text-slate-400">
                   Follow these steps to install Ollama:
                 </p>
-                
+
                 {/* Step 1: Download */}
                 <div className="flex items-start gap-3 p-3 rounded-lg bg-slate-100 dark:bg-slate-800">
                   <div className="w-6 h-6 rounded-full bg-violet-100 dark:bg-violet-900/50 flex items-center justify-center text-sm font-bold text-violet-600 dark:text-violet-400">
@@ -481,9 +551,12 @@ export const AIProviderSetupWizard = ({
                       variant="link"
                       size="sm"
                       className="h-auto p-0 text-violet-600"
-                      onClick={() => window.open("https://ollama.com/download", "_blank")}
+                      onClick={() =>
+                        window.open("https://ollama.com/download", "_blank")
+                      }
                     >
-                      ollama.com/download <ExternalLink className="h-3 w-3 ml-1" />
+                      ollama.com/download{" "}
+                      <ExternalLink className="h-3 w-3 ml-1" />
                     </Button>
                   </div>
                 </div>
@@ -520,9 +593,15 @@ export const AIProviderSetupWizard = ({
                         variant="ghost"
                         size="sm"
                         className="h-7 w-7 p-0"
-                        onClick={() => copyToClipboard("ollama pull llama3.2:3b")}
+                        onClick={() =>
+                          copyToClipboard("ollama pull llama3.2:3b")
+                        }
                       >
-                        {copiedCommand ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+                        {copiedCommand ? (
+                          <Check className="h-3 w-3" />
+                        ) : (
+                          <Copy className="h-3 w-3" />
+                        )}
                       </Button>
                     </div>
                   </div>
@@ -540,18 +619,22 @@ export const AIProviderSetupWizard = ({
         disabled={isCheckingOllama}
         className="w-full gap-2"
       >
-        <RefreshCw className={cn("h-4 w-4", isCheckingOllama && "animate-spin")} />
+        <RefreshCw
+          className={cn("h-4 w-4", isCheckingOllama && "animate-spin")}
+        />
         Check Connection Again
       </Button>
 
       {/* Connection Result */}
       {connectionResult && (
-        <div className={cn(
-          "p-3 rounded-lg flex items-center gap-2",
-          connectionResult.success
-            ? "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400"
-            : "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400"
-        )}>
+        <div
+          className={cn(
+            "p-3 rounded-lg flex items-center gap-2",
+            connectionResult.success
+              ? "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400"
+              : "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400",
+          )}
+        >
           {connectionResult.success ? (
             <CheckCircle2 className="h-5 w-5" />
           ) : (
@@ -564,7 +647,9 @@ export const AIProviderSetupWizard = ({
       {/* Connect Button */}
       <Button
         onClick={handleTestConnection}
-        disabled={isConnecting || ollamaInstalled !== true || ollamaModels.length === 0}
+        disabled={
+          isConnecting || ollamaInstalled !== true || ollamaModels.length === 0
+        }
         className="w-full gap-2"
       >
         {isConnecting ? (
@@ -624,7 +709,9 @@ export const AIProviderSetupWizard = ({
               variant="link"
               size="sm"
               className="h-auto p-0 text-blue-600"
-              onClick={() => window.open("https://openrouter.ai/keys", "_blank")}
+              onClick={() =>
+                window.open("https://openrouter.ai/keys", "_blank")
+              }
             >
               openrouter.ai/keys <ExternalLink className="h-3 w-3 ml-1" />
             </Button>
@@ -664,8 +751,9 @@ export const AIProviderSetupWizard = ({
                 Pay-as-you-go pricing
               </p>
               <p className="text-slate-500 dark:text-slate-400">
-                Only pay for what you use. Many models cost less than $0.001 per request.
-                You can set spending limits in your OpenRouter dashboard.
+                Only pay for what you use. Many models cost less than $0.001 per
+                request. You can set spending limits in your OpenRouter
+                dashboard.
               </p>
             </div>
           </div>
@@ -674,12 +762,14 @@ export const AIProviderSetupWizard = ({
 
       {/* Connection Result */}
       {connectionResult && (
-        <div className={cn(
-          "p-3 rounded-lg flex items-center gap-2",
-          connectionResult.success
-            ? "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400"
-            : "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400"
-        )}>
+        <div
+          className={cn(
+            "p-3 rounded-lg flex items-center gap-2",
+            connectionResult.success
+              ? "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400"
+              : "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400",
+          )}
+        >
           {connectionResult.success ? (
             <CheckCircle2 className="h-5 w-5" />
           ) : (
@@ -752,7 +842,12 @@ export const AIProviderSetupWizard = ({
               variant="link"
               size="sm"
               className="h-auto p-0 text-violet-600"
-              onClick={() => window.open("https://console.anthropic.com/settings/keys", "_blank")}
+              onClick={() =>
+                window.open(
+                  "https://console.anthropic.com/settings/keys",
+                  "_blank",
+                )
+              }
             >
               console.anthropic.com <ExternalLink className="h-3 w-3 ml-1" />
             </Button>
@@ -792,7 +887,8 @@ export const AIProviderSetupWizard = ({
                 Your API key is stored locally
               </p>
               <p className="text-slate-500 dark:text-slate-400">
-                We never send your API key to our servers. All requests go directly to Anthropic.
+                We never send your API key to our servers. All requests go
+                directly to Anthropic.
               </p>
             </div>
           </div>
@@ -801,12 +897,14 @@ export const AIProviderSetupWizard = ({
 
       {/* Connection Result */}
       {connectionResult && (
-        <div className={cn(
-          "p-3 rounded-lg flex items-center gap-2",
-          connectionResult.success
-            ? "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400"
-            : "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400"
-        )}>
+        <div
+          className={cn(
+            "p-3 rounded-lg flex items-center gap-2",
+            connectionResult.success
+              ? "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400"
+              : "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400",
+          )}
+        >
           {connectionResult.success ? (
             <CheckCircle2 className="h-5 w-5" />
           ) : (
@@ -851,9 +949,12 @@ export const AIProviderSetupWizard = ({
         </h2>
         <p className="text-sm text-slate-500 dark:text-slate-400">
           You're connected to{" "}
-          {selectedProvider === "ollama" ? "Ollama" : 
-           selectedProvider === "openrouter" ? "OpenRouter" : "Anthropic Claude"}.
-          You can now start using the AI assistant.
+          {selectedProvider === "ollama"
+            ? "Ollama"
+            : selectedProvider === "openrouter"
+            ? "OpenRouter"
+            : "Anthropic Claude"}
+          . You can now start using the AI assistant.
         </p>
       </div>
 
@@ -870,13 +971,17 @@ export const AIProviderSetupWizard = ({
             )}
             <div className="text-left">
               <p className="font-medium text-slate-700 dark:text-slate-300">
-                {selectedProvider === "ollama" ? "Ollama (Local)" : 
-                 selectedProvider === "openrouter" ? "OpenRouter" : "Anthropic Claude"}
+                {selectedProvider === "ollama"
+                  ? "Ollama (Local)"
+                  : selectedProvider === "openrouter"
+                  ? "OpenRouter"
+                  : "Anthropic Claude"}
               </p>
               <p className="text-sm text-slate-500 dark:text-slate-400">
-                {selectedProvider === "ollama" 
+                {selectedProvider === "ollama"
                   ? `${ollamaModels.length} model(s) available`
-                  : selectedProvider === "openrouter" && openRouterCredits !== null
+                  : selectedProvider === "openrouter" &&
+                    openRouterCredits !== null
                   ? `$${openRouterCredits.toFixed(2)} credits available`
                   : "Connected"}
               </p>
@@ -897,9 +1002,15 @@ export const AIProviderSetupWizard = ({
   return (
     <div className="w-full max-w-lg mx-auto p-6">
       {currentStep === "select-provider" && renderProviderSelection()}
-      {currentStep === "setup-provider" && selectedProvider === "ollama" && renderOllamaSetup()}
-      {currentStep === "setup-provider" && selectedProvider === "openrouter" && renderOpenRouterSetup()}
-      {currentStep === "setup-provider" && selectedProvider === "anthropic" && renderAnthropicSetup()}
+      {currentStep === "setup-provider" &&
+        selectedProvider === "ollama" &&
+        renderOllamaSetup()}
+      {currentStep === "setup-provider" &&
+        selectedProvider === "openrouter" &&
+        renderOpenRouterSetup()}
+      {currentStep === "setup-provider" &&
+        selectedProvider === "anthropic" &&
+        renderAnthropicSetup()}
       {currentStep === "verify-connection" && renderVerificationStep()}
     </div>
   );
