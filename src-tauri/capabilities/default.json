@@ -16,6 +16,9 @@
         },
         {
           "path": "$HOME/**"
+        },
+        {
+          "path": "/Volumes/**"
         }
       ]
     },
@@ -24,6 +27,9 @@
       "allow": [
         {
           "path": "$HOME/**"
+        },
+        {
+          "path": "/Volumes/**"
         }
       ]
     },
@@ -35,6 +41,9 @@
         },
         {
           "path": "$HOME/**"
+        },
+        {
+          "path": "/Volumes/**"
         }
       ]
     },
@@ -46,6 +55,9 @@
         },
         {
           "path": "$HOME/**"
+        },
+        {
+          "path": "/Volumes/**"
         }
       ]
     },
@@ -54,6 +66,9 @@
       "allow": [
         {
           "path": "$HOME/**"
+        },
+        {
+          "path": "/Volumes/**"
         }
       ]
     },
@@ -62,6 +77,9 @@
       "allow": [
         {
           "path": "$HOME/**"
+        },
+        {
+          "path": "/Volumes/**"
         },
         {
           "path": "$DESKTOP/**"
@@ -81,6 +99,9 @@
       "allow": [
         {
           "path": "$HOME/**"
+        },
+        {
+          "path": "/Volumes/**"
         }
       ]
     },
@@ -89,6 +110,9 @@
       "allow": [
         {
           "path": "$HOME/**"
+        },
+        {
+          "path": "/Volumes/**"
         }
       ]
     },
@@ -97,6 +121,9 @@
       "allow": [
         {
           "path": "$HOME/**"
+        },
+        {
+          "path": "/Volumes/**"
         }
       ]
     },
@@ -105,6 +132,9 @@
       "allow": [
         {
           "path": "$HOME/**"
+        },
+        {
+          "path": "/Volumes/**"
         }
       ]
     },

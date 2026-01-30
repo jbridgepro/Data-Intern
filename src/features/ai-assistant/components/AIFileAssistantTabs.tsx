@@ -2,14 +2,15 @@
  * File: src/features/ai-assistant/components/AIFileAssistantTabs.tsx
  * 
  * Tabs management component for AI File Assistant.
- * Allows multiple concurrent chat sessions.
+ * Allows multiple concurrent chat sessions with modern UI design.
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Plus, X } from 'lucide-react';
+import { Plus, X, MessageSquare, Sparkles, MoreHorizontal } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { AIFileAssistantSession } from './AIFileAssistantSession';
 import { useAgentSelection } from "../../agents/contexts/AgentSelectionContext";
+import { agentService } from "../../agents/services/agentService";
 
 interface AIAssistantTab {
   id: string;
@@ -47,10 +48,12 @@ export const AIFileAssistantTabs = () => {
     // Only add tab if selectedAgentId changed and doesn't exist
     if (selectedAgentId && selectedAgentId !== prevSelectedAgentIdRef.current) {
       prevSelectedAgentIdRef.current = selectedAgentId;
-      setTabs(prev => {
-        const exists = prev.some(t => t.id === selectedAgentId);
+      setTabs((prev) => {
+        const exists = prev.some((t) => t.id === selectedAgentId);
         if (!exists) {
-          return [...prev, { id: selectedAgentId, name: 'Agent Chat' }];
+          const agent = agentService.getAgent(selectedAgentId);
+          const tabName = agent?.name?.trim() || "Agent Chat";
+          return [...prev, { id: selectedAgentId, name: tabName }];
         }
         return prev;
       });
@@ -134,46 +137,87 @@ export const AIFileAssistantTabs = () => {
   const activeTab = tabs.find((tab) => tab.id === activeTabId);
 
   return (
-    <div className="flex flex-col h-full bg-background">
-      {/* Tab Bar */}
-      <div className="flex items-center gap-1 px-2 py-1.5 border-b border-slate-200/50 dark:border-slate-800/50 bg-slate-50 dark:bg-slate-900/50">
-        {tabs.map((tab) => (
-          <div
-            key={tab.id}
-            className={cn(
-              'px-3 py-1.5 rounded-t-lg text-xs font-medium flex items-center gap-2 transition-colors relative cursor-pointer',
-              activeTabId === tab.id
-                ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 border-t border-x border-slate-200 dark:border-slate-800'
-                : 'bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/50'
-            )}
-            onClick={() => selectAgent(tab.id)}
-          >
-            <span className="truncate max-w-[120px]">{tab.name}</span>
-            {tabs.length > 1 && (
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  closeTab(tab.id);
-                }}
-                className="hover:bg-slate-200 dark:hover:bg-slate-700 rounded p-0.5 ml-1 shrink-0"
-                title="Close tab"
-                type="button"
-              >
-                <X className="h-3 w-3" />
-              </button>
-            )}
+    <div className="flex flex-col h-full bg-gradient-to-b from-slate-50 to-white dark:from-slate-950 dark:to-slate-900">
+      {/* Enhanced Tab Bar */}
+      <div className="flex items-center gap-1.5 px-3 py-2 border-b border-slate-200/60 dark:border-slate-800/60 bg-white/80 dark:bg-slate-900/80 backdrop-blur-sm">
+        {/* Logo/Brand */}
+        <div className="flex items-center gap-2 pr-3 mr-2 border-r border-slate-200 dark:border-slate-800">
+          <div className="p-1.5 rounded-lg bg-gradient-to-br from-violet-500/10 to-blue-500/10 dark:from-violet-500/20 dark:to-blue-500/20">
+            <Sparkles className="h-4 w-4 text-violet-600 dark:text-violet-400" />
           </div>
-        ))}
+          <span className="text-sm font-semibold text-slate-700 dark:text-slate-300 hidden sm:inline">
+            AI Assistant
+          </span>
+        </div>
 
+        {/* Tabs */}
+        <div className="flex items-center gap-1 flex-1 overflow-x-auto scrollbar-hide">
+          {tabs.map((tab, index) => (
+            <div
+              key={tab.id}
+              className={cn(
+                'group relative px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-all duration-200 cursor-pointer min-w-[120px] max-w-[180px]',
+                activeTabId === tab.id
+                  ? 'bg-gradient-to-r from-violet-500/10 to-blue-500/10 dark:from-violet-500/20 dark:to-blue-500/20 text-violet-700 dark:text-violet-300 shadow-sm border border-violet-200/50 dark:border-violet-800/50'
+                  : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/50 hover:text-slate-900 dark:hover:text-slate-200'
+              )}
+              onClick={() => selectAgent(tab.id)}
+            >
+              {/* Tab Icon */}
+              <MessageSquare className={cn(
+                "h-3.5 w-3.5 shrink-0 transition-colors",
+                activeTabId === tab.id 
+                  ? "text-violet-500 dark:text-violet-400" 
+                  : "text-slate-400 dark:text-slate-500 group-hover:text-slate-600 dark:group-hover:text-slate-400"
+              )} />
+              
+              {/* Tab Name */}
+              <span className="truncate flex-1">{tab.name}</span>
+              
+              {/* Close Button - Enhanced visibility */}
+              {tabs.length > 1 && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    closeTab(tab.id);
+                  }}
+                  className={cn(
+                    "p-0.5 rounded transition-all shrink-0",
+                    activeTabId === tab.id
+                      ? "opacity-60 hover:opacity-100 hover:bg-violet-200/50 dark:hover:bg-violet-800/50"
+                      : "opacity-0 group-hover:opacity-60 hover:!opacity-100 hover:bg-slate-200 dark:hover:bg-slate-700"
+                  )}
+                  title="Close tab"
+                  type="button"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+
+              {/* Active Tab Indicator */}
+              {activeTabId === tab.id && (
+                <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 w-8 h-0.5 bg-gradient-to-r from-violet-500 to-blue-500 rounded-full" />
+              )}
+            </div>
+          ))}
+        </div>
+
+        {/* New Tab Button - Enhanced */}
         <button
           onClick={createNewTab}
-          className="px-2 py-1 rounded text-xs hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-400"
+          className="p-2 rounded-lg text-slate-500 dark:text-slate-400 hover:text-violet-600 dark:hover:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-900/30 transition-all duration-200 group"
           title="New Chat Tab"
         >
-          <Plus className="h-4 w-4" />
+          <Plus className="h-4 w-4 group-hover:scale-110 transition-transform" />
         </button>
 
-        <div className="flex-1" />
+        {/* More Options Button (placeholder for future features) */}
+        <button
+          className="p-2 rounded-lg text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+          title="More options"
+        >
+          <MoreHorizontal className="h-4 w-4" />
+        </button>
       </div>
 
       {/* Active Session */}

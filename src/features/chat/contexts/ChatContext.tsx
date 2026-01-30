@@ -26,6 +26,7 @@ interface ChatContextType {
   setInputValue: (value: string) => void;
   setDirectory: (directory: string) => void;
   clearHistory: () => void;
+  deleteMessage: (agentId: string, messageId: string) => void;
   
   // Helper to get a specific session
   getSession: (agentId: string) => ChatSession | undefined;
@@ -148,6 +149,45 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
     }));
   }, []);
 
+  const deleteMessage = useCallback((agentId: string, messageId: string) => {
+    setSessions(prev => {
+      const session = prev[agentId];
+      if (!session) return prev;
+
+      const msgIndex = session.messages.findIndex(m => m.id === messageId);
+      if (msgIndex === -1) return prev;
+
+      const newMessages = [...session.messages];
+      const targetMsg = newMessages[msgIndex];
+
+      // Remove the target message
+      newMessages.splice(msgIndex, 1);
+
+      // logic: if we deleted a USER message, and the NEXT message (now at msgIndex) is an ASSISTANT message, delete that too.
+      // because "Undo" implies reverting the interaction.
+      let newInputValue = session.inputValue;
+      if (targetMsg.role === 'user') {
+         // Populate input with deleted message content so user can edit it
+         newInputValue = targetMsg.content;
+         
+         if (newMessages.length > msgIndex) {
+             if (newMessages[msgIndex].role === 'assistant') {
+                 newMessages.splice(msgIndex, 1);
+             }
+         }
+      }
+
+      return {
+        ...prev,
+        [agentId]: {
+          ...session,
+          messages: newMessages,
+          inputValue: newInputValue
+        }
+      };
+    });
+  }, []);
+
   const clearHistory = useCallback(() => {
     if (!selectedAgentId) return;
     setSessions(prev => ({
@@ -264,6 +304,7 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
     setInputValue,
     setDirectory,
     clearHistory,
+    deleteMessage,
     getSession: (id: string) => sessions[id],
     settings,
     updateSettings

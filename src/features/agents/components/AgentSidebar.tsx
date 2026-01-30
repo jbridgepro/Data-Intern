@@ -241,31 +241,38 @@ export const AgentSidebar = ({
     }
   };
 
-  // Minimized state - show compact view with expand button
+  // Minimized state - show compact strip with clear "Agents" label so the panel is identifiable
   if (isMinimized) {
     const runningCount = agentStates.filter(s => s.status === 'running').length;
-    
+
     return (
-      <div className={cn(
-        sizeClass,
-        borderClass,
-        "border-border/50 flex flex-col bg-background/95 backdrop-blur-sm z-50",
-      )}>
-        <div className="flex-1 flex items-center justify-center">
+      <div
+        className={cn(
+          sizeClass,
+          borderClass,
+          "border-border/50 flex flex-col bg-background/95 backdrop-blur-sm z-50 min-w-[64px] bg-gradient-to-b from-slate-50 to-white dark:from-slate-950 dark:to-slate-900",
+        )}
+        title="Agents — Click to expand"
+      >
+        <div className="flex-1 flex flex-col items-center justify-center gap-2 py-3 px-2">
+          <Bot className="h-6 w-6 shrink-0 text-violet-600 dark:text-violet-400" aria-hidden />
+          <span className="text-xs font-semibold text-foreground/90 uppercase tracking-wider select-none">
+            Agents
+          </span>
+          {runningCount > 0 && (
+            <Badge variant="default" className="bg-blue-500 text-[10px] px-1.5 py-0 shrink-0">
+              {runningCount}
+            </Badge>
+          )}
           <Button
             variant="ghost"
-            size="sm"
+            size="icon"
+            className="h-8 w-8 shrink-0 mt-1"
             onClick={onToggleMinimize}
-            className="flex items-center gap-2"
             title="Expand Agent Sidebar"
+            aria-label="Expand Agent Sidebar"
           >
             {getExpandIcon()}
-            <Bot className="h-5 w-5 text-primary" />
-            {runningCount > 0 && (
-              <Badge variant="default" className="bg-blue-500 text-[10px] px-1.5 py-0">
-                {runningCount}
-              </Badge>
-            )}
           </Button>
         </div>
       </div>
@@ -282,14 +289,16 @@ export const AgentSidebar = ({
         className={cn(
           sizeClass,
           borderClass,
-          "border-border/50 flex flex-col bg-background/95 backdrop-blur-sm z-50 shadow-lg",
+          "border-border/50 flex flex-col bg-background/95 backdrop-blur-sm z-50 shadow-lg bg-gradient-to-b from-slate-50 to-white dark:from-slate-950 dark:to-slate-900",
         )}
       >
         {/* Header with Close Button */}
-        <div className="shrink-0 p-3 border-b border-border/50 flex items-center justify-between gap-2">
+        <div className="shrink-0 p-3 border-b border-slate-200/60 dark:border-slate-800/60 bg-white/80 dark:bg-slate-900/80 backdrop-blur-sm flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 flex-1">
-            <Bot className="h-5 w-5 text-primary" />
-            <h2 className="font-semibold text-sm">Agents</h2>
+            <div className="p-1.5 rounded-lg bg-gradient-to-br from-violet-500/10 to-blue-500/10 dark:from-violet-500/20 dark:to-blue-500/20">
+              <Bot className="h-4 w-4 text-violet-600 dark:text-violet-400" />
+            </div>
+            <h2 className="font-semibold text-sm text-slate-700 dark:text-slate-300">Agents</h2>
             {activeTab === 'agents' && (
               <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
                 {stats.total}
@@ -419,8 +428,8 @@ export const AgentSidebar = ({
           <button 
             onClick={() => setActiveTab('agents')}
             className={cn(
-              "flex-1 py-2.5 text-xs font-medium text-center uppercase tracking-wider hover:bg-muted/50 transition-colors relative",
-              activeTab === 'agents' ? "text-primary" : "text-muted-foreground"
+              "flex-1 py-2.5 text-xs font-medium text-center uppercase tracking-wider hover:bg-slate-100/50 dark:hover:bg-slate-800/50 transition-colors relative",
+              activeTab === 'agents' ? "text-violet-600 dark:text-violet-400" : "text-muted-foreground"
             )}
           >
             <Bot className="h-3.5 w-3.5 mx-auto mb-1" />
@@ -428,7 +437,7 @@ export const AgentSidebar = ({
             {activeTab === 'agents' && (
               <motion.div
                 layoutId="activeTabIndicator"
-                className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary"
+                className="absolute bottom-0 left-0 right-0 h-0.5 bg-violet-600 dark:bg-violet-400"
                 initial={false}
                 transition={{ type: "spring", stiffness: 300, damping: 30 }}
               />
@@ -437,8 +446,8 @@ export const AgentSidebar = ({
           <button 
             onClick={() => setActiveTab('my-skills')}
             className={cn(
-              "flex-1 py-2.5 text-xs font-medium text-center uppercase tracking-wider hover:bg-muted/50 transition-colors relative",
-              activeTab === 'my-skills' ? "text-primary" : "text-muted-foreground"
+              "flex-1 py-2.5 text-xs font-medium text-center uppercase tracking-wider hover:bg-slate-100/50 dark:hover:bg-slate-800/50 transition-colors relative",
+              activeTab === 'my-skills' ? "text-violet-600 dark:text-violet-400" : "text-muted-foreground"
             )}
           >
             <Sparkles className="h-3.5 w-3.5 mx-auto mb-1" />
@@ -446,7 +455,7 @@ export const AgentSidebar = ({
             {activeTab === 'my-skills' && (
               <motion.div
                 layoutId="activeTabIndicator"
-                className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary"
+                className="absolute bottom-0 left-0 right-0 h-0.5 bg-violet-600 dark:bg-violet-400"
                 initial={false}
                 transition={{ type: "spring", stiffness: 300, damping: 30 }}
               />
@@ -455,8 +464,8 @@ export const AgentSidebar = ({
           <button 
             onClick={() => setActiveTab('skill-store')}
             className={cn(
-              "flex-1 py-2.5 text-xs font-medium text-center uppercase tracking-wider hover:bg-muted/50 transition-colors relative",
-              activeTab === 'skill-store' ? "text-primary" : "text-muted-foreground"
+              "flex-1 py-2.5 text-xs font-medium text-center uppercase tracking-wider hover:bg-slate-100/50 dark:hover:bg-slate-800/50 transition-colors relative",
+              activeTab === 'skill-store' ? "text-violet-600 dark:text-violet-400" : "text-muted-foreground"
             )}
           >
             <Store className="h-3.5 w-3.5 mx-auto mb-1" />
@@ -464,7 +473,7 @@ export const AgentSidebar = ({
             {activeTab === 'skill-store' && (
               <motion.div
                 layoutId="activeTabIndicator"
-                className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary"
+                className="absolute bottom-0 left-0 right-0 h-0.5 bg-violet-600 dark:bg-violet-400"
                 initial={false}
                 transition={{ type: "spring", stiffness: 300, damping: 30 }}
               />

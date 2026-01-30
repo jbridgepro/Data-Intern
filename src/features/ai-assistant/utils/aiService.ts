@@ -7,7 +7,7 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
-import type { AISettings, FileOperation, DirectoryAnalysis } from '../types';
+import type { AISettings, FileOperation, DirectoryAnalysis, DEFAULT_CONTEXT_SETTINGS } from '../types';
 import { getAllTools, executeTool, type ToolContext, type ToolResult } from './toolsRegistry';
 import { executeMCPTool, isMCPTool, parseMCPToolName } from './mcpIntegration';
 import { 
@@ -30,6 +30,16 @@ import {
   testOllamaConnection,
   listOllamaModels
 } from './ollamaService';
+import { 
+  ContextManager, 
+  contextManager,
+  type ConversationMessage 
+} from './contextManager';
+import { 
+  openRouterService,
+  type OpenRouterMessage,
+} from './openRouterService';
+import { DEFAULT_OPENROUTER_SETTINGS } from '../types';
 
 let anthropicClient: Anthropic | null = null;
 
@@ -58,6 +68,11 @@ export function initializeAIClient(settings: AISettings): void {
       baseUrl: settings.ollamaBaseUrl || 'http://localhost:11434',
       model: settings.ollamaModel || settings.model || 'llama3.2:3b',
     });
+  } else if (settings.provider === 'openrouter') {
+    // Initialize OpenRouter service with settings
+    const openRouterSettings = settings.openRouter || DEFAULT_OPENROUTER_SETTINGS;
+    openRouterService.updateSettings(openRouterSettings);
+    console.log(`[AI Service] OpenRouter initialized with model: ${openRouterSettings.model}`);
   }
 }
 
@@ -222,6 +237,16 @@ export async function processCommandWithAI(
       conversationHistory,
       voiceContext
     );
+  } else if (settings.provider === 'openrouter') {
+    return processCommandWithOpenRouterProvider(
+      command,
+      currentDirectory,
+      directoryAnalysis,
+      settings,
+      abortSignal,
+      conversationHistory,
+      voiceContext
+    );
   } else {
     // Default to Anthropic
     return processCommandWithAnthropicProvider(
@@ -289,13 +314,40 @@ async function processCommandWithAnthropicProvider(
       directoryAnalysis,
     };
 
-    // Build conversation history - include previous messages for context
+    // Build conversation history - use intelligent context selection
     const messages: Anthropic.MessageParam[] = [];
 
-    // Add conversation history (last 10 messages to avoid token limits)
+    // Configure context manager with user settings
+    if (settings.contextSettings) {
+      contextManager.updateSettings(settings.contextSettings);
+    }
+
+    // Use intelligent context selection instead of simple slice
     if (conversationHistory && conversationHistory.length > 0) {
-      const recentHistory = conversationHistory.slice(-10); // Last 10 messages
-      for (const msg of recentHistory) {
+      // Convert to ConversationMessage format with enriched metadata
+      const enrichedHistory: ConversationMessage[] = conversationHistory.map((msg, idx) => 
+        contextManager.enrichMessageMetadata({
+          id: `msg-${idx}`,
+          role: msg.role,
+          content: msg.content,
+          timestamp: Date.now() - (conversationHistory.length - idx) * 1000,
+        })
+      );
+
+      // Select relevant context based on current command
+      const contextResult = contextManager.selectRelevantContext(enrichedHistory, command);
+      
+      // Log context selection for debugging (can be removed in production)
+      if (contextResult.truncated) {
+        console.log(`[Context Manager] Selected ${contextResult.messagesIncluded}/${contextResult.totalMessagesConsidered} messages`);
+        if (contextResult.contextSummary) {
+          console.log(`[Context Manager] Summary: ${contextResult.contextSummary}`);
+        }
+      }
+
+      // Format and add selected context to messages
+      const formattedContext = contextManager.formatContextForProvider(contextResult);
+      for (const msg of formattedContext) {
         messages.push({
           role: msg.role,
           content: msg.content,
@@ -1014,6 +1066,179 @@ async function processCommandWithOllamaProvider(
 }
 
 /**
+ * Processes a user command using OpenRouter API.
+ * Supports multiple AI models through a unified API.
+ */
+async function processCommandWithOpenRouterProvider(
+  command: string,
+  currentDirectory: string,
+  directoryAnalysis: DirectoryAnalysis | null,
+  settings: AISettings,
+  abortSignal?: AbortSignal,
+  conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>,
+  voiceContext?: { enabled: boolean; persona?: string }
+): Promise<{ content: string; operation?: FileOperation; metadata?: any }> {
+  // Ensure OpenRouter is configured
+  const openRouterSettings = settings.openRouter || DEFAULT_OPENROUTER_SETTINGS;
+  
+  if (!openRouterSettings.apiKey) {
+    return {
+      content: 'Please configure your OpenRouter API key in settings to use AI-powered features.',
+    };
+  }
+
+  // Update service with current settings
+  openRouterService.updateSettings(openRouterSettings);
+
+  try {
+    // Get all available tools (custom + MCP), filtered by settings
+    const tools = await getAllTools(settings);
+
+    // Generate system prompt
+    let skillContext = '';
+    if (settings.clawdbotEnabled) {
+      try {
+        skillContext = await getClawdhubSkillsContext();
+      } catch (e) {
+        // Ignore skill context errors
+      }
+    }
+
+    const systemPrompt = settings.systemPrompt || generateSystemPrompt(tools, {
+      clawdbotEnabled: settings.clawdbotEnabled,
+      aiName: settings.aiName,
+      userName: settings.userName
+    }, skillContext, voiceContext);
+
+    // Build user prompt with context
+    const userPrompt = buildUserPrompt(command, currentDirectory, directoryAnalysis, conversationHistory);
+
+    // Build messages array for OpenRouter
+    const messages: OpenRouterMessage[] = [
+      { role: 'system', content: systemPrompt },
+    ];
+
+    // Add conversation history with context management
+    if (settings.contextSettings) {
+      contextManager.updateSettings(settings.contextSettings);
+    }
+
+    if (conversationHistory && conversationHistory.length > 0) {
+      const enrichedHistory: ConversationMessage[] = conversationHistory.map((msg, idx) =>
+        contextManager.enrichMessageMetadata({
+          id: `msg-${idx}`,
+          role: msg.role,
+          content: msg.content,
+          timestamp: Date.now() - (conversationHistory.length - idx) * 1000,
+        })
+      );
+
+      const contextResult = contextManager.selectRelevantContext(enrichedHistory, command);
+      const formattedContext = contextManager.formatContextForProvider(contextResult);
+
+      for (const msg of formattedContext) {
+        messages.push({ role: msg.role as 'user' | 'assistant', content: msg.content });
+      }
+    }
+
+    // Add user message
+    messages.push({ role: 'user', content: userPrompt });
+
+    // Create tool context for execution
+    const toolContext: ToolContext = {
+      currentDirectory,
+      settings,
+    };
+
+    // Create tool executor function
+    const toolExecutor = async (toolName: string, args: Record<string, any>): Promise<any> => {
+      // Check if this is an MCP tool
+      if (isMCPTool(toolName)) {
+        const { server, tool } = parseMCPToolName(toolName);
+        const result = await executeMCPTool(server, tool, args);
+        return result;
+      }
+
+      // Execute regular tool
+      const result: ToolResult = await executeTool(toolName, args, toolContext);
+      if (!result.success) {
+        throw new Error(result.error || 'Tool execution failed');
+      }
+      return result;
+    };
+
+    // Execute chat with tool calling loop
+    const { response, toolResults } = await openRouterService.chatWithTools(
+      messages,
+      tools,
+      toolExecutor,
+      {
+        maxToolCalls: 10,
+        signal: abortSignal,
+        onToolCall: (toolName, args) => {
+          console.log(`[OpenRouter] Tool call: ${toolName}`, args);
+        },
+      }
+    );
+
+    // Extract the final content
+    const assistantMessage = response.choices[0]?.message;
+    const content = typeof assistantMessage?.content === 'string' 
+      ? assistantMessage.content 
+      : '';
+
+    // Build metadata
+    const metadata: any = {
+      provider: 'openrouter',
+      model: response.model || openRouterSettings.model,
+      toolsUsed: toolResults.map(tr => tr.toolName),
+      usage: response.usage,
+    };
+
+    // Check for operation in tool results
+    let operation: FileOperation | undefined;
+    for (const toolResult of toolResults) {
+      if (toolResult.result?.data?.operation) {
+        operation = toolResult.result.data.operation;
+        break;
+      }
+    }
+
+    return {
+      content: content || 'I completed the requested operation.',
+      operation,
+      metadata,
+    };
+
+  } catch (error: any) {
+    console.error('OpenRouter processing error:', error);
+    
+    // Check for specific error types
+    if (error.message?.includes('API key')) {
+      return {
+        content: 'OpenRouter API key is invalid or expired. Please check your API key in settings.',
+      };
+    }
+    
+    if (error.message?.includes('rate limit')) {
+      return {
+        content: 'OpenRouter rate limit reached. Please wait a moment and try again.',
+      };
+    }
+    
+    if (error.message?.includes('cancelled')) {
+      return {
+        content: 'Request was cancelled.',
+      };
+    }
+    
+    return {
+      content: `I encountered an error with OpenRouter: ${error.message || 'Unknown error'}. Please try again.`,
+    };
+  }
+}
+
+/**
  * Builds a prompt for the AI based on user command and context.
  */
 function buildUserPrompt(
@@ -1348,6 +1573,111 @@ function getToolDescription(toolName: string, args: Record<string, any>): string
 
   const descFn = descriptions[toolName];
   return descFn ? descFn(args) : `Execute ${toolName}`;
+}
+
+/** Max length for AI-generated chat/tab titles. */
+const CONTEXTUAL_NAME_MAX_LENGTH = 40;
+
+/** Normalizes AI title output: collapse whitespace, strip trailing punctuation, truncate. */
+function normalizeTitleOutput(raw: string): string | null {
+  const s = raw.replace(/\s+/g, ' ').trim().replace(/[.,;:!?]+$/, '');
+  const out = s.slice(0, CONTEXTUAL_NAME_MAX_LENGTH).trim();
+  return out || null;
+}
+
+/**
+ * Generates a concise 2–6 word chat title that summarizes the goal/context.
+ * Used to rename agent chats and tabs so users can quickly identify each conversation.
+ * Supports Anthropic, Ollama, and OpenRouter; returns null for other providers or on error.
+ */
+export async function generateChatTitleSummary(
+  context: string,
+  settings: AISettings
+): Promise<string | null> {
+  const trimmed = context.replace(/\s+/g, ' ').trim();
+  if (!trimmed) return null;
+
+  const prompt = `Summarize this chat goal or context in 2–6 words as a concise tab title. Reply with ONLY the title—no quotes, punctuation, or extra text.
+
+Context:
+${trimmed}`;
+
+  if (settings.provider === 'ollama') {
+    try {
+      const baseUrl = settings.ollamaBaseUrl || 'http://localhost:11434';
+      const model = settings.ollamaModel || settings.model || 'llama3.2:3b';
+      const res = await fetch(`${baseUrl}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model,
+          messages: [{ role: 'user', content: prompt }],
+          stream: false,
+        }),
+      });
+      if (!res.ok) return null;
+      const data = await res.json();
+      const text = data?.message?.content;
+      if (typeof text !== 'string') return null;
+      return normalizeTitleOutput(text) || null;
+    } catch (e) {
+      console.warn('[AI] Chat title summary (Ollama) failed:', e);
+      return null;
+    }
+  }
+
+  if (settings.provider === 'anthropic') {
+    if (!anthropicClient || !settings.apiKey) return null;
+    try {
+      const response = await anthropicClient.messages.create({
+        model: getModelName(settings),
+        max_tokens: 80,
+        temperature: 0.3,
+        messages: [{ role: 'user', content: prompt }],
+      });
+      const part = response.content[0];
+      const text = part && part.type === 'text' ? part.text : '';
+      if (!text) return null;
+      return normalizeTitleOutput(text) || null;
+    } catch (e) {
+      console.warn('[AI] Chat title summary (Anthropic) failed:', e);
+      return null;
+    }
+  }
+
+  if (settings.provider === 'openrouter') {
+    const openRouter = settings.openRouter ?? DEFAULT_OPENROUTER_SETTINGS;
+    const apiKey = openRouter.apiKey?.trim();
+    const model = openRouter.model || 'anthropic/claude-3.5-sonnet';
+    if (!apiKey) return null;
+    try {
+      const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+          'HTTP-Referer': openRouter.siteUrl || (typeof window !== 'undefined' ? window.location.origin : ''),
+          'X-Title': openRouter.siteName || 'File Pro',
+        },
+        body: JSON.stringify({
+          model,
+          messages: [{ role: 'user', content: prompt }],
+          max_tokens: 80,
+          temperature: 0.3,
+        }),
+      });
+      if (!res.ok) return null;
+      const data = await res.json();
+      const text = data?.choices?.[0]?.message?.content;
+      if (typeof text !== 'string') return null;
+      return normalizeTitleOutput(text) || null;
+    } catch (e) {
+      console.warn('[AI] Chat title summary (OpenRouter) failed:', e);
+      return null;
+    }
+  }
+
+  return null;
 }
 
 /**

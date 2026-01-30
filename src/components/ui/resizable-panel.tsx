@@ -42,6 +42,10 @@ interface ResizablePanelProps {
   header?: ReactNode;
   /** Whether to render children even when minimized (useful for sidebars with their own minimized state) */
   renderChildrenWhenMinimized?: boolean;
+  /** Optional label shown in collapsed state when no header and children not rendered (makes panel identifiable) */
+  minimizedLabel?: string;
+  /** Optional icon (ReactNode) shown in collapsed state when no header and children not rendered */
+  minimizedIcon?: ReactNode;
 }
 
 /**
@@ -62,6 +66,8 @@ export const ResizablePanel = ({
   showMinimizeButton = true,
   header,
   renderChildrenWhenMinimized = false,
+  minimizedLabel,
+  minimizedIcon,
 }: ResizablePanelProps) => {
   // Track dragging state
   const [isDragging, setIsDragging] = useState(false);
@@ -246,15 +252,22 @@ export const ResizablePanel = ({
         </div>
       )}
 
-      {/* Minimized State - Show only expand button IF not rendering children */}
+      {/* Minimized State - Show expand button and optional label/icon when not rendering children */}
       {isMinimized && !header && !renderChildrenWhenMinimized && (
-        <div className="h-full flex items-center justify-center">
+        <div className="h-full flex flex-col items-center justify-center gap-1.5 py-2 px-1">
+          {minimizedIcon && <span className="shrink-0 [&>svg]:h-5 [&>svg]:w-5">{minimizedIcon}</span>}
+          {minimizedLabel && (
+            <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider text-center select-none leading-tight">
+              {minimizedLabel}
+            </span>
+          )}
           <Button
             variant="ghost"
             size="icon"
-            className="h-8 w-8"
+            className="h-8 w-8 shrink-0"
             onClick={handleToggleMinimize}
-            title="Expand panel"
+            title={minimizedLabel ? `Expand ${minimizedLabel}` : "Expand panel"}
+            aria-label={minimizedLabel ? `Expand ${minimizedLabel} panel` : "Expand panel"}
           >
             {getMinimizeIcon()}
           </Button>

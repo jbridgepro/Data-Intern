@@ -6,7 +6,7 @@
  */
 
 import { useState, useCallback, useRef, useEffect } from "react";
-import { FolderOpen, Settings, Sparkles, Loader2, Mic } from "lucide-react";
+import { FolderOpen, Settings, Sparkles, Loader2, Mic, AlertCircle, ExternalLink } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -27,6 +27,14 @@ import { ClarificationPanel } from "../voice/components/ClarificationPanel";
 import { ImplementationPlanView } from "../voice/components/ImplementationPlanView";
 import { VoiceSettingsPanel } from "../voice/components/VoiceSettingsPanel";
 import { ExecutionProgress } from "../voice/components/ExecutionProgress";
+import { AIProviderSetupWizard } from "./AIProviderSetupWizard";
+import {
+  shouldShowSetupWizard,
+  markSetupCompleted,
+  markSetupSkipped,
+  checkProviderConfiguration,
+  getProviderHelpUrl,
+} from "../utils/providerStatus";
 import {
   TaskUnderstanding,
   type TaskUnderstandingData,
@@ -37,6 +45,7 @@ import { useVoiceInput } from "../hooks/useVoiceInput";
 import { useToolWidget } from "../hooks/useToolWidget";
 import { updateWidgetFromNaturalLanguage } from "../utils/widgetExtractor";
 import { agentService } from "../../agents/services/agentService";
+import { generateChatTitleSummary } from "../utils/aiService";
 import { useVoiceServiceManager } from "../voice/hooks/useVoiceServiceManager";
 import type { FileOperation, AISettings } from "../types";
 import type {
@@ -55,9 +64,38 @@ interface AIFileAssistantSessionProps {
   onDirectoryChange?: (directory: string) => void;
 }
 
+/** Maximum length for auto-generated chat/agent names. */
+const CONTEXTUAL_NAME_MAX_LENGTH = 40;
+
+/**
+ * Returns true if the name is a generic placeholder we can safely overwrite
+ * with a context-derived name (e.g. "Agent Chat", "Chat 2", "New Task Agent").
+ */
+function isGenericAgentOrTabName(name: string): boolean {
+  if (!name || typeof name !== "string") return true;
+  const n = name.trim();
+  return (
+    n === "Agent Chat" ||
+    n.startsWith("New Task") ||
+    /^Chat \d+$/.test(n)
+  );
+}
+
+/**
+ * Trims and truncates a string for use as a tab/agent name.
+ * Collapses whitespace to single spaces and caps length at CONTEXTUAL_NAME_MAX_LENGTH.
+ */
+function sanitizeContextualName(raw: string): string {
+  const oneLine = raw.replace(/\s+/g, " ").trim();
+  if (oneLine.length <= CONTEXTUAL_NAME_MAX_LENGTH) return oneLine;
+  return oneLine.substring(0, CONTEXTUAL_NAME_MAX_LENGTH - 3) + "...";
+}
+
 export const AIFileAssistantSession = ({
   initialDirectory,
   onDirectoryChange,
+  onRename,
+  tabName,
 }: AIFileAssistantSessionProps) => {
   // Consume unified chat context
   const {
@@ -66,6 +104,7 @@ export const AIFileAssistantSession = ({
     setInputValue,
     activeAgentId,
     addMessage: contextAddMessage,
+    deleteMessage,
   } = useChatContext();
 
   // Other state needed for UI - MOVED UP
@@ -185,6 +224,37 @@ export const AIFileAssistantSession = ({
   // AI Assistant Hook
   const { settings, updateSettings, executeOperation } =
     useAIFileAssistant(currentDirectory);
+
+  // Setup wizard state - check if user needs to configure an AI provider
+  const [showSetupWizard, setShowSetupWizard] = useState(() => {
+    return shouldShowSetupWizard(settings);
+  });
+  const [providerConfigStatus, setProviderConfigStatus] = useState(() =>
+    checkProviderConfiguration(settings)
+  );
+
+  // Re-check provider configuration when settings change
+  useEffect(() => {
+    const status = checkProviderConfiguration(settings);
+    setProviderConfigStatus(status);
+
+    // If provider becomes configured, hide the wizard
+    if (status.isConfigured && showSetupWizard) {
+      setShowSetupWizard(false);
+    }
+  }, [settings, showSetupWizard]);
+
+  // Handle setup wizard completion
+  const handleSetupComplete = useCallback(() => {
+    markSetupCompleted();
+    setShowSetupWizard(false);
+  }, []);
+
+  // Handle setup wizard skip
+  const handleSetupSkip = useCallback(() => {
+    markSetupSkipped();
+    setShowSetupWizard(false);
+  }, []);
 
   // Mock statuses that are no longer returned by the hook
   const ollamaConnectionStatus = {
@@ -568,18 +638,23 @@ export const AIFileAssistantSession = ({
     };
   }, []);
 
-  // Update agent name based on task understanding or implementation plan
+  // Update agent name based on task understanding or implementation plan (voice flow)
   useEffect(() => {
     if (!activeAgentId) return;
+    const tabNameGeneric = isGenericAgentOrTabName(tabName ?? "");
 
     // Prioritize implementation plan task name
     if (implementationPlan?.task) {
       const currentAgent = agentService.getAgent(activeAgentId);
-      if (currentAgent && currentAgent.name !== implementationPlan.task) {
-        // Update agent name to match the task
-        agentService.updateAgent(activeAgentId, {
-          name: implementationPlan.task,
-        });
+      const newName = sanitizeContextualName(implementationPlan.task);
+      if (
+        currentAgent &&
+        tabNameGeneric &&
+        isGenericAgentOrTabName(currentAgent.name) &&
+        currentAgent.name !== newName
+      ) {
+        agentService.updateAgent(activeAgentId, { name: newName });
+        onRename?.(newName);
       }
       return;
     }
@@ -587,19 +662,84 @@ export const AIFileAssistantSession = ({
     // Fallback to initial task understanding intent for faster feedback
     if (taskUnderstanding?.intent) {
       const currentAgent = agentService.getAgent(activeAgentId);
-      if (currentAgent && currentAgent.name.startsWith("New Task")) {
-        // Create a short name from the intent
-        const newName =
-          taskUnderstanding.intent.length > 40
-            ? taskUnderstanding.intent.substring(0, 37) + "..."
-            : taskUnderstanding.intent;
-
-        if (currentAgent.name !== newName) {
-          agentService.updateAgent(activeAgentId, { name: newName });
-        }
+      const newName = sanitizeContextualName(taskUnderstanding.intent);
+      if (
+        currentAgent &&
+        tabNameGeneric &&
+        isGenericAgentOrTabName(currentAgent.name) &&
+        currentAgent.name !== newName
+      ) {
+        agentService.updateAgent(activeAgentId, { name: newName });
+        onRename?.(newName);
       }
     }
-  }, [activeAgentId, implementationPlan?.task, taskUnderstanding?.intent]);
+  }, [
+    activeAgentId,
+    implementationPlan?.task,
+    taskUnderstanding?.intent,
+    onRename,
+    tabName,
+  ]);
+
+  // Derive contextual name from chat, optionally via AI summary, and update agent + tab
+  useEffect(() => {
+    if (!activeAgentId || !activeSession) return;
+
+    const messages = activeSession.messages ?? [];
+    let rawContext: string | null = null;
+
+    // Prefer implementation plan task from latest assistant message metadata
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msg = messages[i];
+      if (msg.role !== "assistant" || !msg.metadata) continue;
+      const task = msg.metadata?.implementationPlan?.task;
+      if (typeof task === "string" && task.trim()) {
+        rawContext = task.trim().replace(/\s+/g, " ");
+        break;
+      }
+    }
+
+    // Fallback: first user message (skip welcome / empty)
+    if (!rawContext) {
+      const firstUser = messages.find(
+        (m) => m.role === "user" && m.content?.trim() && m.id !== "welcome"
+      );
+      if (firstUser?.content?.trim()) {
+        rawContext = firstUser.content.trim().replace(/\s+/g, " ");
+      }
+    }
+
+    if (!rawContext) return;
+
+    const currentAgent = agentService.getAgent(activeAgentId);
+    const agentNameGeneric = currentAgent && isGenericAgentOrTabName(currentAgent.name);
+    const tabNameGeneric = isGenericAgentOrTabName(tabName ?? "");
+    if (!currentAgent || !agentNameGeneric || !tabNameGeneric) return;
+
+    let cancelled = false;
+
+    (async () => {
+      const summary = await generateChatTitleSummary(rawContext!, settings);
+      if (cancelled) return;
+      const contextualName = summary
+        ? summary.trim().slice(0, CONTEXTUAL_NAME_MAX_LENGTH) || sanitizeContextualName(rawContext!)
+        : sanitizeContextualName(rawContext!);
+      if (currentAgent.name === contextualName) return;
+
+      agentService.updateAgent(activeAgentId, { name: contextualName });
+      onRename?.(contextualName);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    activeAgentId,
+    activeSession?.messages,
+    onRename,
+    tabName,
+    settings,
+  ]);
 
   const handleQuickAction = async (action: string) => {
     const command = getQuickActionCommand(action);
@@ -765,70 +905,80 @@ export const AIFileAssistantSession = ({
   }, []);
 
   return (
-    <div className="h-full flex flex-col bg-background text-foreground">
-      {/* Header - Improved Design */}
-      <div className="flex items-center justify-between px-5 py-3.5 border-b border-slate-200/50 dark:border-slate-800/50 bg-white/50 dark:bg-slate-950/50 backdrop-blur-sm">
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2.5">
-            <div className="p-1.5 rounded-lg bg-gradient-to-br from-blue-500/10 to-indigo-500/10 border border-blue-200/50 dark:border-blue-800/50">
-              <Sparkles className="h-5 w-5 text-blue-600 dark:text-blue-400" />
-            </div>
-            <div>
-              <h1 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
-                AI Assistant
-              </h1>
-              {currentDirectory && (
-                <div className="flex items-center gap-1.5 mt-0.5">
-                  <FolderOpen className="h-3 w-3 text-slate-500 dark:text-slate-400" />
-                  <span className="text-xs text-slate-500 dark:text-slate-400 max-w-[200px] truncate">
-                    {currentDirectory.split("/").pop() || currentDirectory}
-                  </span>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2">
-          {/* Current Directory Full Path (if set) - Tooltip on hover */}
-          {currentDirectory && (
+    <div className="h-full flex flex-col bg-gradient-to-b from-slate-50/50 to-white dark:from-slate-950/50 dark:to-slate-900 text-foreground">
+      {/* Header - Enhanced Modern Design */}
+      <div className="flex items-center justify-between px-5 py-3 border-b border-slate-200/60 dark:border-slate-800/60 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md">
+        <div className="flex items-center gap-4">
+          {/* Directory Selector - Compact Pill */}
+          {currentDirectory ? (
             <Button
               variant="ghost"
               size="sm"
               onClick={handleSelectDirectory}
-              className="h-8 px-2.5 text-xs text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100"
+              className="h-9 px-3 bg-slate-100/80 dark:bg-slate-800/80 hover:bg-slate-200/80 dark:hover:bg-slate-700/80 rounded-xl border border-slate-200/50 dark:border-slate-700/50 transition-all duration-200"
               title={currentDirectory}
             >
-              <FolderOpen className="h-3.5 w-3.5 mr-1.5" />
-              <span className="max-w-[120px] truncate hidden sm:inline">
+              <FolderOpen className="h-4 w-4 text-violet-500 dark:text-violet-400 mr-2" />
+              <span className="text-sm font-medium text-slate-700 dark:text-slate-300 max-w-[180px] truncate">
                 {currentDirectory.split("/").pop() || currentDirectory}
               </span>
             </Button>
+          ) : (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleSelectDirectory}
+              className="h-9 px-3 bg-violet-50 dark:bg-violet-900/30 hover:bg-violet-100 dark:hover:bg-violet-900/50 rounded-xl border border-violet-200/50 dark:border-violet-800/50 text-violet-600 dark:text-violet-400 transition-all duration-200"
+            >
+              <FolderOpen className="h-4 w-4 mr-2" />
+              <span className="text-sm font-medium">Select Folder</span>
+            </Button>
           )}
 
-          {/* Voice Settings Button */}
+          {/* Provider Indicator */}
+          <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-100/50 dark:bg-slate-800/50 border border-slate-200/50 dark:border-slate-700/50">
+            <div className={cn(
+              "w-2 h-2 rounded-full",
+              settings.provider === 'anthropic' ? "bg-violet-500" :
+              settings.provider === 'openrouter' ? "bg-blue-500" :
+              "bg-emerald-500"
+            )} />
+            <span className="text-xs font-medium text-slate-600 dark:text-slate-400">
+              {settings.provider === 'anthropic' ? 'Claude' :
+               settings.provider === 'openrouter' ? 'OpenRouter' :
+               'Ollama'}
+            </span>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-1.5">
+          {/* Voice Settings Button - Enhanced */}
           <Button
             variant="ghost"
             size="sm"
             onClick={() => setShowVoiceSettings(!showVoiceSettings)}
             title="Voice Settings"
             className={cn(
-              "h-8 w-8 p-0",
-              showVoiceSettings && "bg-slate-100 dark:bg-slate-800",
+              "h-9 w-9 p-0 rounded-xl transition-all duration-200",
+              showVoiceSettings 
+                ? "bg-violet-100 dark:bg-violet-900/50 text-violet-600 dark:text-violet-400" 
+                : "hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 dark:text-slate-400"
             )}
           >
             <Mic className="h-4 w-4" />
           </Button>
 
-          {/* Settings Button */}
+          {/* Settings Button - Enhanced */}
           <Button
             variant="ghost"
             size="sm"
             onClick={() => setShowSettings(!showSettings)}
-            title="Settings"
+            title="AI Settings"
             className={cn(
-              "h-8 w-8 p-0",
-              showSettings && "bg-slate-100 dark:bg-slate-800",
+              "h-9 w-9 p-0 rounded-xl transition-all duration-200",
+              showSettings 
+                ? "bg-violet-100 dark:bg-violet-900/50 text-violet-600 dark:text-violet-400" 
+                : "hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 dark:text-slate-400"
             )}
           >
             <Settings className="h-4 w-4" />
@@ -915,53 +1065,136 @@ export const AIFileAssistantSession = ({
             </div>
           )}
 
-          {/* Chat Messages - Improved Spacing with Scrollable Content */}
+          {/* Chat Messages - Enhanced Spacing with Scrollable Content */}
           <div className="flex-1 min-h-0 overflow-hidden">
             <ScrollArea ref={scrollAreaRef} className="h-full">
               <div className="px-5 py-6 space-y-6 max-w-4xl mx-auto">
-                {/* Minimal Status Indicator - Only show if there's an issue */}
-                {messages.length === 1 && (
-                  <>
+                {/* Setup Wizard - Show when no provider is configured */}
+                {showSetupWizard && (
+                  <div className="py-4">
+                    <AIProviderSetupWizard
+                      settings={settings}
+                      onUpdate={updateSettings}
+                      onComplete={handleSetupComplete}
+                      onSkip={handleSetupSkip}
+                    />
+                  </div>
+                )}
+
+                {/* Provider Configuration Warning Banner - Show when provider needs attention */}
+                {!showSetupWizard && !providerConfigStatus.isConfigured && messages.length === 1 && (
+                  <div className="mb-4 p-4 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200/50 dark:border-amber-800/50">
+                    <div className="flex items-start gap-3">
+                      <AlertCircle className="h-5 w-5 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
+                      <div className="flex-1 min-w-0">
+                        <p className="font-medium text-amber-800 dark:text-amber-200 mb-1">
+                          AI Provider Not Configured
+                        </p>
+                        <p className="text-sm text-amber-700 dark:text-amber-300 mb-3">
+                          {providerConfigStatus.message}
+                          {providerConfigStatus.details.length > 0 && (
+                            <span className="block mt-1">
+                              {providerConfigStatus.details.join(". ")}
+                            </span>
+                          )}
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                          <Button
+                            size="sm"
+                            variant="default"
+                            className="bg-amber-600 hover:bg-amber-700 text-white"
+                            onClick={() => setShowSetupWizard(true)}
+                          >
+                            <Sparkles className="h-4 w-4 mr-1.5" />
+                            Set Up AI Provider
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="border-amber-300 dark:border-amber-700 text-amber-700 dark:text-amber-300"
+                            onClick={() => setShowSettings(true)}
+                          >
+                            <Settings className="h-4 w-4 mr-1.5" />
+                            Open Settings
+                          </Button>
+                          {getProviderHelpUrl(settings.provider) && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="text-amber-600 dark:text-amber-400"
+                              onClick={() => window.open(getProviderHelpUrl(settings.provider), "_blank")}
+                            >
+                              <ExternalLink className="h-4 w-4 mr-1.5" />
+                              Get Help
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Status Indicators - Compact and Modern */}
+                {!showSetupWizard && messages.length === 1 && (
+                  <div className="space-y-2">
                     {settings.provider === "ollama" &&
                       ollamaConnectionStatus.connected === false && (
-                        <div className="px-4 py-2 -mx-5 -mt-6 mb-4 bg-red-50/30 dark:bg-red-950/20 border-b border-red-200/50 dark:border-red-800/50">
-                          <div className="text-xs text-red-700 dark:text-red-300 flex items-center gap-2">
-                            <Sparkles className="h-3 w-3" />
-                            <span>⚠️ Ollama connection failed</span>
-                          </div>
+                        <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-red-50 dark:bg-red-950/30 border border-red-200/50 dark:border-red-800/50">
+                          <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                          <span className="text-xs font-medium text-red-700 dark:text-red-300">
+                            Ollama connection failed
+                          </span>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="ml-auto h-6 px-2 text-xs text-red-600 hover:text-red-700"
+                            onClick={() => setShowSetupWizard(true)}
+                          >
+                            Fix Setup
+                          </Button>
                         </div>
                       )}
                     {settings.clawdbotEnabled &&
                       clawdbotStatus.available === false && (
-                        <div className="px-4 py-2 -mx-5 -mt-6 mb-4 bg-yellow-50/30 dark:bg-yellow-950/20 border-b border-yellow-200/50 dark:border-yellow-800/50">
-                          <div className="text-xs text-yellow-700 dark:text-yellow-300 flex items-center gap-2">
-                            <Sparkles className="h-3 w-3" />
-                            <span>
-                              ⚠️ ClawdBot not available:{" "}
-                              {clawdbotStatus.error || "CLI not found"}
-                            </span>
-                          </div>
+                        <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200/50 dark:border-amber-800/50">
+                          <div className="w-2 h-2 rounded-full bg-amber-500" />
+                          <span className="text-xs font-medium text-amber-700 dark:text-amber-300">
+                            ClawdBot unavailable: {clawdbotStatus.error || "CLI not found"}
+                          </span>
                         </div>
                       )}
                     {settings.clawdbotEnabled &&
                       clawdbotStatus.available === true && (
-                        <div className="px-4 py-2 -mx-5 -mt-6 mb-4 bg-green-50/30 dark:bg-green-950/20 border-b border-green-200/50 dark:border-green-800/50">
-                          <div className="text-xs text-green-700 dark:text-green-300 flex items-center gap-2">
-                            <Sparkles className="h-3 w-3" />
-                            <span>
-                              ✨ ClawdBot ready • ClawdHub skills available
-                            </span>
-                          </div>
+                        <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200/50 dark:border-emerald-800/50">
+                          <div className="w-2 h-2 rounded-full bg-emerald-500" />
+                          <span className="text-xs font-medium text-emerald-700 dark:text-emerald-300">
+                            ClawdBot ready • ClawdHub skills available
+                          </span>
                         </div>
                       )}
-                  </>
+                  </div>
                 )}
 
-                {/* Simplified Quick Actions - Only on default page */}
-                {messages.length === 1 &&
+                {/* Welcome State with Quick Actions */}
+                {!showSetupWizard &&
+                  messages.length === 1 &&
                   !clarificationQuestions.length &&
                   !implementationPlan && (
-                    <div className="mb-6">
+                    <div className="mb-8">
+                      {/* Welcome Header */}
+                      <div className="text-center mb-8">
+                        <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-violet-500 to-purple-600 shadow-lg shadow-violet-500/25 mb-4">
+                          <Sparkles className="h-8 w-8 text-white" />
+                        </div>
+                        <h2 className="text-2xl font-bold text-slate-900 dark:text-slate-100 mb-2">
+                          How can I help you today?
+                        </h2>
+                        <p className="text-sm text-slate-500 dark:text-slate-400 max-w-md mx-auto">
+                          I can organize files, find duplicates, rename with patterns, and more. Just describe what you need.
+                        </p>
+                      </div>
+
+                      {/* Quick Actions */}
                       <QuickActions
                         onAction={handleQuickAction}
                         currentDirectory={currentDirectory}
@@ -1067,6 +1300,7 @@ export const AIFileAssistantSession = ({
                     widgets={getWidgetsForMessage(message.id)}
                     aiName={settings.aiName}
                     userName={settings.userName}
+                    onDelete={() => activeAgentId && deleteMessage(activeAgentId, message.id)}
                     onWidgetUpdate={(widgetId, updates) => {
                       updateWidget(widgetId, updates, "user");
                       // If user is editing via natural language, process it
@@ -1198,8 +1432,8 @@ export const AIFileAssistantSession = ({
             />
           )}
 
-          {/* Chat Input Area - Always Visible - Improved Styling */}
-          <div className="shrink-0 px-5 py-4 border-t border-slate-200/50 dark:border-slate-800/50 bg-white/80 dark:bg-slate-950/80 backdrop-blur-sm">
+          {/* Chat Input Area - Modern Design */}
+          <div className="shrink-0 px-5 py-4 bg-gradient-to-t from-white via-white to-white/80 dark:from-slate-900 dark:via-slate-900 dark:to-slate-900/80 backdrop-blur-sm">
             <div className="max-w-4xl mx-auto">
               <ChatInput
                 value={
@@ -1243,6 +1477,10 @@ export const AIFileAssistantSession = ({
                 onDictateClick={handleDictateClick}
                 isVoiceActive={voiceInputActive}
                 isDictateActive={showVoiceToText}
+                onConnectorsClick={() => {
+                  setShowVoiceToText(false);
+                  setShowSettings(true);
+                }}
               />
             </div>
           </div>

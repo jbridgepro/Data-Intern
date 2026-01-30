@@ -254,7 +254,7 @@ function App() {
                   </ResizablePanel>
                 )}
 
-                {/* Agent Sidebar - Left Position - Resizable */}
+                {/* Agent Sidebar - Left Position - Resizable; render when minimized so AgentSidebar shows its collapsed UI */}
                 {configuration.layout.agentSidebarPosition === "left" &&
                   shouldShowAgentSidebar && (
                     <ResizablePanel
@@ -266,6 +266,7 @@ function App() {
                       onMinimizeChange={() => togglePanelMinimized("agents")}
                       direction="right"
                       className="shrink-0"
+                      renderChildrenWhenMinimized={true}
                     >
                       <AgentSidebar
                         isOpen={true}
@@ -284,7 +285,7 @@ function App() {
                   <MainLayout>{renderContent()}</MainLayout>
                 </main>
 
-                {/* Chat Panel (Right Side) - Resizable */}
+                {/* Chat Panel (Right Side) - Resizable; render when minimized so ChatPanel shows its collapsed UI */}
                 {configuration.visibility.chat && (
                   <ResizablePanel
                     size={configuration.panelSizes.chat.size}
@@ -295,6 +296,7 @@ function App() {
                     onMinimizeChange={() => togglePanelMinimized("chat")}
                     direction="left"
                     className="shrink-0"
+                    renderChildrenWhenMinimized={true}
                   >
                     <ChatPanel
                       isVisible={configuration.visibility.chat}
@@ -305,7 +307,7 @@ function App() {
                   </ResizablePanel>
                 )}
 
-                {/* Agent Sidebar - Right Position - Resizable */}
+                {/* Agent Sidebar - Right Position - Resizable; render when minimized so AgentSidebar shows its collapsed UI */}
                 {configuration.layout.agentSidebarPosition === "right" &&
                   shouldShowAgentSidebar && (
                     <ResizablePanel
@@ -317,6 +319,7 @@ function App() {
                       onMinimizeChange={() => togglePanelMinimized("agents")}
                       direction="left"
                       className="shrink-0"
+                      renderChildrenWhenMinimized={true}
                     >
                       <AgentSidebar
                         isOpen={true}
@@ -332,7 +335,7 @@ function App() {
               </div>
             </div>
 
-            {/* Bottom Panel - Resizable */}
+            {/* Bottom Panel - Resizable; render when minimized so BottomPanel shows its collapsed UI */}
             {configuration.visibility.panel && (
               <ResizablePanel
                 size={configuration.panelSizes.panel.size}
@@ -343,7 +346,8 @@ function App() {
                 onMinimizeChange={() => togglePanelMinimized("panel")}
                 direction="top"
                 className="border-t border-slate-200/50 dark:border-slate-800/50"
-                minimizedSize={36}
+                minimizedSize={40}
+                renderChildrenWhenMinimized={true}
               >
                 <BottomPanel
                   isVisible={configuration.visibility.panel}
@@ -357,7 +361,7 @@ function App() {
             {/* Status Bar */}
             <StatusBar isVisible={configuration.layout.showStatusBar} />
 
-            {/* Agent Sidebar - Bottom Position - Resizable */}
+            {/* Agent Sidebar - Bottom Position - Resizable; render when minimized so AgentSidebar shows its collapsed UI */}
             {configuration.layout.agentSidebarPosition === "bottom" &&
               shouldShowAgentSidebar && (
                 <ResizablePanel
@@ -369,7 +373,8 @@ function App() {
                   onMinimizeChange={() => togglePanelMinimized("agents")}
                   direction="top"
                   className="shrink-0 border-t border-slate-200/50 dark:border-slate-800/50"
-                  minimizedSize={36}
+                  minimizedSize={40}
+                  renderChildrenWhenMinimized={true}
                 >
                   <AgentSidebar
                     isOpen={true}

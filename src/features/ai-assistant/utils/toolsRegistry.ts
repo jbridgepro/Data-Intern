@@ -11,13 +11,24 @@
  * - Type-safe interfaces for tool parameters and results
  */
 
-import type { AISettings, DirectoryAnalysis, FileOperation, OrganizationConfig } from '../types';
+import type { AISettings, DirectoryAnalysis, FileOperation, OrganizationConfig, DEFAULT_CACHE_SETTINGS } from '../types';
 import { analyzeDirectoryFiles } from './fileAnalysis';
 import { organizeFilesByStrategy } from './organizationStrategies';
 import { findDuplicateFiles } from './duplicateDetection';
 import { generateRenameOperation } from './renameIntelligence';
 import { executeFileOperation } from './fileOperations';
 import { toolOrchestrator } from './toolOrchestrator';
+import { directoryCache } from './directoryCache';
+import { toolPermissionManager } from './toolPermissions';
+import { 
+  operationHistory, 
+  createFileChange, 
+  getOperationTypeFromTool,
+  isOperationUndoable 
+} from './operationHistory';
+import { auditLogger } from './auditLogger';
+import { workflowManager, BUILTIN_TEMPLATES } from './workflowManager';
+import type { OperationType, FileChange, WorkflowCategory } from '../types';
 import type {
   FileCopyToolParams,
   FolderCreationToolParams,
@@ -1246,6 +1257,108 @@ export const TOOLS: ToolDefinition[] = [
       'get_tool_help({ category: "search_and_analysis" }) - List search tools',
     ],
   },
+  // ========== WORKFLOW TOOLS ==========
+  {
+    name: 'list_workflows',
+    description: 'Lists all available workflow templates. Use this to see what automated workflows the user has saved.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        category: {
+          type: 'string',
+          enum: ['organization', 'cleanup', 'backup', 'migration', 'analysis', 'development', 'custom'],
+          description: 'Filter workflows by category.',
+        },
+        favoritesOnly: {
+          type: 'boolean',
+          description: 'Only show favorited workflows.',
+        },
+      },
+    },
+    category: ToolCategory.SYSTEM_COMMANDS,
+    examples: [
+      'list_workflows() - List all workflows',
+      'list_workflows({ category: "organization" }) - List organization workflows',
+      'list_workflows({ favoritesOnly: true }) - List favorite workflows',
+    ],
+  },
+  {
+    name: 'run_workflow',
+    description: 'Executes a saved workflow template with the specified parameters. Use this to run automated multi-step operations.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        workflowId: {
+          type: 'string',
+          description: 'The ID of the workflow to execute.',
+        },
+        workflowName: {
+          type: 'string',
+          description: 'The name of the workflow to execute (alternative to ID).',
+        },
+        parameters: {
+          type: 'object',
+          description: 'Parameter values to pass to the workflow (e.g., { targetPath: "/path/to/folder" }).',
+        },
+      },
+    },
+    category: ToolCategory.SYSTEM_COMMANDS,
+    examples: [
+      'run_workflow({ workflowName: "Organize by Type", parameters: { targetPath: "/Downloads" } })',
+      'run_workflow({ workflowId: "wf-123", parameters: { sourcePath: "/docs", backupPath: "/backups" } })',
+    ],
+  },
+  {
+    name: 'create_workflow',
+    description: 'Creates a new workflow from a built-in template or from scratch. Use this when the user wants to save a sequence of operations for reuse.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        templateId: {
+          type: 'string',
+          description: 'ID of the built-in template to use (e.g., "builtin-organize-by-type").',
+        },
+        name: {
+          type: 'string',
+          description: 'Name for the new workflow.',
+        },
+        description: {
+          type: 'string',
+          description: 'Description of what the workflow does.',
+        },
+        category: {
+          type: 'string',
+          enum: ['organization', 'cleanup', 'backup', 'migration', 'analysis', 'development', 'custom'],
+          description: 'Category for the workflow.',
+        },
+      },
+      required: ['name'],
+    },
+    category: ToolCategory.SYSTEM_COMMANDS,
+    examples: [
+      'create_workflow({ templateId: "builtin-organize-by-type", name: "My Organize Workflow" })',
+      'create_workflow({ name: "Daily Backup", category: "backup", description: "Backs up my documents" })',
+    ],
+  },
+  {
+    name: 'get_workflow_templates',
+    description: 'Lists available built-in workflow templates that can be used as starting points for new workflows.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        category: {
+          type: 'string',
+          enum: ['organization', 'cleanup', 'backup', 'migration', 'analysis', 'development', 'custom'],
+          description: 'Filter templates by category.',
+        },
+      },
+    },
+    category: ToolCategory.SYSTEM_COMMANDS,
+    examples: [
+      'get_workflow_templates() - List all templates',
+      'get_workflow_templates({ category: "organization" }) - List organization templates',
+    ],
+  },
 ];
 
 /**
@@ -1536,7 +1649,50 @@ export async function executeTool(
 ): Promise<ToolResult> {
   const startTime = Date.now();
   
+  // Initialize audit logger if settings provided
+  if (context.settings.auditLog) {
+    auditLogger.updateSettings(context.settings.auditLog);
+  }
+
+  // Log tool execution start (debug level)
+  auditLogger.debug('tool_execution', `start_${toolName}`, `Starting tool execution: ${toolName}`, {
+    toolName,
+    toolArgs: args,
+  });
+  
   try {
+    // Update permission manager with current settings
+    if (context.settings.toolPermissions) {
+      toolPermissionManager.updateSettings(context.settings.toolPermissions);
+    }
+
+    // Check tool permissions before execution
+    const permissionCheck = toolPermissionManager.checkPermission(toolName);
+    
+    // Log permission check
+    auditLogger.logPermissionCheck(toolName, permissionCheck.allowed, permissionCheck.reason);
+    
+    if (!permissionCheck.allowed) {
+      console.log(`[executeTool] Tool "${toolName}" is disabled: ${permissionCheck.reason}`);
+      
+      // Log permission denial
+      auditLogger.warn('permission', 'permission_denied', `Tool "${toolName}" execution blocked`, {
+        toolName,
+        metadata: { reason: permissionCheck.reason },
+      });
+      
+      return createErrorResult(
+        `This operation is not permitted. ${permissionCheck.reason}`,
+        [`Tool "${toolPermissionManager.getToolDisplayName(toolName)}" is currently disabled in settings.`]
+      );
+    }
+
+    // Log if confirmation would normally be required
+    // (actual confirmation handled at AI service level)
+    if (permissionCheck.requiresConfirmation) {
+      console.log(`[executeTool] Tool "${toolName}" requires confirmation: ${permissionCheck.reason}`);
+    }
+
     // Get tool definition for validation
     const toolDef = TOOLS.find(t => t.name === toolName);
     if (toolDef && toolDef.input_schema.required) {
@@ -1561,10 +1717,50 @@ export async function executeTool(
           return createErrorResult(pathValidation.error || 'Invalid directory path');
         }
         
+        // Check cache settings and update cache configuration
+        const cacheEnabled = context.settings.cacheSettings?.enabled ?? true;
+        const cacheTTL = context.settings.cacheSettings?.ttlSeconds ?? 300;
+        const cacheMaxEntries = context.settings.cacheSettings?.maxEntries ?? 50;
+        
+        directoryCache.updateConfig({
+          enabled: cacheEnabled,
+          ttlSeconds: cacheTTL,
+          maxEntries: cacheMaxEntries,
+        });
+        
+        // Try to get from cache first
+        const cachedAnalysis = directoryCache.get(normalizedPath);
+        if (cachedAnalysis) {
+          const cacheStats = directoryCache.getStats();
+          console.log(`[analyze_directory] Cache hit! Hit rate: ${cacheStats.hitRate.toFixed(1)}%`);
+          
+          return createSuccessResult(
+            {
+              totalFiles: cachedAnalysis.totalFiles,
+              totalSize: cachedAnalysis.totalSize,
+              organizationScore: cachedAnalysis.organizationScore,
+              fileTypes: cachedAnalysis.fileTypes.slice(0, 10),
+              summary: cachedAnalysis.summary,
+              path: normalizedPath,
+              cached: true,
+              cacheAge: Math.round((Date.now() - (directoryCache.getEntryInfo(normalizedPath)?.timestamp || Date.now())) / 1000),
+            },
+            undefined,
+            { executionTime: 0, itemsProcessed: cachedAnalysis.totalFiles, fromCache: true }
+          );
+        }
+        
+        // Cache miss - perform fresh analysis
         const { result: analysis, executionTime } = await executeWithTiming(
           () => analyzeDirectoryFiles(normalizedPath),
           toolName
         );
+        
+        // Store in cache
+        directoryCache.set(normalizedPath, analysis);
+        
+        const cacheStats = directoryCache.getStats();
+        console.log(`[analyze_directory] Cached result. Entries: ${cacheStats.entries}, Hit rate: ${cacheStats.hitRate.toFixed(1)}%`);
         
         return createSuccessResult(
           {
@@ -1574,9 +1770,10 @@ export async function executeTool(
             fileTypes: analysis.fileTypes.slice(0, 10),
             summary: analysis.summary,
             path: normalizedPath,
+            cached: false,
           },
           undefined,
-          { executionTime, itemsProcessed: analysis.totalFiles }
+          { executionTime, itemsProcessed: analysis.totalFiles, fromCache: false }
         );
       }
 
@@ -1695,6 +1892,26 @@ export async function executeTool(
           enableBackup: context.settings.enableBackup,
           excludedFolders: context.settings.excludedFolders,
         });
+        
+        // Invalidate cache for affected directories after file operations
+        if (args.operation.files && args.operation.files.length > 0) {
+          const affectedPaths = new Set<string>();
+          for (const file of args.operation.files) {
+            if (file.sourcePath) {
+              const sourceDir = file.sourcePath.substring(0, file.sourcePath.lastIndexOf('/'));
+              if (sourceDir) affectedPaths.add(sourceDir);
+            }
+            if (file.targetPath) {
+              const targetDir = file.targetPath.substring(0, file.targetPath.lastIndexOf('/'));
+              if (targetDir) affectedPaths.add(targetDir);
+            }
+          }
+          for (const dirPath of affectedPaths) {
+            directoryCache.invalidate(dirPath);
+          }
+          console.log(`[execute_operation] Invalidated ${affectedPaths.size} cached directories`);
+        }
+        
         return {
           success: true,
           data: {
@@ -1703,26 +1920,48 @@ export async function executeTool(
         };
 
       // Tab-based tools
-      case 'file_copy_tab':
-        return await toolOrchestrator.executeTool(
+      case 'file_copy_tab': {
+        const copyResult = await toolOrchestrator.executeTool(
           'file_copy',
           args as FileCopyToolParams,
           'File Copy operation'
         );
+        // Invalidate cache for source and destination directories
+        if (copyResult.success) {
+          const copyArgs = args as FileCopyToolParams;
+          if (copyArgs.sourcePath) directoryCache.invalidate(copyArgs.sourcePath);
+          if (copyArgs.destinationPath) directoryCache.invalidate(copyArgs.destinationPath);
+        }
+        return copyResult;
+      }
 
-      case 'folder_creation_tab':
-        return await toolOrchestrator.executeTool(
+      case 'folder_creation_tab': {
+        const folderResult = await toolOrchestrator.executeTool(
           'folder_creation',
           args as FolderCreationToolParams,
           'Folder Creation operation'
         );
+        // Invalidate cache for the root path where folders were created
+        if (folderResult.success) {
+          const folderArgs = args as FolderCreationToolParams;
+          if (folderArgs.rootPath) directoryCache.invalidate(folderArgs.rootPath);
+        }
+        return folderResult;
+      }
 
-      case 'file_creation_tab':
-        return await toolOrchestrator.executeTool(
+      case 'file_creation_tab': {
+        const fileResult = await toolOrchestrator.executeTool(
           'file_creation',
           args as FileCreationToolParams,
           'File Creation operation'
         );
+        // Invalidate cache for the root path where files were created
+        if (fileResult.success) {
+          const fileArgs = args as FileCreationToolParams;
+          if (fileArgs.rootPath) directoryCache.invalidate(fileArgs.rootPath);
+        }
+        return fileResult;
+      }
 
       case 'find_replace_tab':
         return await toolOrchestrator.executeTool(
@@ -2191,6 +2430,162 @@ export async function executeTool(
       case 'get_tool_help':
         return await executeGetToolHelp(args);
 
+      // ========== WORKFLOW TOOLS ==========
+      case 'list_workflows': {
+        await workflowManager.initialize();
+        let workflows = workflowManager.getAllWorkflows();
+        
+        // Apply filters
+        if (args.category) {
+          workflows = workflows.filter(w => w.category === args.category);
+        }
+        if (args.favoritesOnly) {
+          workflows = workflows.filter(w => w.isFavorite);
+        }
+        
+        return {
+          success: true,
+          data: {
+            workflows: workflows.map(w => ({
+              id: w.id,
+              name: w.name,
+              description: w.description,
+              category: w.category,
+              steps: w.steps.length,
+              runCount: w.runCount,
+              isFavorite: w.isFavorite,
+              lastRunAt: w.lastRunAt,
+              tags: w.tags,
+            })),
+            total: workflows.length,
+          },
+        };
+      }
+
+      case 'run_workflow': {
+        await workflowManager.initialize();
+        
+        // Find workflow by ID or name
+        let workflow;
+        if (args.workflowId) {
+          workflow = workflowManager.getWorkflow(args.workflowId);
+        } else if (args.workflowName) {
+          const allWorkflows = workflowManager.getAllWorkflows();
+          workflow = allWorkflows.find(w => 
+            w.name.toLowerCase() === args.workflowName.toLowerCase()
+          );
+        }
+        
+        if (!workflow) {
+          return {
+            success: false,
+            error: `Workflow not found: ${args.workflowId || args.workflowName}`,
+          };
+        }
+        
+        // Create a tool executor function for the workflow
+        const toolExecutor = async (toolName: string, toolArgs: Record<string, any>) => {
+          const result = await executeTool(toolName, toolArgs, context);
+          if (!result.success) {
+            throw new Error(result.error || 'Tool execution failed');
+          }
+          return result;
+        };
+        
+        try {
+          const execution = await workflowManager.executeWorkflow(
+            workflow.id,
+            args.parameters || {},
+            toolExecutor,
+            { triggeredBy: 'api' }
+          );
+          
+          return {
+            success: execution.status === 'completed',
+            data: {
+              executionId: execution.id,
+              workflowName: execution.workflowName,
+              status: execution.status,
+              stepsCompleted: execution.stepResults.filter(s => s.status === 'success').length,
+              totalSteps: execution.totalSteps,
+              filesAffected: execution.totalFilesAffected,
+              duration: execution.duration,
+              error: execution.error,
+            },
+          };
+        } catch (error: any) {
+          return {
+            success: false,
+            error: `Workflow execution failed: ${error.message}`,
+          };
+        }
+      }
+
+      case 'create_workflow': {
+        await workflowManager.initialize();
+        
+        let newWorkflow;
+        
+        if (args.templateId) {
+          // Create from template
+          newWorkflow = workflowManager.createFromTemplate(args.templateId, {
+            name: args.name,
+            description: args.description,
+            category: args.category as WorkflowCategory,
+          });
+        } else {
+          // Create from scratch
+          newWorkflow = workflowManager.createWorkflow({
+            name: args.name,
+            description: args.description || '',
+            category: (args.category as WorkflowCategory) || 'custom',
+            steps: [],
+            parameters: [],
+          });
+        }
+        
+        if (!newWorkflow) {
+          return {
+            success: false,
+            error: 'Failed to create workflow. Template may not exist.',
+          };
+        }
+        
+        return {
+          success: true,
+          data: {
+            id: newWorkflow.id,
+            name: newWorkflow.name,
+            description: newWorkflow.description,
+            category: newWorkflow.category,
+            steps: newWorkflow.steps.length,
+            message: `Created workflow "${newWorkflow.name}"`,
+          },
+        };
+      }
+
+      case 'get_workflow_templates': {
+        let templates = [...BUILTIN_TEMPLATES];
+        
+        if (args.category) {
+          templates = templates.filter(t => t.category === args.category);
+        }
+        
+        return {
+          success: true,
+          data: {
+            templates: templates.map(t => ({
+              id: t.id,
+              name: t.name,
+              description: t.description,
+              category: t.category,
+              icon: t.icon,
+            })),
+            total: templates.length,
+          },
+        };
+      }
+
       // Handle Clawdhub skill tools (skill_*)
       default:
         // Check if this is a skill tool (starts with 'skill_')
@@ -2277,6 +2672,11 @@ export async function executeTool(
     } else if (error.message?.includes('ENOSPC')) {
       errorMessage = `No space left on device. Please free up some space and try again.`;
     }
+    
+    // Log tool execution failure to audit log
+    auditLogger.logToolExecution(toolName, args, false, executionTime, {
+      error: errorMessage,
+    });
     
     return createErrorResult(errorMessage, undefined);
   }
@@ -2630,6 +3030,39 @@ async function executeWriteFileContent(args: Record<string, any>, context: ToolC
       };
     }
 
+    // Invalidate cache for the parent directory
+    const parentDir = await dirname(normalizedPath);
+    directoryCache.invalidate(parentDir);
+    console.log(`[write_file_content] Invalidated cache for: ${parentDir}`);
+
+    // Record operation to history for undo support
+    if (context.settings.operationHistory?.enabled !== false) {
+      const fileName = await basename(normalizedPath);
+      operationHistory.recordOperation({
+        type: 'create_file',
+        description: `Created file: ${fileName}`,
+        toolName: 'write_file_content',
+        toolArgs: args,
+        changes: [
+          createFileChange('create', normalizedPath, {
+            newContent: fileContent,
+            size: fileContent.length,
+            isDirectory: false,
+          }),
+        ],
+        status: 'completed',
+        filesAffected: 1,
+        canUndo: true,
+        hasBackup: false,
+      });
+    }
+
+    // Log file operation to audit log
+    const executionTime = Date.now() - Date.now(); // Will be recalculated
+    auditLogger.logFileOperation('write_file', [normalizedPath], true, {
+      toolName: 'write_file_content',
+    });
+
     return {
       success: true,
       data: {
@@ -2644,6 +3077,13 @@ async function executeWriteFileContent(args: Record<string, any>, context: ToolC
     console.error(`[write_file_content] Error creating file:`, error);
     const errorMessage = error?.message || error?.toString() || 'Unknown error';
     const errorStack = error?.stack ? `\nStack: ${error.stack.substring(0, 200)}` : '';
+    
+    // Log file operation failure
+    auditLogger.logFileOperation('write_file', [filePath], false, {
+      error: errorMessage,
+      toolName: 'write_file_content',
+    });
+    
     return { 
       success: false, 
       error: `Failed to write file content: ${errorMessage}${errorStack}. Path: ${filePath}` 
@@ -2696,6 +3136,52 @@ async function executeDeleteFiles(args: Record<string, any>, context: ToolContex
       }
     }
 
+    // Invalidate cache for parent directories of deleted files
+    if (deleted.length > 0) {
+      const affectedDirs = new Set<string>();
+      for (const deletedPath of deleted) {
+        const parentDir = deletedPath.substring(0, deletedPath.lastIndexOf('/'));
+        if (parentDir) affectedDirs.add(parentDir);
+      }
+      for (const dirPath of affectedDirs) {
+        directoryCache.invalidate(dirPath);
+      }
+      console.log(`[delete_files] Invalidated ${affectedDirs.size} cached directories`);
+    }
+
+    // Record operation to history for undo support
+    if (context.settings.operationHistory?.enabled !== false && deleted.length > 0) {
+      // Create backup of deleted files for potential restore
+      const backupPath = await operationHistory.createBackup(deleted);
+      
+      const changes: FileChange[] = deleted.map(filePath => 
+        createFileChange('delete', filePath, {
+          success: true,
+          isDirectory: false, // Would need stat info for accuracy
+        })
+      );
+
+      operationHistory.recordOperation({
+        type: 'delete_file',
+        description: `Deleted ${deleted.length} file(s)`,
+        toolName: 'delete_files',
+        toolArgs: args,
+        changes,
+        status: 'completed',
+        filesAffected: deleted.length,
+        canUndo: backupPath !== null,
+        undoBlockedReason: backupPath ? undefined : 'No backup created',
+        hasBackup: backupPath !== null,
+        backupPath: backupPath || undefined,
+      });
+    }
+
+    // Log file operation to audit log
+    auditLogger.logFileOperation('delete_files', deleted, errors.length === 0 || deleted.length > 0, {
+      toolName: 'delete_files',
+      error: errors.length > 0 ? errors.join(', ') : undefined,
+    });
+
     return {
       success: errors.length === 0 || deleted.length > 0,
       data: {
@@ -2705,6 +3191,11 @@ async function executeDeleteFiles(args: Record<string, any>, context: ToolContex
       },
     };
   } catch (error: any) {
+    // Log delete failure
+    auditLogger.logFileOperation('delete_files', paths, false, {
+      error: error.message || 'Failed to delete files',
+      toolName: 'delete_files',
+    });
     return { success: false, error: error.message || 'Failed to delete files' };
   }
 }
@@ -3099,6 +3590,31 @@ async function executeCreateDirectory(args: Record<string, any>, context: ToolCo
 
     await mkdir(normalizedPath, { recursive });
 
+    // Invalidate cache for the parent directory
+    const parentDir = await dirname(normalizedPath);
+    directoryCache.invalidate(parentDir);
+    console.log(`[create_directory] Invalidated cache for: ${parentDir}`);
+
+    // Record operation to history for undo support
+    if (context.settings.operationHistory?.enabled !== false) {
+      const folderName = await basename(normalizedPath);
+      operationHistory.recordOperation({
+        type: 'create_directory',
+        description: `Created folder: ${folderName}`,
+        toolName: 'create_directory',
+        toolArgs: args,
+        changes: [
+          createFileChange('create', normalizedPath, {
+            isDirectory: true,
+          }),
+        ],
+        status: 'completed',
+        filesAffected: 1,
+        canUndo: true,
+        hasBackup: false,
+      });
+    }
+
     return {
       success: true,
       data: {
@@ -3146,6 +3662,34 @@ async function executeMoveFile(args: Record<string, any>, context: ToolContext):
 
     const { rename } = await import('@tauri-apps/plugin-fs');
     await rename(sourcePath, destPath);
+
+    // Invalidate cache for both source and destination parent directories
+    const sourceParent = sourcePath.substring(0, sourcePath.lastIndexOf('/'));
+    const destParent = await dirname(destPath);
+    if (sourceParent) directoryCache.invalidate(sourceParent);
+    if (destParent) directoryCache.invalidate(destParent);
+    console.log(`[move_file] Invalidated cache for: ${sourceParent}, ${destParent}`);
+
+    // Record operation to history for undo support
+    if (context.settings.operationHistory?.enabled !== false) {
+      const fileName = await basename(sourcePath);
+      operationHistory.recordOperation({
+        type: 'move_file',
+        description: `Moved: ${fileName}`,
+        toolName: 'move_file',
+        toolArgs: args,
+        changes: [
+          createFileChange('move', sourcePath, {
+            targetPath: destPath,
+            isDirectory: false,
+          }),
+        ],
+        status: 'completed',
+        filesAffected: 1,
+        canUndo: true,
+        hasBackup: false,
+      });
+    }
 
     return {
       success: true,
@@ -3207,6 +3751,32 @@ async function executeCopyFile(args: Record<string, any>, context: ToolContext):
       return { success: false, error: 'Directory copying requires more complex logic. Use file_copy_tab for directories.' };
     } else {
       await copyFile(sourcePath, destPath);
+    }
+
+    // Invalidate cache for destination parent directory (source unchanged)
+    const destParent = await dirname(destPath);
+    if (destParent) directoryCache.invalidate(destParent);
+    console.log(`[copy_file] Invalidated cache for: ${destParent}`);
+
+    // Record operation to history for undo support
+    if (context.settings.operationHistory?.enabled !== false) {
+      const fileName = await basename(sourcePath);
+      operationHistory.recordOperation({
+        type: 'copy_file',
+        description: `Copied: ${fileName}`,
+        toolName: 'copy_file',
+        toolArgs: args,
+        changes: [
+          createFileChange('copy', sourcePath, {
+            targetPath: destPath,
+            isDirectory: false,
+          }),
+        ],
+        status: 'completed',
+        filesAffected: 1,
+        canUndo: true,
+        hasBackup: false,
+      });
     }
 
     return {
@@ -4038,7 +4608,7 @@ export async function getMCPTools(): Promise<ToolDefinition[]> {
  * Gets all available tools (custom + MCP + Skills).
  * Optionally filters tools based on settings (e.g., ClawdBot tools).
  */
-export async function getAllTools(settings?: { clawdbotEnabled?: boolean }): Promise<ToolDefinition[]> {
+export async function getAllTools(settings?: AISettings): Promise<ToolDefinition[]> {
   let customTools = TOOLS;
 
   // Filter ClawdBot tools if not enabled
@@ -4046,6 +4616,16 @@ export async function getAllTools(settings?: { clawdbotEnabled?: boolean }): Pro
     customTools = customTools.filter(tool =>
       !tool.name.startsWith('clawdbot_') && !tool.name.startsWith('clawdhub_')
     );
+  }
+
+  // Filter out disabled tools based on permissions
+  if (settings?.toolPermissions) {
+    toolPermissionManager.updateSettings(settings.toolPermissions);
+    const allowedToolNames = toolPermissionManager.filterAllowedTools(
+      customTools.map(t => t.name)
+    );
+    customTools = customTools.filter(tool => allowedToolNames.includes(tool.name));
+    console.log(`[getAllTools] Filtered to ${customTools.length} allowed tools`);
   }
 
   const mcpTools = await getMCPTools();

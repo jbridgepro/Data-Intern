@@ -42,31 +42,42 @@ export const BottomPanel = ({ isVisible, onClose, isMinimized, onToggleMinimize 
     { id: "output", label: "Output", icon: TerminalIcon },
   ];
 
-  // Minimized state - show compact header only
+  // Minimized state - show compact strip with clear panel title so it's identifiable
   if (isMinimized) {
     return (
-      <div className="h-full flex items-center justify-between px-4 bg-slate-50 dark:bg-slate-900/50">
-        <div className="flex items-center gap-2">
-          {tabs.map((tab) => {
-            const Icon = tab.icon;
-            return (
-              <button
-                key={tab.id}
-                onClick={() => setBottomPanelTab(tab.id)}
-                className={cn(
-                  "flex items-center gap-1.5 px-2 py-1 rounded text-xs transition-colors",
-                  activeTab === tab.id
-                    ? "bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300"
-                    : "text-slate-600 dark:text-slate-400 hover:bg-slate-200/50 dark:hover:bg-slate-800/50",
-                )}
-              >
-                <Icon className="h-3 w-3" />
-                {tab.label}
-              </button>
-            );
-          })}
+      <div
+        className="h-full flex items-center justify-between px-3 py-1.5 bg-slate-50 dark:bg-slate-900/50 border-t border-slate-200/50 dark:border-slate-800/50"
+        title="Bottom panel — Terminal, Problems, Output"
+      >
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="flex items-center gap-1.5 shrink-0 py-1 pr-2 border-r border-slate-200/60 dark:border-slate-700/60">
+            <TerminalIcon className="h-4 w-4 text-slate-500 dark:text-slate-400" aria-hidden />
+            <span className="text-xs font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wider whitespace-nowrap">
+              Panel
+            </span>
+          </div>
+          <div className="flex items-center gap-1.5 overflow-x-auto">
+            {tabs.map((tab) => {
+              const Icon = tab.icon;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setBottomPanelTab(tab.id)}
+                  className={cn(
+                    "flex items-center gap-1.5 px-2 py-1 rounded text-xs transition-colors shrink-0",
+                    activeTab === tab.id
+                      ? "bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300"
+                      : "text-slate-600 dark:text-slate-400 hover:bg-slate-200/50 dark:hover:bg-slate-800/50",
+                  )}
+                >
+                  <Icon className="h-3 w-3" />
+                  {tab.label}
+                </button>
+              );
+            })}
+          </div>
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1 shrink-0">
           {onToggleMinimize && (
             <Button
               variant="ghost"
@@ -74,6 +85,7 @@ export const BottomPanel = ({ isVisible, onClose, isMinimized, onToggleMinimize 
               className="h-6 w-6"
               onClick={onToggleMinimize}
               title="Expand Panel"
+              aria-label="Expand bottom panel"
             >
               <ChevronUp className="h-4 w-4" />
             </Button>
@@ -85,6 +97,7 @@ export const BottomPanel = ({ isVisible, onClose, isMinimized, onToggleMinimize 
               className="h-6 w-6"
               onClick={onClose}
               title="Close Panel"
+              aria-label="Close bottom panel"
             >
               <X className="h-4 w-4" />
             </Button>
