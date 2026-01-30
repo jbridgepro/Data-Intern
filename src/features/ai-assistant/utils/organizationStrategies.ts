@@ -25,13 +25,13 @@ export async function organizeFilesByStrategy(
       operationItems = await organizeByType(files, path);
       break;
     case 'by-date':
-      operationItems = await organizeByDate(files, path, config.options.dateFormat || 'year-month');
+      operationItems = await organizeByDate(files, path, config.options?.dateFormat || 'year-month');
       break;
     case 'by-project':
       operationItems = await organizeByProject(files, path);
       break;
     case 'by-size':
-      operationItems = await organizeBySize(files, path, config.options.sizeThresholds);
+      operationItems = await organizeBySize(files, path, config.options?.sizeThresholds);
       break;
     default:
       operationItems = await organizeByType(files, path);
@@ -70,7 +70,7 @@ async function organizeByType(files: FileInfo[], rootPath: string): Promise<File
 
   for (const [category, categoryFiles] of typeMap.entries()) {
     const targetDir = await join(rootPath, category);
-    
+
     for (const file of categoryFiles) {
       const fileName = await basename(file.path);
       const targetPath = await join(targetDir, fileName);
@@ -78,7 +78,7 @@ async function organizeByType(files: FileInfo[], rootPath: string): Promise<File
       // Normalize paths for comparison
       const sourceNormalized = file.path.replace(/\\/g, '/').toLowerCase();
       const targetNormalized = targetPath.replace(/\\/g, '/').toLowerCase();
-      
+
       // Skip if file is already in the target location
       if (sourceNormalized === targetNormalized) {
         continue;
@@ -89,7 +89,7 @@ async function organizeByType(files: FileInfo[], rootPath: string): Promise<File
         console.warn(`Skipping ${file.path}: target would be inside source directory`);
         continue;
       }
-      
+
       operations.push({
         sourcePath: file.path,
         targetPath,

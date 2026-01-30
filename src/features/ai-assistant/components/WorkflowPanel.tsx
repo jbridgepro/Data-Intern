@@ -323,7 +323,7 @@ export const WorkflowPanel = ({
                 className="flex items-center gap-2 p-2 rounded-md bg-slate-50 dark:bg-slate-800/50 text-xs cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700/50"
                 onClick={() => setSelectedWorkflow(wf)}
               >
-                {getCategoryIcon(wf.category)}
+                {getCategoryIcon(wf.category || 'custom')}
                 <span className="flex-1 truncate">{wf.name}</span>
                 {wf.isFavorite && <Star className="h-3 w-3 text-yellow-500 fill-yellow-500" />}
               </div>
@@ -470,7 +470,7 @@ export const WorkflowPanel = ({
                 <div className="p-4 bg-white dark:bg-slate-800/50 rounded-lg border">
                   <div className="flex items-start justify-between mb-3">
                     <div className="flex items-center gap-2">
-                      {getCategoryIcon(selectedWorkflow.category)}
+                      {getCategoryIcon(selectedWorkflow.category || 'custom')}
                       <h3 className="font-semibold">{selectedWorkflow.name}</h3>
                     </div>
                     <div className="flex items-center gap-1">
@@ -668,7 +668,7 @@ export const WorkflowPanel = ({
                       onClick={() => setSelectedWorkflow(workflow)}
                     >
                       <div className="flex items-center gap-2 mb-1">
-                        {getCategoryIcon(workflow.category)}
+                        {getCategoryIcon(workflow.category || 'custom')}
                         <span className="font-medium flex-1 truncate">{workflow.name}</span>
                         {workflow.isFavorite && (
                           <Star className="h-4 w-4 text-yellow-500 fill-yellow-500" />

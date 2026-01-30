@@ -10,8 +10,8 @@ import Anthropic from '@anthropic-ai/sdk';
 import type { AISettings, FileOperation, DirectoryAnalysis, DEFAULT_CONTEXT_SETTINGS } from '../types';
 import { getAllTools, executeTool, type ToolContext, type ToolResult } from './toolsRegistry';
 import { executeMCPTool, isMCPTool, parseMCPToolName } from './mcpIntegration';
-import { 
-  isFileCreationRequest, 
+import {
+  isFileCreationRequest,
   parseFileCreationRequest,
   isCompositeCreationRequest,
   parseCompositeCreationRequest,
@@ -30,12 +30,12 @@ import {
   testOllamaConnection,
   listOllamaModels
 } from './ollamaService';
-import { 
-  ContextManager, 
+import {
+  ContextManager,
   contextManager,
-  type ConversationMessage 
+  type ConversationMessage
 } from './contextManager';
-import { 
+import {
   openRouterService,
   type OpenRouterMessage,
 } from './openRouterService';
@@ -325,7 +325,7 @@ async function processCommandWithAnthropicProvider(
     // Use intelligent context selection instead of simple slice
     if (conversationHistory && conversationHistory.length > 0) {
       // Convert to ConversationMessage format with enriched metadata
-      const enrichedHistory: ConversationMessage[] = conversationHistory.map((msg, idx) => 
+      const enrichedHistory: ConversationMessage[] = conversationHistory.map((msg, idx) =>
         contextManager.enrichMessageMetadata({
           id: `msg-${idx}`,
           role: msg.role,
@@ -336,7 +336,7 @@ async function processCommandWithAnthropicProvider(
 
       // Select relevant context based on current command
       const contextResult = contextManager.selectRelevantContext(enrichedHistory, command);
-      
+
       // Log context selection for debugging (can be removed in production)
       if (contextResult.truncated) {
         console.log(`[Context Manager] Selected ${contextResult.messagesIncluded}/${contextResult.totalMessagesConsidered} messages`);
@@ -451,7 +451,7 @@ async function processCommandWithAnthropicProvider(
           cleanedText = cleanedText.replace(/```json[\s\S]*?```/gi, '');
           cleanedText = cleanedText.replace(/```[\s\S]*?tool:[\s\S]*?```/gi, '');
           cleanedText = cleanedText.replace(/tool:\s*\w+[\s\S]*?path:[\s\S]*?content:[\s\S]*?/gi, '');
-          
+
           // Remove JSON code blocks that show tool definitions
           cleanedText = cleanedText.replace(/```json\s*\{[^}]*"tool"[^}]*\}[^`]*```/gi, '');
           cleanedText = cleanedText.replace(/```json\s*\{[\s\S]*?"tool"[\s\S]*?\}[\s\S]*?```/gi, '');
@@ -482,7 +482,7 @@ async function processCommandWithAnthropicProvider(
           // Remove phrases that mention JSON without showing it
           cleanedText = cleanedText.replace(/I can (show|provide|give) you the JSON (command|format|block)[\s\S]*?\./gi, '');
           cleanedText = cleanedText.replace(/Here's (a|an) (sample|example) (JSON )?(command|format|block)[\s\S]*?\./gi, '');
-          
+
           // Remove descriptions of actions instead of executing
           cleanedText = cleanedText.replace(/I'll help[\s\S]*?(?=I'll|I will|The|Please|Before|Creating|I've|Created|These)/gi, '');
           cleanedText = cleanedText.replace(/First, let's[\s\S]*?(?=I'll|I will|The|Please|Before|Creating|I've|Created|These)/gi, '');
@@ -643,14 +643,14 @@ async function processCommandWithAnthropicProvider(
 
       // Check if we should continue (AI might want to use more tools)
       const lastContent = response.content[response.content.length - 1];
-      
+
       // If AI only provided text describing actions instead of using tools, force tool execution
       if (lastContent.type === 'text' && response.content.length === 1) {
         const textContent = lastContent.text.toLowerCase();
         const wantsFileCreation = /(?:create|make|generate).*(?:document|file|files)/i.test(command);
         const describesAction = /(?:I'll|I will|I'm going to|let me|I'll help|first, let's|to create)/i.test(textContent);
         const showsJson = /(?:json|tool:|path:|content:)/i.test(textContent);
-        
+
         // If AI is describing file creation instead of executing, force it to use tools
         if (wantsFileCreation && (describesAction || showsJson) && toolExecutions.length === 0) {
           console.warn('[AI] AI described actions instead of executing tools. Forcing tool execution...');
@@ -663,7 +663,7 @@ async function processCommandWithAnthropicProvider(
           iteration++;
           continue;
         }
-        
+
         // AI finished with a text response, we're done
         break;
       }
@@ -676,7 +676,7 @@ async function processCommandWithAnthropicProvider(
     // BUT: Skip fallback if file type clarification is needed - let AI ask the user
     const executedToolsCountAnthropic = toolExecutions.length;
     const requiresClarificationAnthropic = needsFileTypeClarification(command);
-    
+
     if (requiresClarificationAnthropic) {
       console.log('[Anthropic Fallback] File type clarification needed - skipping auto-execution');
       // Don't auto-execute - the AI should ask the user what file type they want
@@ -685,13 +685,13 @@ async function processCommandWithAnthropicProvider(
     else if (isCompositeCreationRequest(command)) {
       const createdFolders = toolExecutions.filter((e) => e.tool === 'create_directory' || e.tool === 'folder_creation_tab');
       const createdFiles = toolExecutions.filter((e) => e.tool === 'write_file_content');
-      
+
       if ((createdFolders.length === 0 || createdFiles.length === 0) && context.currentDirectory) {
         console.log('[Anthropic Fallback] Composite creation request detected, executing directly...');
         const parsed = parseCompositeCreationRequest(command);
         const createdItems: string[] = [];
         const errors: string[] = [];
-        
+
         for (const folder of parsed.folders) {
           const folderPath = `${context.currentDirectory}/${folder.folderName}`;
           const folderRes = await executeTool('create_directory', { path: folderPath }, context);
@@ -703,14 +703,14 @@ async function processCommandWithAnthropicProvider(
             result: folderRes,
           };
           toolExecutions.push(folderExec);
-          
+
           if (folderRes.success) {
             createdItems.push(`📁 ${folder.folderName}`);
-            
+
             for (const file of folder.filesInside) {
               const filePath = `${folderPath}/${file.fileName}`;
-              const fileRes = await executeTool('write_file_content', 
-                { path: filePath, content: file.content || '', createDirectories: true }, 
+              const fileRes = await executeTool('write_file_content',
+                { path: filePath, content: file.content || '', createDirectories: true },
                 context
               );
               const fileExec: ToolExecutionInfo = {
@@ -721,7 +721,7 @@ async function processCommandWithAnthropicProvider(
                 result: fileRes,
               };
               toolExecutions.push(fileExec);
-              
+
               if (fileRes.success) {
                 createdItems.push(`  📄 ${file.fileName}`);
               } else if (fileRes.error) {
@@ -732,7 +732,7 @@ async function processCommandWithAnthropicProvider(
             errors.push(folderRes.error);
           }
         }
-        
+
         if (createdItems.length > 0) {
           finalResponse = `Done! I created:\n${createdItems.join('\n')}`;
           if (errors.length > 0) finalResponse += `\n\n⚠️ Some errors: ${errors.join('; ')}`;
@@ -742,7 +742,7 @@ async function processCommandWithAnthropicProvider(
     // Check for folder-only creation requests (folders don't need type clarification)
     else if (isFolderCreationRequest(command) && !isCompositeCreationRequest(command)) {
       const createdFolders = toolExecutions.filter((e) => e.tool === 'create_directory' || e.tool === 'folder_creation_tab');
-      
+
       if (createdFolders.length === 0 && context.currentDirectory) {
         console.log('[Anthropic Fallback] Folder creation request detected, executing directly...');
         const folder = parseFolderCreationRequest(command);
@@ -757,7 +757,7 @@ async function processCommandWithAnthropicProvider(
             result: res,
           };
           toolExecutions.push(exec);
-          
+
           if (res.success) {
             finalResponse = `Done! I created the folder: 📁 ${folder.folderName}`;
           } else {
@@ -804,7 +804,7 @@ async function processCommandWithAnthropicProvider(
         }
       }
     }
-    
+
     // If we executed fallback tools and there's no response yet, generate one
     if (toolExecutions.length > executedToolsCountAnthropic && (!finalResponse || finalResponse.trim().length === 0)) {
       finalResponse = 'Done! I completed the operation.';
@@ -816,13 +816,13 @@ async function processCommandWithAnthropicProvider(
     // Trigger when: no tools executed OR all tools failed
     const allToolsFailedAnthropic = toolExecutions.length > 0 && toolExecutions.every(t => t.status === 'error');
     const noSuccessfulToolsAnthropic = toolExecutions.length === 0 || allToolsFailedAnthropic;
-    
+
     if (requiresClarificationAnthropic && noSuccessfulToolsAnthropic) {
       const alreadyAskingAnthropic = /what\s+(?:type|kind|format)\s+(?:of\s+)?(?:file|document)/i.test(finalResponse);
-      
+
       if (!alreadyAskingAnthropic) {
         console.log('[Anthropic Fallback] Clarification needed and no successful tools. Forcing clarification prompt.');
-        
+
         // Parse the request to get folder and file names for the clarification message
         if (isCompositeCreationRequest(command)) {
           const parsed = parseCompositeCreationRequest(command);
@@ -890,12 +890,12 @@ async function processCommandWithAnthropicProvider(
     // Remove references to JSON in explanations
     cleanedResponse = cleanedResponse.replace(/The (JSON|command) (format|block|structure) (is|would be|looks like):[\s\S]*?```json[\s\S]*?```/gi, '');
     cleanedResponse = cleanedResponse.replace(/In JSON format:[\s\S]*?```json[\s\S]*?```/gi, '');
-    
+
     // Remove ALL JSON blocks and tool parameter displays
     cleanedResponse = cleanedResponse.replace(/```json[\s\S]*?```/gi, '');
     cleanedResponse = cleanedResponse.replace(/```[\s\S]*?tool:[\s\S]*?```/gi, '');
     cleanedResponse = cleanedResponse.replace(/tool:\s*\w+[\s\S]*?path:[\s\S]*?content:[\s\S]*?/gi, '');
-    
+
     // Remove phrases about executing or showing commands
     cleanedResponse = cleanedResponse.replace(/Here's the JSON command block:[\s\S]*?/gi, '');
     cleanedResponse = cleanedResponse.replace(/Here's a JSON command block:[\s\S]*?/gi, '');
@@ -911,7 +911,7 @@ async function processCommandWithAnthropicProvider(
     cleanedResponse = cleanedResponse.replace(/Let's extract[\s\S]*?(?=I'll|I will|The|Please|Before|Creating|I've|Created)/gi, '');
     cleanedResponse = cleanedResponse.replace(/To create these files[\s\S]*?(?=I'll|I will|The|Please|Before|Creating|I've|Created)/gi, '');
     cleanedResponse = cleanedResponse.replace(/Here are the steps:[\s\S]*?(?=I'll|I will|The|Please|Before|Creating|I've|Created)/gi, '');
-    
+
     // Remove descriptions of what will be done instead of doing it
     cleanedResponse = cleanedResponse.replace(/Here's what I'll do:[\s\S]*?(?=I'll|I will|The|Please|Before|Creating|I've|Created)/gi, '');
     cleanedResponse = cleanedResponse.replace(/Here's what will happen:[\s\S]*?(?=I'll|I will|The|Please|Before|Creating|I've|Created)/gi, '');
@@ -920,7 +920,7 @@ async function processCommandWithAnthropicProvider(
     cleanedResponse = cleanedResponse.replace(/I'll write[\s\S]*?(?=I'll|I will|The|Please|Before|Creating|I've|Created)/gi, '');
     cleanedResponse = cleanedResponse.replace(/I'll call[\s\S]*?(?=I'll|I will|The|Please|Before|Creating|I've|Created)/gi, '');
     cleanedResponse = cleanedResponse.replace(/These two files will be[\s\S]*?(?=I'll|I will|The|Please|Before|Creating|I've|Created)/gi, '');
-    
+
     // Remove "Please confirm" phrases when tools should execute immediately
     cleanedResponse = cleanedResponse.replace(/Please confirm before proceeding\.[\s\S]*?/gi, '');
     cleanedResponse = cleanedResponse.replace(/Please respond with[\s\S]*?(?=I'll|I will|The|Before|Creating|I've|Created)/gi, '');
@@ -939,7 +939,7 @@ async function processCommandWithAnthropicProvider(
     if (wantsFileCreation) {
       const writeFileExecutions = toolExecutions.filter(exec => exec.tool === 'write_file_content');
       const successfulExecutions = writeFileExecutions.filter(exec => exec.status === 'success' && exec.result?.success);
-      
+
       // If AI claims success but no tools executed, replace with error
       if (writeFileExecutions.length === 0) {
         console.warn('[AI] File creation requested but no write_file_content tools were executed');
@@ -1080,7 +1080,7 @@ async function processCommandWithOpenRouterProvider(
 ): Promise<{ content: string; operation?: FileOperation; metadata?: any }> {
   // Ensure OpenRouter is configured
   const openRouterSettings = settings.openRouter || DEFAULT_OPENROUTER_SETTINGS;
-  
+
   if (!openRouterSettings.apiKey) {
     return {
       content: 'Please configure your OpenRouter API key in settings to use AI-powered features.',
@@ -1154,7 +1154,11 @@ async function processCommandWithOpenRouterProvider(
     const toolExecutor = async (toolName: string, args: Record<string, any>): Promise<any> => {
       // Check if this is an MCP tool
       if (isMCPTool(toolName)) {
-        const { server, tool } = parseMCPToolName(toolName);
+        const parsed = parseMCPToolName(toolName);
+        if (!parsed) {
+          throw new Error(`Invalid MCP tool name: ${toolName}`);
+        }
+        const { server, tool } = parsed;
         const result = await executeMCPTool(server, tool, args);
         return result;
       }
@@ -1183,8 +1187,8 @@ async function processCommandWithOpenRouterProvider(
 
     // Extract the final content
     const assistantMessage = response.choices[0]?.message;
-    const content = typeof assistantMessage?.content === 'string' 
-      ? assistantMessage.content 
+    const content = typeof assistantMessage?.content === 'string'
+      ? assistantMessage.content
       : '';
 
     // Build metadata
@@ -1212,26 +1216,26 @@ async function processCommandWithOpenRouterProvider(
 
   } catch (error: any) {
     console.error('OpenRouter processing error:', error);
-    
+
     // Check for specific error types
     if (error.message?.includes('API key')) {
       return {
         content: 'OpenRouter API key is invalid or expired. Please check your API key in settings.',
       };
     }
-    
+
     if (error.message?.includes('rate limit')) {
       return {
         content: 'OpenRouter rate limit reached. Please wait a moment and try again.',
       };
     }
-    
+
     if (error.message?.includes('cancelled')) {
       return {
         content: 'Request was cancelled.',
       };
     }
-    
+
     return {
       content: `I encountered an error with OpenRouter: ${error.message || 'Unknown error'}. Please try again.`,
     };
@@ -1378,7 +1382,7 @@ function buildUserPrompt(
   const wantsDocuments = /(?:create|make|generate)\s+(?:two|three|four|five|\d+)?\s*(?:document|documents|file|files|\.docx|\.txt|\.md)/i.test(command);
   const hasSpecificFileNames = /(?:called|named|titled|with name|with the name|one that says|that says|the first|the second|the other)/i.test(command);
   const mentionsDocuments = /(?:document|documents|\.docx|\.txt|\.md|text file)/i.test(command);
-  
+
   if ((wantsDocuments || mentionsDocuments || hasSpecificFileNames) && !isConfirmation && !isRejection) {
     prompt += `\n\n=== CRITICAL: FILE CREATION REQUEST ===\n`;
     prompt += `The user wants to create FILES/DOCUMENTS. This is NON-DESTRUCTIVE - NO CONFIRMATION NEEDED.\n\n`;

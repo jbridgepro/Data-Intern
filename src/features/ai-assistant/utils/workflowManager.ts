@@ -695,7 +695,7 @@ export class WorkflowManager {
       for (let i = 0; i < workflow.steps.length; i++) {
         const step = workflow.steps[i];
         execution.currentStep = i;
-        
+
         // Update step status to running
         execution.stepResults[i].status = 'running';
         execution.stepResults[i].startedAt = Date.now();
@@ -731,13 +731,13 @@ export class WorkflowManager {
           attempts++;
           try {
             const result = await toolExecutor(step.toolName, resolvedConfig);
-            
+
             execution.stepResults[i].status = 'success';
             execution.stepResults[i].output = result;
             execution.stepResults[i].completedAt = Date.now();
-            execution.stepResults[i].duration = 
-              execution.stepResults[i].completedAt - (execution.stepResults[i].startedAt || 0);
-            
+            execution.stepResults[i].duration =
+              (execution.stepResults[i].completedAt || Date.now()) - (execution.stepResults[i].startedAt || 0);
+
             if (result?.data?.count) {
               execution.totalFilesAffected += result.data.count;
               execution.stepResults[i].filesAffected = result.data.count;
@@ -748,7 +748,7 @@ export class WorkflowManager {
           } catch (error: any) {
             lastError = error;
             execution.stepResults[i].retryAttempts = attempts;
-            
+
             if (attempts < maxAttempts && step.retry?.delayMs) {
               await this.delay(step.retry.delayMs);
             }
@@ -759,8 +759,8 @@ export class WorkflowManager {
           execution.stepResults[i].status = 'failed';
           execution.stepResults[i].error = lastError.message;
           execution.stepResults[i].completedAt = Date.now();
-          execution.stepResults[i].duration = 
-            execution.stepResults[i].completedAt - (execution.stepResults[i].startedAt || 0);
+          execution.stepResults[i].duration =
+            (execution.stepResults[i].completedAt || Date.now()) - (execution.stepResults[i].startedAt || 0);
 
           if (!step.continueOnError) {
             throw lastError;
@@ -779,11 +779,11 @@ export class WorkflowManager {
       // Update workflow stats
       this.updateWorkflowStats(workflow.id, execution);
 
-      auditLogger.info('tool_execution', 'workflow_completed', 
+      auditLogger.info('tool_execution', 'workflow_completed',
         `Completed workflow: ${workflow.name} (${execution.totalFilesAffected} files affected)`, {
-          duration: execution.duration,
-          metadata: { workflowId, executionId: execution.id },
-        }
+        duration: execution.duration,
+        metadata: { workflowId, executionId: execution.id },
+      }
       );
 
     } catch (error: any) {
@@ -795,11 +795,11 @@ export class WorkflowManager {
       // Update workflow stats
       this.updateWorkflowStats(workflow.id, execution);
 
-      auditLogger.error('tool_execution', 'workflow_failed', 
+      auditLogger.error('tool_execution', 'workflow_failed',
         `Workflow failed: ${workflow.name}`, error.message, {
-          duration: execution.duration,
-          metadata: { workflowId, executionId: execution.id },
-        }
+        duration: execution.duration,
+        metadata: { workflowId, executionId: execution.id },
+      }
       );
     }
 
@@ -822,7 +822,7 @@ export class WorkflowManager {
 
     this.currentExecution.status = 'cancelled';
     this.currentExecution.completedAt = Date.now();
-    this.currentExecution.duration = 
+    this.currentExecution.duration =
       this.currentExecution.completedAt - this.currentExecution.startedAt;
 
     this.notifyExecutionListeners(this.currentExecution);
@@ -880,18 +880,18 @@ export class WorkflowManager {
     // Validate steps
     workflow.steps?.forEach((step, index) => {
       if (!step.toolName) {
-        errors.push({ 
-          stepId: step.id, 
-          field: 'toolName', 
-          message: `Step ${index + 1}: Tool name is required` 
+        errors.push({
+          stepId: step.id,
+          field: 'toolName',
+          message: `Step ${index + 1}: Tool name is required`
         });
       }
 
       if (!step.name?.trim()) {
-        warnings.push({ 
-          stepId: step.id, 
-          field: 'name', 
-          message: `Step ${index + 1}: Name is recommended` 
+        warnings.push({
+          stepId: step.id,
+          field: 'name',
+          message: `Step ${index + 1}: Name is recommended`
         });
       }
     });
@@ -899,9 +899,9 @@ export class WorkflowManager {
     // Validate parameters
     workflow.parameters?.forEach(param => {
       if (param.required && param.defaultValue === undefined && param.defaultValue === '') {
-        warnings.push({ 
-          field: `parameter.${param.name}`, 
-          message: `Required parameter "${param.label}" has no default value` 
+        warnings.push({
+          field: `parameter.${param.name}`,
+          message: `Required parameter "${param.label}" has no default value`
         });
       }
     });
@@ -937,8 +937,8 @@ export class WorkflowManager {
           return parameters[paramName] ?? match;
         });
       } else if (Array.isArray(value)) {
-        result[key] = value.map(item => 
-          typeof item === 'object' 
+        result[key] = value.map(item =>
+          typeof item === 'object'
             ? this.substituteParameters(item, parameters, execution)
             : item
         );
@@ -993,10 +993,10 @@ export class WorkflowManager {
 
     const newRunCount = workflow.runCount + 1;
     const isSuccess = execution.status === 'completed';
-    
+
     // Calculate new average execution time
     const prevAvg = workflow.avgExecutionTime || 0;
-    const newAvg = execution.duration 
+    const newAvg = execution.duration
       ? ((prevAvg * workflow.runCount) + execution.duration) / newRunCount
       : prevAvg;
 
@@ -1158,7 +1158,7 @@ export class WorkflowManager {
    * Exports workflows to JSON.
    */
   exportWorkflows(workflowIds?: string[]): string {
-    const toExport = workflowIds 
+    const toExport = workflowIds
       ? this.workflows.filter(w => workflowIds.includes(w.id))
       : this.workflows;
 

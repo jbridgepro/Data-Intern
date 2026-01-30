@@ -13,13 +13,13 @@
  * - And many more...
  */
 
-import type { 
-  OpenRouterSettings, 
+import type {
+  OpenRouterSettings,
   OpenRouterModel,
   ToolDefinition,
 } from '../types';
-import { 
-  DEFAULT_OPENROUTER_SETTINGS, 
+import {
+  DEFAULT_OPENROUTER_SETTINGS,
   OPENROUTER_POPULAR_MODELS,
 } from '../types';
 import { auditLogger } from './auditLogger';
@@ -233,7 +233,7 @@ export class OpenRouterService {
       }
 
       const data: OpenRouterModelsResponse = await response.json();
-      
+
       this.cachedModels = data.data.map(model => ({
         id: model.id,
         name: model.name,
@@ -345,7 +345,7 @@ export class OpenRouterService {
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
         const errorMessage = errorData.error?.message || `HTTP ${response.status}`;
-        
+
         auditLogger.logAIResponse(model, false, Date.now() - startTime, {
           error: errorMessage,
         });
@@ -360,7 +360,7 @@ export class OpenRouterService {
 
       // Handle regular response
       const data: OpenRouterResponse = await response.json();
-      
+
       const duration = Date.now() - startTime;
       auditLogger.logAIResponse(model, true, duration, {
         toolsUsed: data.choices[0]?.message?.tool_calls?.map(tc => tc.function.name),
@@ -371,7 +371,7 @@ export class OpenRouterService {
 
     } catch (error: any) {
       const duration = Date.now() - startTime;
-      
+
       if (error.name === 'AbortError') {
         auditLogger.logAIResponse(model, false, duration, { error: 'Request cancelled' });
         throw new Error('Request cancelled');
@@ -393,7 +393,7 @@ export class OpenRouterService {
   ): Promise<OpenRouterResponse> {
     const reader = response.body!.getReader();
     const decoder = new TextDecoder();
-    
+
     let fullContent = '';
     let toolCalls: OpenRouterToolCall[] = [];
     let finishReason: string = 'stop';
@@ -418,9 +418,11 @@ export class OpenRouterService {
             actualModel = parsed.model;
 
             for (const choice of parsed.choices) {
-              if (choice.delta.content) {
+              if (typeof choice.delta.content === 'string') {
                 fullContent += choice.delta.content;
                 onChunk?.(choice.delta.content);
+              } else if (Array.isArray(choice.delta.content)) {
+                // Handle array content if necessary, or just ignore
               }
 
               if (choice.delta.tool_calls) {
@@ -524,7 +526,7 @@ export class OpenRouterService {
       for (const toolCall of assistantMessage.tool_calls) {
         callCount++;
         const toolName = toolCall.function.name;
-        
+
         let args: Record<string, any>;
         try {
           args = JSON.parse(toolCall.function.arguments);

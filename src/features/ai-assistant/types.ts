@@ -82,6 +82,7 @@ export interface DuplicateAnalysis {
   duplicateGroups: DuplicateGroup[];
   totalWastedSpace: number;
   summary: string;
+  organizationScore?: number;
 }
 
 export interface DuplicateGroup {
@@ -93,6 +94,28 @@ export interface DuplicateGroup {
 
 // AI Provider types
 export type AIProvider = 'anthropic' | 'ollama' | 'openrouter';
+
+/**
+ * Tool Definition
+ */
+export interface ToolDefinition {
+  name: string;
+  description: string;
+  category?: string;
+  input_schema: any;
+  examples?: string[];
+  handler?: (args: any, context: any) => Promise<any>;
+}
+
+// Organization Configuration
+export interface OrganizationConfig {
+  strategy: 'by-type' | 'by-date' | 'by-name' | 'custom' | 'by-project' | 'by-size';
+  options?: Record<string, any>;
+  customRules?: Record<string, string>; // extension -> folder
+  dateFormat?: string;
+  createFolders?: boolean;
+  flatten?: boolean;
+}
 
 // ============================================================================
 // OPENROUTER TYPES
@@ -425,7 +448,7 @@ export const TOOL_METADATA: Record<string, { displayName: string; description: s
   'compare_directories': { displayName: 'Compare Directories', description: 'Compares two directories', riskLevel: 'safe', canDisable: true },
   'list_agents': { displayName: 'List Agents', description: 'Lists available automation agents', riskLevel: 'safe', canDisable: true },
   'get_agent_status': { displayName: 'Get Agent Status', description: 'Gets status of an agent', riskLevel: 'safe', canDisable: true },
-  
+
   // Moderate tools - create or modify with minimal risk
   'write_file_content': { displayName: 'Write File', description: 'Creates or overwrites a file', riskLevel: 'moderate', canDisable: true },
   'create_directory': { displayName: 'Create Directory', description: 'Creates a new folder', riskLevel: 'moderate', canDisable: true },
@@ -439,7 +462,7 @@ export const TOOL_METADATA: Record<string, { displayName: string; description: s
   'start_agent': { displayName: 'Start Agent', description: 'Starts an automation agent', riskLevel: 'moderate', canDisable: true },
   'stop_agent': { displayName: 'Stop Agent', description: 'Stops a running agent', riskLevel: 'moderate', canDisable: true },
   'configure_agent': { displayName: 'Configure Agent', description: 'Configures agent settings', riskLevel: 'moderate', canDisable: true },
-  
+
   // Destructive tools - can permanently delete or modify data
   'delete_files': { displayName: 'Delete Files', description: 'Permanently deletes files', riskLevel: 'destructive', canDisable: true },
   'batch_delete': { displayName: 'Batch Delete', description: 'Deletes multiple files at once', riskLevel: 'destructive', canDisable: true },
@@ -514,7 +537,7 @@ export const DEFAULT_OPERATION_HISTORY_SETTINGS: OperationHistorySettings = {
 /**
  * Types of file operations that can be tracked and undone.
  */
-export type OperationType = 
+export type OperationType =
   | 'create_file'
   | 'delete_file'
   | 'move_file'
@@ -680,7 +703,7 @@ export const AUDIT_LOG_LEVEL_VALUES: Record<AuditLogLevel, number> = {
 /**
  * Categories of audit log entries.
  */
-export type AuditLogCategory = 
+export type AuditLogCategory =
   | 'tool_execution'
   | 'file_operation'
   | 'ai_request'
@@ -800,376 +823,203 @@ export interface AuditLogExport {
   exportedAt: number;
   /** Number of entries exported */
   entryCount: number;
+  /** Exported data (as string) */
+  data: string;
   /** Filter used for export */
   filter?: AuditLogFilter;
-  /** Exported data as string */
-  data: string;
 }
 
 // ============================================================================
-// WORKFLOW TEMPLATE TYPES
+// WORKFLOW AUTOMATION TYPES
 // ============================================================================
 
 /**
- * Workflow template settings.
+ * Workflow step types.
+ */
+export type WorkflowStepType =
+  | 'tool_execution'
+  | 'file_operation'
+  | 'create_files'
+  | 'create_folders'
+  | 'organize_files'
+  | 'rename_files'
+  | 'copy_files'
+  | 'delete_files'
+  | 'analyze_directory'
+  | 'organize'
+  | 'transform'
+  | 'backup'
+  | 'analyze';
+
+/**
+ * Workflow execution frequency/schedule.
+ */
+export type WorkflowSchedule = {
+  type: 'once' | 'daily' | 'weekly' | 'cron';
+  value?: string; // e.g., '0 0 * * *' for daily
+  lastRun?: number;
+  nextRun?: number;
+};
+
+/**
+ * Workflow step definition.
+ */
+export interface WorkflowStep {
+  id: string;
+  name: string;
+  type: WorkflowStepType;
+  toolName: string;
+  config: Record<string, any>; // Tool arguments with template variables {{var}}
+  condition?: string; // Optional js expression
+  retry?: {
+    maxAttempts: number;
+    delayMs: number;
+  };
+  continueOnError?: boolean;
+  enabled?: boolean;
+  order: number;
+}
+
+/**
+ * Workflow Parameter definition.
+ */
+export interface WorkflowParameter {
+  name: string;
+  label: string;
+  type: 'string' | 'number' | 'boolean' | 'directory' | 'file' | 'select' | 'pattern';
+  defaultValue?: any;
+  description?: string;
+  required?: boolean;
+  placeholder?: string;
+  options?: Array<{ value: string; label: string }>;
+}
+
+/**
+ * Workflow definition.
+ */
+export interface Workflow {
+  id: string;
+  name: string;
+  description: string;
+  category?: WorkflowCategory;
+  visibility?: 'private' | 'public' | 'shared' | 'builtin';
+  tags: string[];
+  steps: WorkflowStep[];
+  parameters: WorkflowParameter[];
+  schedule?: WorkflowSchedule;
+  createdAt: number;
+  updatedAt: number;
+  lastRunAt?: number;
+  runCount: number;
+  avgExecutionTime?: number;
+  successRate?: number;
+  version: string;
+  isFavorite: boolean;
+  isEnabled: boolean;
+  icon?: string;
+  color?: string;
+  author?: string;
+}
+
+/**
+ * Workflow execution statuses.
+ */
+export type WorkflowExecutionStatus = 'running' | 'completed' | 'failed' | 'cancelled';
+
+/**
+ * Workflow execution instance.
+ */
+export interface WorkflowExecution {
+  id: string;
+  workflowId: string;
+  workflowName: string;
+  status: WorkflowExecutionStatus;
+  parameters: Record<string, any>;
+  stepResults: WorkflowStepResult[];
+  currentStep: number;
+  totalSteps: number;
+  startedAt: number;
+  completedAt?: number;
+  duration?: number;
+  error?: string;
+  logs?: string[];
+  totalFilesAffected: number;
+  triggeredBy: 'user' | 'schedule' | 'api';
+}
+
+/**
+ * Result of a single workflow step.
+ */
+export interface WorkflowStepResult {
+  stepId: string;
+  stepName: string;
+  status: 'pending' | 'running' | 'success' | 'failed' | 'skipped';
+  output?: any;
+  error?: string;
+  startedAt?: number;
+  completedAt?: number;
+  duration?: number;
+  retryAttempts?: number;
+  filesAffected?: number;
+}
+
+/**
+ * Workflow settings.
  */
 export interface WorkflowSettings {
-  /** Enable workflow features (default: true) */
-  enabled: boolean;
-  /** Maximum workflows to store (default: 50) */
   maxWorkflows: number;
-  /** Persist workflows to localStorage (default: true) */
   persistWorkflows: boolean;
-  /** Show workflow suggestions in chat (default: true) */
-  showSuggestions: boolean;
-  /** Auto-save workflows from repeated operations (default: false) */
-  autoSaveRepeated: boolean;
-  /** Minimum uses before suggesting auto-save (default: 3) */
-  autoSaveThreshold: number;
+  enableScheduling: boolean;
+  maxConcurrentExecutions: number;
+  enabled?: boolean;
+  autoSaveRepeated?: boolean;
+  showSuggestions?: boolean;
 }
 
 /**
  * Default workflow settings.
  */
 export const DEFAULT_WORKFLOW_SETTINGS: WorkflowSettings = {
-  enabled: true,
   maxWorkflows: 50,
   persistWorkflows: true,
-  showSuggestions: true,
+  enableScheduling: false,
+  maxConcurrentExecutions: 1,
+  enabled: true,
   autoSaveRepeated: false,
-  autoSaveThreshold: 3,
+  showSuggestions: true,
 };
 
 /**
- * Workflow template categories.
- */
-export type WorkflowCategory = 
-  | 'organization'
-  | 'cleanup'
-  | 'backup'
-  | 'migration'
-  | 'analysis'
-  | 'development'
-  | 'custom';
-
-/**
- * Workflow visibility/sharing status.
- */
-export type WorkflowVisibility = 'private' | 'shared' | 'builtin';
-
-/**
- * Complete workflow template definition.
- */
-export interface Workflow {
-  /** Unique identifier */
-  id: string;
-  /** Display name */
-  name: string;
-  /** Detailed description */
-  description: string;
-  /** Category for organization */
-  category: WorkflowCategory;
-  /** Icon name for UI */
-  icon?: string;
-  /** Color theme for UI */
-  color?: string;
-  /** Visibility status */
-  visibility: WorkflowVisibility;
-  /** Tags for searching */
-  tags: string[];
-  /** Workflow steps to execute */
-  steps: WorkflowStep[];
-  /** User-configurable parameters */
-  parameters: WorkflowParameter[];
-  /** Optional schedule configuration */
-  schedule?: WorkflowSchedule;
-  /** Creation timestamp */
-  createdAt: number;
-  /** Last modified timestamp */
-  updatedAt: number;
-  /** Last execution timestamp */
-  lastRunAt?: number;
-  /** Total execution count */
-  runCount: number;
-  /** Average execution time (ms) */
-  avgExecutionTime?: number;
-  /** Success rate (0-100) */
-  successRate?: number;
-  /** Author/creator */
-  author?: string;
-  /** Version number */
-  version: string;
-  /** Whether workflow is favorited */
-  isFavorite: boolean;
-  /** Whether workflow is enabled */
-  isEnabled: boolean;
-}
-
-/**
- * Step types for workflow operations.
- */
-export type WorkflowStepType = 
-  | 'analyze_directory'
-  | 'organize_files'
-  | 'rename_files'
-  | 'move_files'
-  | 'copy_files'
-  | 'delete_files'
-  | 'create_folders'
-  | 'create_files'
-  | 'find_replace'
-  | 'execute_command'
-  | 'wait'
-  | 'condition'
-  | 'loop'
-  | 'notify';
-
-/**
- * Individual workflow step.
- */
-export interface WorkflowStep {
-  /** Unique identifier */
-  id: string;
-  /** Step type/operation */
-  type: WorkflowStepType;
-  /** Display name */
-  name: string;
-  /** Step description */
-  description?: string;
-  /** Tool to execute */
-  toolName: string;
-  /** Tool configuration/arguments */
-  config: Record<string, any>;
-  /** Whether step is enabled */
-  enabled: boolean;
-  /** Continue workflow on error */
-  continueOnError: boolean;
-  /** Retry configuration */
-  retry?: {
-    maxAttempts: number;
-    delayMs: number;
-  };
-  /** Conditional execution expression */
-  condition?: string;
-  /** Timeout in milliseconds */
-  timeoutMs?: number;
-  /** Step order index */
-  order: number;
-}
-
-/**
- * Parameter types for workflow configuration.
- */
-export type WorkflowParameterType = 
-  | 'string'
-  | 'number'
-  | 'boolean'
-  | 'path'
-  | 'directory'
-  | 'file'
-  | 'select'
-  | 'multi-select'
-  | 'pattern';
-
-/**
- * User-configurable workflow parameter.
- */
-export interface WorkflowParameter {
-  /** Parameter key/name */
-  name: string;
-  /** Display label */
-  label: string;
-  /** Parameter type */
-  type: WorkflowParameterType;
-  /** Default value */
-  defaultValue: any;
-  /** Current value (set at runtime) */
-  value?: any;
-  /** Parameter description */
-  description: string;
-  /** Whether parameter is required */
-  required: boolean;
-  /** Validation pattern (for string type) */
-  validation?: string;
-  /** Options for select/multi-select types */
-  options?: Array<{ value: string; label: string }>;
-  /** Placeholder text */
-  placeholder?: string;
-  /** Group name for organizing parameters */
-  group?: string;
-}
-
-/**
- * Workflow schedule configuration.
- */
-export interface WorkflowSchedule {
-  /** Whether schedule is active */
-  enabled: boolean;
-  /** Schedule frequency */
-  frequency: 'once' | 'daily' | 'weekly' | 'monthly' | 'on-change';
-  /** Execution time (HH:MM format) */
-  time?: string;
-  /** Day of week (0-6, Sunday = 0) for weekly */
-  dayOfWeek?: number;
-  /** Day of month (1-31) for monthly */
-  dayOfMonth?: number;
-  /** Specific date for 'once' */
-  date?: string;
-  /** Path to watch for 'on-change' */
-  watchPath?: string;
-  /** Last scheduled execution */
-  lastScheduledRun?: number;
-  /** Next scheduled execution */
-  nextScheduledRun?: number;
-}
-
-/**
- * Workflow execution status.
- */
-export type WorkflowExecutionStatus = 
-  | 'pending'
-  | 'running'
-  | 'paused'
-  | 'completed'
-  | 'failed'
-  | 'cancelled';
-
-/**
- * Individual step execution result.
- */
-export interface WorkflowStepResult {
-  /** Step ID */
-  stepId: string;
-  /** Step name */
-  stepName: string;
-  /** Execution status */
-  status: 'pending' | 'running' | 'success' | 'failed' | 'skipped';
-  /** Start timestamp */
-  startedAt?: number;
-  /** End timestamp */
-  completedAt?: number;
-  /** Duration in milliseconds */
-  duration?: number;
-  /** Output data from tool execution */
-  output?: any;
-  /** Error message if failed */
-  error?: string;
-  /** Number of files affected */
-  filesAffected?: number;
-  /** Retry attempts made */
-  retryAttempts?: number;
-}
-
-/**
- * Complete workflow execution record.
- */
-export interface WorkflowExecution {
-  /** Unique execution ID */
-  id: string;
-  /** Workflow ID being executed */
-  workflowId: string;
-  /** Workflow name */
-  workflowName: string;
-  /** Execution status */
-  status: WorkflowExecutionStatus;
-  /** Parameter values used */
-  parameters: Record<string, any>;
-  /** Individual step results */
-  stepResults: WorkflowStepResult[];
-  /** Current step index (0-based) */
-  currentStep: number;
-  /** Total steps */
-  totalSteps: number;
-  /** Start timestamp */
-  startedAt: number;
-  /** End timestamp */
-  completedAt?: number;
-  /** Total duration (ms) */
-  duration?: number;
-  /** Total files affected */
-  totalFilesAffected: number;
-  /** Error message if failed */
-  error?: string;
-  /** Triggered by (user, schedule, api) */
-  triggeredBy: 'user' | 'schedule' | 'api';
-  /** User who triggered (if applicable) */
-  triggeredByUser?: string;
-}
-
-/**
- * Pre-built workflow template.
- */
-export interface WorkflowTemplate {
-  /** Template ID */
-  id: string;
-  /** Template name */
-  name: string;
-  /** Description */
-  description: string;
-  /** Category */
-  category: WorkflowCategory;
-  /** Icon */
-  icon: string;
-  /** Workflow definition */
-  workflow: Omit<Workflow, 'id' | 'createdAt' | 'updatedAt' | 'lastRunAt' | 'runCount'>;
-}
-
-/**
- * Workflow validation result.
+ * Validation result for workflows.
  */
 export interface WorkflowValidation {
-  /** Whether workflow is valid */
   valid: boolean;
-  /** Validation errors */
-  errors: Array<{
-    stepId?: string;
-    field: string;
-    message: string;
-  }>;
-  /** Validation warnings */
-  warnings: Array<{
-    stepId?: string;
-    field: string;
-    message: string;
-  }>;
+  errors: Array<{ stepId?: string; field?: string; message: string }>;
+  warnings: Array<{ stepId?: string; field?: string; message: string }>;
 }
 
-// Organization strategy types
-export type OrganizationStrategy =
-  | 'by-type'
-  | 'by-date'
-  | 'by-project'
-  | 'by-size'
-  | 'custom';
+export type WorkflowChangeListener = (workflows: Workflow[]) => void;
+export type ExecutionListener = (execution: WorkflowExecution) => void;
+export type WorkflowCategory = 'custom' | 'template' | 'system' | 'organization' | 'cleanup' | 'backup' | 'development' | string;
 
-export interface OrganizationConfig {
-  strategy: OrganizationStrategy;
-  options: {
-    dateFormat?: 'year-month' | 'quarter' | 'year' | 'custom';
-    sizeThresholds?: {
-      small: number;
-      medium: number;
-      large: number;
-    };
-    customRules?: string; // Natural language rules
-  };
+export interface WorkflowTemplate {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  icon?: string;
+  workflow: Partial<Workflow>;
 }
 
-// Contextual Tool Widget types
 export interface ToolWidgetData {
   id: string;
-  toolName: string; // e.g., 'folder_creation_tab', 'file_creation_tab', etc.
-  params: Record<string, any>; // Tool-specific parameters
-  description?: string; // Human-readable description
-  confidence?: number; // 0-1, how confident the AI is about these parameters
-  confirmed?: boolean; // Whether user has confirmed this widget
-  sourceMessageId?: string; // ID of the message that generated this widget
-  lastUpdated?: Date; // When the widget was last updated
+  lastUpdated: Date;
+  toolName: string;
+  sourceMessageId: string;
+  params: Record<string, any>;
+  confirmed?: boolean;
+  confidence?: number;
+  description?: string;
 }
 
-export interface WidgetUpdate {
-  widgetId: string;
-  updates: Partial<ToolWidgetData>;
-  source: 'ai' | 'user'; // Who made the update
-  messageId?: string; // Related message ID if from chat
-}
+export type WidgetUpdate = Partial<ToolWidgetData>;

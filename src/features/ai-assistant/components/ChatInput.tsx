@@ -566,7 +566,7 @@ export const ChatInput = ({
                                 Anthropic Claude (Cloud)
                               </span>
                             </div>
-                            {provider === "anthropic" && <Check className="h-4 w-4 text-blue-500 shrink-0" />}
+                            {(provider as string) === "anthropic" && <Check className="h-4 w-4 text-blue-500 shrink-0" />}
                           </button>
                           <button
                             onClick={() => {
@@ -581,7 +581,7 @@ export const ChatInput = ({
                                 OpenRouter (Multi-Model)
                               </span>
                             </div>
-                            {provider === "openrouter" && <Check className="h-4 w-4 text-blue-500 shrink-0" />}
+                            {(provider as string) === "openrouter" && <Check className="h-4 w-4 text-blue-500 shrink-0" />}
                           </button>
                         </div>
                         <div className="border-t border-slate-200 dark:border-slate-800" />
@@ -781,7 +781,7 @@ export const ChatInput = ({
                               <Globe className="h-4 w-4 text-blue-500 dark:text-blue-400" />
                               <span className="text-slate-900 dark:text-slate-100">OpenRouter (Multi-Model)</span>
                             </div>
-                            {provider === "openrouter" && <Check className="h-4 w-4 text-blue-500 shrink-0" />}
+                            {(provider as string) === "openrouter" && <Check className="h-4 w-4 text-blue-500 shrink-0" />}
                           </button>
                           <button
                             onClick={() => { onProviderChange("ollama"); setShowModelMenu(false); }}
@@ -791,7 +791,7 @@ export const ChatInput = ({
                               <Server className="h-4 w-4 text-purple-500 dark:text-purple-400" />
                               <span className="text-slate-900 dark:text-slate-100">Ollama (Local LLM)</span>
                             </div>
-                            {provider === "ollama" && <Check className="h-4 w-4 text-purple-500 shrink-0" />}
+                            {(provider as string) === "ollama" && <Check className="h-4 w-4 text-purple-500 shrink-0" />}
                           </button>
                         </div>
                         <div className="border-t border-slate-200 dark:border-slate-800" />

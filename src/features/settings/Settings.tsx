@@ -1020,7 +1020,7 @@ export const Settings = ({
 
   const renderAppearanceSection = () => (
     <div
-      ref={(el) => (sectionRefs.current["appearance"] = el)}
+      ref={(el) => { sectionRefs.current["appearance"] = el; }}
       id="appearance"
       className="scroll-mt-6"
     >
@@ -1125,7 +1125,7 @@ export const Settings = ({
 
   const renderGeneralSection = () => (
     <div
-      ref={(el) => (sectionRefs.current["general"] = el)}
+      ref={(el) => { sectionRefs.current["general"] = el; }}
       id="general"
       className="scroll-mt-6"
     >
@@ -1187,7 +1187,7 @@ export const Settings = ({
 
   const renderFileMapperSection = () => (
     <div
-      ref={(el) => (sectionRefs.current["file-mapper"] = el)}
+      ref={(el) => { sectionRefs.current["file-mapper"] = el; }}
       id="file-mapper"
       className="scroll-mt-6"
     >
@@ -1290,7 +1290,7 @@ export const Settings = ({
 
   const renderFileCopySection = () => (
     <div
-      ref={(el) => (sectionRefs.current["file-copy"] = el)}
+      ref={(el) => { sectionRefs.current["file-copy"] = el; }}
       id="file-copy"
       className="scroll-mt-6"
     >
@@ -1374,7 +1374,7 @@ export const Settings = ({
 
   const renderFolderCreationSection = () => (
     <div
-      ref={(el) => (sectionRefs.current["folder-creation"] = el)}
+      ref={(el) => { sectionRefs.current["folder-creation"] = el; }}
       id="folder-creation"
       className="scroll-mt-6"
     >
@@ -1439,7 +1439,7 @@ export const Settings = ({
 
   const renderEmptyFilesSection = () => (
     <div
-      ref={(el) => (sectionRefs.current["empty-files"] = el)}
+      ref={(el) => { sectionRefs.current["empty-files"] = el; }}
       id="empty-files"
       className="scroll-mt-6"
     >
@@ -1520,7 +1520,7 @@ export const Settings = ({
 
   const renderTerminalSection = () => (
     <div
-      ref={(el) => (sectionRefs.current["terminal"] = el)}
+      ref={(el) => { sectionRefs.current["terminal"] = el; }}
       id="terminal"
       className="scroll-mt-6"
     >
@@ -1617,7 +1617,7 @@ export const Settings = ({
 
   const renderFindReplaceSection = () => (
     <div
-      ref={(el) => (sectionRefs.current["find-replace"] = el)}
+      ref={(el) => { sectionRefs.current["find-replace"] = el; }}
       id="find-replace"
       className="scroll-mt-6"
     >
@@ -1691,7 +1691,7 @@ export const Settings = ({
 
   const renderSqlExportSection = () => (
     <div
-      ref={(el) => (sectionRefs.current["sql-export"] = el)}
+      ref={(el) => { sectionRefs.current["sql-export"] = el; }}
       id="sql-export"
       className="scroll-mt-6"
     >
@@ -1817,7 +1817,7 @@ export const Settings = ({
 
   const renderAIAssistantSection = () => (
     <div
-      ref={(el) => (sectionRefs.current["ai-assistant"] = el)}
+      ref={(el) => { sectionRefs.current["ai-assistant"] = el; }}
       id="ai-assistant"
       className="scroll-mt-6"
     >
@@ -2345,7 +2345,7 @@ export const Settings = ({
 
   const renderKeyboardSection = () => (
     <div
-      ref={(el) => (sectionRefs.current["keyboard"] = el)}
+      ref={(el) => { sectionRefs.current["keyboard"] = el; }}
       id="keyboard"
       className="scroll-mt-6"
     >
@@ -2423,7 +2423,7 @@ export const Settings = ({
 
   const renderNotificationsSection = () => (
     <div
-      ref={(el) => (sectionRefs.current["notifications"] = el)}
+      ref={(el) => { sectionRefs.current["notifications"] = el; }}
       id="notifications"
       className="scroll-mt-6"
     >
@@ -2461,7 +2461,7 @@ export const Settings = ({
 
   const renderSafetySection = () => (
     <div
-      ref={(el) => (sectionRefs.current["safety"] = el)}
+      ref={(el) => { sectionRefs.current["safety"] = el; }}
       id="safety"
       className="scroll-mt-6"
     >
@@ -2501,7 +2501,7 @@ export const Settings = ({
 
   const renderStorageSection = () => (
     <div
-      ref={(el) => (sectionRefs.current["storage"] = el)}
+      ref={(el) => { sectionRefs.current["storage"] = el; }}
       id="storage"
       className="scroll-mt-6"
     >
@@ -2605,7 +2605,7 @@ export const Settings = ({
 
   const renderAboutSection = () => (
     <div
-      ref={(el) => (sectionRefs.current["about"] = el)}
+      ref={(el) => { sectionRefs.current["about"] = el; }}
       id="about"
       className="scroll-mt-6"
     >

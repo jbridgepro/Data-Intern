@@ -72,7 +72,7 @@ const TOOL_PATTERNS: ToolPattern[] = [
             .map((s) => s.trim())
             .filter((s) => s.length > 0);
         }
-        
+
         // Pattern 2: "with folders 1, 2, 3" or "with subfolders 1, 2, 3"
         const subfolderPattern2 = /(?:with|add|create)\s+(?:folders?|subfolders?|subdirectories?)\s+(?:named|:)?\s*([A-Za-z0-9\s,]+)/i;
         const match2 = text.match(subfolderPattern2);
@@ -82,7 +82,7 @@ const TOOL_PATTERNS: ToolPattern[] = [
             .map((s) => s.trim())
             .filter((s) => s.length > 0);
         }
-        
+
         // Pattern 3: "folders being 1, 2, 3" (from user's request)
         const subfolderPattern3 = /(?:folders?|subfolders?)\s+(?:being|are|named)\s+([A-Za-z0-9\s,]+)/i;
         const match3 = text.match(subfolderPattern3);
@@ -92,7 +92,7 @@ const TOOL_PATTERNS: ToolPattern[] = [
             .map((s) => s.trim())
             .filter((s) => s.length > 0);
         }
-        
+
         return [];
       },
     },
@@ -122,21 +122,21 @@ const TOOL_PATTERNS: ToolPattern[] = [
         if (sqlPattern.test(text)) {
           return ["sql"];
         }
-        
+
         // Pattern 2: ".ext files" or "ext files"
         const extPattern = /\.?([a-z0-9]+)\s+files?/i;
         const matches = Array.from(text.matchAll(new RegExp(extPattern, "gi")));
         if (matches.length > 0) {
           return matches.map((m) => m[1].toLowerCase());
         }
-        
+
         // Pattern 3: "files with extension .ext"
         const extPattern2 = /extension\s+\.?([a-z0-9]+)/i;
         const match2 = text.match(extPattern2);
         if (match2) {
           return [match2[1].toLowerCase()];
         }
-        
+
         return ["txt"]; // Default
       },
       baseName: (text: string) => {
@@ -147,21 +147,21 @@ const TOOL_PATTERNS: ToolPattern[] = [
         if (match1) {
           return match1[1];
         }
-        
+
         // Pattern 2: "Justin files" or "Justin SQL files"
         const namePattern = /^([A-Za-z0-9_]+)\s+(?:sql\s+)?files?/i;
         const match2 = text.match(namePattern);
         if (match2) {
           return match2[1];
         }
-        
+
         // Pattern 3: "Make all the Sql files start with Justin"
         const makePattern = /(?:make|all|the)\s+(?:.*?)\s+(?:start\s+with|named)\s+([A-Za-z0-9_]+)/i;
         const match3 = text.match(makePattern);
         if (match3) {
           return match3[1];
         }
-        
+
         return "";
       },
     },
@@ -238,7 +238,7 @@ const TOOL_PATTERNS: ToolPattern[] = [
           }
           return name;
         }
-        
+
         // Pattern 2: "one that says, Justins, New Idea" - extract the name (handles commas in name)
         const saysPattern = /(?:one|file|document|the first|the second)\s+(?:that\s+)?(?:says|named|called)\s*[,:]\s*["']?([^"']+)["']?/i;
         const match2 = text.match(saysPattern);
@@ -252,7 +252,7 @@ const TOOL_PATTERNS: ToolPattern[] = [
           }
           return name;
         }
-        
+
         // Pattern 3: "Justins, New Idea" - direct name extraction
         const directPattern = /^([A-Za-z][^,]+(?:,\s*[^,]+)*)/;
         const match3 = text.match(directPattern);
@@ -263,7 +263,7 @@ const TOOL_PATTERNS: ToolPattern[] = [
           }
           return name;
         }
-        
+
         return "";
       },
       content: (text: string) => {
@@ -326,6 +326,7 @@ export function extractWidgetFromMessage(
           description: generateDescription(pattern.toolName, params),
           confidence,
           sourceMessageId: message.id,
+          lastUpdated: new Date(),
         };
       }
     }
@@ -345,9 +346,8 @@ function generateDescription(
     case "folder_creation_tab":
       const folderNames = params.folderNames || [];
       const count = folderNames.length;
-      return `Create ${count} folder${count !== 1 ? "s" : ""}${
-        params.rootPath ? ` in ${params.rootPath.split("/").pop()}` : ""
-      }`;
+      return `Create ${count} folder${count !== 1 ? "s" : ""}${params.rootPath ? ` in ${params.rootPath.split("/").pop()}` : ""
+        }`;
 
     case "file_creation_tab":
       const fileCount = params.count || 1;
@@ -368,14 +368,12 @@ function generateDescription(
       return `Create file "${fileName}"${hasContent ? ` with content` : ""}`;
 
     case "file_copy_tab":
-      return `Copy files from ${params.sourcePath || "source"} to ${
-        params.destinationPath || "destination"
-      }`;
+      return `Copy files from ${params.sourcePath || "source"} to ${params.destinationPath || "destination"
+        }`;
 
     case "find_replace_tab":
-      return `Find "${params.searchQuery || ""}"${
-        params.replaceQuery ? ` and replace with "${params.replaceQuery}"` : ""
-      }`;
+      return `Find "${params.searchQuery || ""}"${params.replaceQuery ? ` and replace with "${params.replaceQuery}"` : ""
+        }`;
 
     default:
       return "Tool operation";
@@ -429,7 +427,7 @@ export function updateWidgetFromNaturalLanguage(
         updatedParams.baseName = baseName;
       }
     }
-    
+
     if (text.includes("extension") || text.match(/\b(sql|txt|log|json|py|js|ts)\s+files?/i)) {
       const extensions = pattern.paramExtractors.extensions?.(text);
       if (extensions && extensions.length > 0) {

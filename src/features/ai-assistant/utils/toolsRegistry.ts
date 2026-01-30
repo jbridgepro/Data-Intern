@@ -20,11 +20,11 @@ import { executeFileOperation } from './fileOperations';
 import { toolOrchestrator } from './toolOrchestrator';
 import { directoryCache } from './directoryCache';
 import { toolPermissionManager } from './toolPermissions';
-import { 
-  operationHistory, 
-  createFileChange, 
+import {
+  operationHistory,
+  createFileChange,
   getOperationTypeFromTool,
-  isOperationUndoable 
+  isOperationUndoable
 } from './operationHistory';
 import { auditLogger } from './auditLogger';
 import { workflowManager, BUILTIN_TEMPLATES } from './workflowManager';
@@ -1519,12 +1519,12 @@ async function normalizePath(path: string | undefined, currentDirectory: string)
   if (!path) {
     return currentDirectory || null;
   }
-  
+
   // If path is already absolute, return as-is
   if (path.startsWith('/') || path.startsWith('~')) {
     return path;
   }
-  
+
   // Resolve relative to current directory
   if (currentDirectory) {
     try {
@@ -1533,7 +1533,7 @@ async function normalizePath(path: string | undefined, currentDirectory: string)
       return null;
     }
   }
-  
+
   return path;
 }
 
@@ -1549,7 +1549,7 @@ async function validatePath(path: string, mustBeDirectory: boolean = false): Pro
         error: `Path does not exist: ${path}`,
       };
     }
-    
+
     if (mustBeDirectory) {
       const pathStat = await stat(path);
       // Note: Tauri's stat doesn't directly tell us if it's a directory
@@ -1563,7 +1563,7 @@ async function validatePath(path: string, mustBeDirectory: boolean = false): Pro
         };
       }
     }
-    
+
     return { valid: true };
   } catch (error: any) {
     return {
@@ -1579,20 +1579,20 @@ async function validatePath(path: string, mustBeDirectory: boolean = false): Pro
 function validateRequiredParams(args: Record<string, any>, required: string[]): ValidationResult {
   const missing: string[] = [];
   const warnings: string[] = [];
-  
+
   for (const param of required) {
     if (args[param] === undefined || args[param] === null || args[param] === '') {
       missing.push(param);
     }
   }
-  
+
   if (missing.length > 0) {
     return {
       valid: false,
       error: `Missing required parameters: ${missing.join(', ')}`,
     };
   }
-  
+
   return { valid: true, warnings };
 }
 
@@ -1648,7 +1648,7 @@ export async function executeTool(
   context: ToolContext
 ): Promise<ToolResult> {
   const startTime = Date.now();
-  
+
   // Initialize audit logger if settings provided
   if (context.settings.auditLog) {
     auditLogger.updateSettings(context.settings.auditLog);
@@ -1659,7 +1659,7 @@ export async function executeTool(
     toolName,
     toolArgs: args,
   });
-  
+
   try {
     // Update permission manager with current settings
     if (context.settings.toolPermissions) {
@@ -1668,19 +1668,19 @@ export async function executeTool(
 
     // Check tool permissions before execution
     const permissionCheck = toolPermissionManager.checkPermission(toolName);
-    
+
     // Log permission check
     auditLogger.logPermissionCheck(toolName, permissionCheck.allowed, permissionCheck.reason);
-    
+
     if (!permissionCheck.allowed) {
       console.log(`[executeTool] Tool "${toolName}" is disabled: ${permissionCheck.reason}`);
-      
+
       // Log permission denial
       auditLogger.warn('permission', 'permission_denied', `Tool "${toolName}" execution blocked`, {
         toolName,
         metadata: { reason: permissionCheck.reason },
       });
-      
+
       return createErrorResult(
         `This operation is not permitted. ${permissionCheck.reason}`,
         [`Tool "${toolPermissionManager.getToolDisplayName(toolName)}" is currently disabled in settings.`]
@@ -1701,931 +1701,681 @@ export async function executeTool(
         return createErrorResult(validation.error || 'Invalid parameters', validation.warnings);
       }
     }
-    
+
     const path = args.path || context.currentDirectory;
 
-  try {
-    switch (toolName) {
-      case 'analyze_directory': {
-        const normalizedPath = await normalizePath(path, context.currentDirectory);
-        if (!normalizedPath) {
-          return createErrorResult('No directory path provided. Please select a directory first.');
-        }
-        
-        const pathValidation = await validatePath(normalizedPath, true);
-        if (!pathValidation.valid) {
-          return createErrorResult(pathValidation.error || 'Invalid directory path');
-        }
-        
-        // Check cache settings and update cache configuration
-        const cacheEnabled = context.settings.cacheSettings?.enabled ?? true;
-        const cacheTTL = context.settings.cacheSettings?.ttlSeconds ?? 300;
-        const cacheMaxEntries = context.settings.cacheSettings?.maxEntries ?? 50;
-        
-        directoryCache.updateConfig({
-          enabled: cacheEnabled,
-          ttlSeconds: cacheTTL,
-          maxEntries: cacheMaxEntries,
-        });
-        
-        // Try to get from cache first
-        const cachedAnalysis = directoryCache.get(normalizedPath);
-        if (cachedAnalysis) {
+    try {
+      switch (toolName) {
+        case 'analyze_directory': {
+          const normalizedPath = await normalizePath(path, context.currentDirectory);
+          if (!normalizedPath) {
+            return createErrorResult('No directory path provided. Please select a directory first.');
+          }
+
+          const pathValidation = await validatePath(normalizedPath, true);
+          if (!pathValidation.valid) {
+            return createErrorResult(pathValidation.error || 'Invalid directory path');
+          }
+
+          // Check cache settings and update cache configuration
+          const cacheEnabled = context.settings.cacheSettings?.enabled ?? true;
+          const cacheTTL = context.settings.cacheSettings?.ttlSeconds ?? 300;
+          const cacheMaxEntries = context.settings.cacheSettings?.maxEntries ?? 50;
+
+          directoryCache.updateConfig({
+            enabled: cacheEnabled,
+            ttlSeconds: cacheTTL,
+            maxEntries: cacheMaxEntries,
+          });
+
+          // Try to get from cache first
+          const cachedAnalysis = directoryCache.get(normalizedPath);
+          if (cachedAnalysis) {
+            const cacheStats = directoryCache.getStats();
+            console.log(`[analyze_directory] Cache hit! Hit rate: ${cacheStats.hitRate.toFixed(1)}%`);
+
+            return createSuccessResult(
+              {
+                totalFiles: cachedAnalysis.totalFiles,
+                totalSize: cachedAnalysis.totalSize,
+                organizationScore: cachedAnalysis.organizationScore,
+                fileTypes: cachedAnalysis.fileTypes.slice(0, 10),
+                summary: cachedAnalysis.summary,
+                path: normalizedPath,
+                cached: true,
+                cacheAge: Math.round((Date.now() - (directoryCache.getEntryInfo(normalizedPath)?.timestamp || Date.now())) / 1000),
+              },
+              undefined,
+              { executionTime: 0, itemsProcessed: cachedAnalysis.totalFiles, fromCache: true }
+            );
+          }
+
+          // Cache miss - perform fresh analysis
+          const { result: analysis, executionTime } = await executeWithTiming(
+            () => analyzeDirectoryFiles(normalizedPath),
+            toolName
+          );
+
+          // Store in cache
+          directoryCache.set(normalizedPath, analysis);
+
           const cacheStats = directoryCache.getStats();
-          console.log(`[analyze_directory] Cache hit! Hit rate: ${cacheStats.hitRate.toFixed(1)}%`);
-          
+          console.log(`[analyze_directory] Cached result. Entries: ${cacheStats.entries}, Hit rate: ${cacheStats.hitRate.toFixed(1)}%`);
+
           return createSuccessResult(
             {
-              totalFiles: cachedAnalysis.totalFiles,
-              totalSize: cachedAnalysis.totalSize,
-              organizationScore: cachedAnalysis.organizationScore,
-              fileTypes: cachedAnalysis.fileTypes.slice(0, 10),
-              summary: cachedAnalysis.summary,
+              totalFiles: analysis.totalFiles,
+              totalSize: analysis.totalSize,
+              organizationScore: analysis.organizationScore,
+              fileTypes: analysis.fileTypes.slice(0, 10),
+              summary: analysis.summary,
               path: normalizedPath,
-              cached: true,
-              cacheAge: Math.round((Date.now() - (directoryCache.getEntryInfo(normalizedPath)?.timestamp || Date.now())) / 1000),
+              cached: false,
             },
             undefined,
-            { executionTime: 0, itemsProcessed: cachedAnalysis.totalFiles, fromCache: true }
+            { executionTime, itemsProcessed: analysis.totalFiles, fromCache: false }
           );
         }
-        
-        // Cache miss - perform fresh analysis
-        const { result: analysis, executionTime } = await executeWithTiming(
-          () => analyzeDirectoryFiles(normalizedPath),
-          toolName
-        );
-        
-        // Store in cache
-        directoryCache.set(normalizedPath, analysis);
-        
-        const cacheStats = directoryCache.getStats();
-        console.log(`[analyze_directory] Cached result. Entries: ${cacheStats.entries}, Hit rate: ${cacheStats.hitRate.toFixed(1)}%`);
-        
-        return createSuccessResult(
-          {
-            totalFiles: analysis.totalFiles,
-            totalSize: analysis.totalSize,
-            organizationScore: analysis.organizationScore,
-            fileTypes: analysis.fileTypes.slice(0, 10),
-            summary: analysis.summary,
-            path: normalizedPath,
-            cached: false,
-          },
-          undefined,
-          { executionTime, itemsProcessed: analysis.totalFiles, fromCache: false }
-        );
-      }
 
-      case 'organize_files': {
-        const normalizedPath = await normalizePath(path, context.currentDirectory);
-        if (!normalizedPath) {
-          return createErrorResult('No directory path provided. Please select a directory first.');
-        }
-        
-        const pathValidation = await validatePath(normalizedPath, true);
-        if (!pathValidation.valid) {
-          return createErrorResult(pathValidation.error || 'Invalid directory path');
-        }
-        
-        const config: OrganizationConfig = {
-          strategy: args.strategy || 'by-type',
-          options: {
-            dateFormat: args.dateFormat || 'year-month',
-          },
-        };
-        
-        const { result: operation, executionTime } = await executeWithTiming(
-          () => organizeFilesByStrategy(normalizedPath, config),
-          toolName
-        );
-        
-        return createSuccessResult(
-          {
-            description: operation.description,
-            fileCount: operation.files.length,
-            confidence: operation.confidence,
-            requiresConfirmation: operation.requiresConfirmation,
-            path: normalizedPath,
-            strategy: config.strategy,
-          },
-          operation,
-          { executionTime, itemsProcessed: operation.files.length }
-        );
-      }
-
-      case 'find_duplicates': {
-        const normalizedPath = await normalizePath(path, context.currentDirectory);
-        if (!normalizedPath) {
-          return createErrorResult('No directory path provided. Please select a directory first.');
-        }
-        
-        const pathValidation = await validatePath(normalizedPath, true);
-        if (!pathValidation.valid) {
-          return createErrorResult(pathValidation.error || 'Invalid directory path');
-        }
-        
-        const { result: duplicates, executionTime } = await executeWithTiming(
-          () => findDuplicateFiles(normalizedPath),
-          toolName
-        );
-        
-        return createSuccessResult(
-          {
-            totalDuplicates: duplicates.totalDuplicates,
-            duplicateGroups: duplicates.duplicateGroups.slice(0, 10),
-            totalWastedSpace: duplicates.totalWastedSpace,
-            summary: duplicates.summary,
-            path: normalizedPath,
-            totalGroups: duplicates.duplicateGroups.length,
-          },
-          undefined,
-          { executionTime, itemsProcessed: duplicates.totalDuplicates }
-        );
-      }
-
-      case 'rename_files': {
-        const normalizedPath = await normalizePath(path, context.currentDirectory);
-        if (!normalizedPath) {
-          return createErrorResult('No directory path provided. Please select a directory first.');
-        }
-        
-        const pathValidation = await validatePath(normalizedPath, true);
-        if (!pathValidation.valid) {
-          return createErrorResult(pathValidation.error || 'Invalid directory path');
-        }
-        
-        const patternMap: Record<string, string> = {
-          'date-prefix': 'Rename these files to include their creation date in YYYY-MM-DD format',
-          'snake-case': 'Rename these files to snake_case format',
-          'standardize': 'Standardize the naming of these files',
-          'clean': 'Clean up the filenames by removing special characters',
-        };
-        const renameCommand = patternMap[args.pattern] || patternMap['clean'];
-        
-        const { result: renameOperation, executionTime } = await executeWithTiming(
-          () => generateRenameOperation(normalizedPath, renameCommand),
-          toolName
-        );
-        
-        return createSuccessResult(
-          {
-            description: renameOperation.description,
-            fileCount: renameOperation.files.length,
-            confidence: renameOperation.confidence,
-            pattern: args.pattern,
-            path: normalizedPath,
-          },
-          renameOperation,
-          { executionTime, itemsProcessed: renameOperation.files.length }
-        );
-      }
-
-      case 'execute_operation':
-        if (!args.operation) {
-          return {
-            success: false,
-            error: 'No operation provided to execute.',
-          };
-        }
-        await executeFileOperation(args.operation, {
-          enableBackup: context.settings.enableBackup,
-          excludedFolders: context.settings.excludedFolders,
-        });
-        
-        // Invalidate cache for affected directories after file operations
-        if (args.operation.files && args.operation.files.length > 0) {
-          const affectedPaths = new Set<string>();
-          for (const file of args.operation.files) {
-            if (file.sourcePath) {
-              const sourceDir = file.sourcePath.substring(0, file.sourcePath.lastIndexOf('/'));
-              if (sourceDir) affectedPaths.add(sourceDir);
-            }
-            if (file.targetPath) {
-              const targetDir = file.targetPath.substring(0, file.targetPath.lastIndexOf('/'));
-              if (targetDir) affectedPaths.add(targetDir);
-            }
-          }
-          for (const dirPath of affectedPaths) {
-            directoryCache.invalidate(dirPath);
-          }
-          console.log(`[execute_operation] Invalidated ${affectedPaths.size} cached directories`);
-        }
-        
-        return {
-          success: true,
-          data: {
-            message: 'Operation executed successfully',
-          },
-        };
-
-      // Tab-based tools
-      case 'file_copy_tab': {
-        const copyResult = await toolOrchestrator.executeTool(
-          'file_copy',
-          args as FileCopyToolParams,
-          'File Copy operation'
-        );
-        // Invalidate cache for source and destination directories
-        if (copyResult.success) {
-          const copyArgs = args as FileCopyToolParams;
-          if (copyArgs.sourcePath) directoryCache.invalidate(copyArgs.sourcePath);
-          if (copyArgs.destinationPath) directoryCache.invalidate(copyArgs.destinationPath);
-        }
-        return copyResult;
-      }
-
-      case 'folder_creation_tab': {
-        const folderResult = await toolOrchestrator.executeTool(
-          'folder_creation',
-          args as FolderCreationToolParams,
-          'Folder Creation operation'
-        );
-        // Invalidate cache for the root path where folders were created
-        if (folderResult.success) {
-          const folderArgs = args as FolderCreationToolParams;
-          if (folderArgs.rootPath) directoryCache.invalidate(folderArgs.rootPath);
-        }
-        return folderResult;
-      }
-
-      case 'file_creation_tab': {
-        const fileResult = await toolOrchestrator.executeTool(
-          'file_creation',
-          args as FileCreationToolParams,
-          'File Creation operation'
-        );
-        // Invalidate cache for the root path where files were created
-        if (fileResult.success) {
-          const fileArgs = args as FileCreationToolParams;
-          if (fileArgs.rootPath) directoryCache.invalidate(fileArgs.rootPath);
-        }
-        return fileResult;
-      }
-
-      case 'find_replace_tab':
-        return await toolOrchestrator.executeTool(
-          'find_replace',
-          args as FindReplaceToolParams,
-          'Find & Replace operation'
-        );
-
-      // Agent management tools
-      case 'list_agents':
-        const agents = agentService.getAgents();
-        return {
-          success: true,
-          data: {
-            agents: agents.map(agent => ({
-              id: agent.id,
-              type: agent.type,
-              name: agent.name,
-              description: agent.description,
-              enabled: agent.enabled,
-              params: agent.params,
-            })),
-            total: agents.length,
-          },
-        };
-
-      case 'start_agent':
-        try {
-          const agent = agentService.getAgent(args.agentId);
-          if (!agent) {
-            return {
-              success: false,
-              error: `Agent with ID "${args.agentId}" not found. Use list_agents to see available agents.`,
-            };
+        case 'organize_files': {
+          const normalizedPath = await normalizePath(path, context.currentDirectory);
+          if (!normalizedPath) {
+            return createErrorResult('No directory path provided. Please select a directory first.');
           }
 
-          if (!agent.enabled) {
-            return {
-              success: false,
-              error: `Agent "${agent.name}" is not enabled. Enable it first using configure_agent.`,
-            };
+          const pathValidation = await validatePath(normalizedPath, true);
+          if (!pathValidation.valid) {
+            return createErrorResult(pathValidation.error || 'Invalid directory path');
           }
 
-          const state = agentService.getAgentState(args.agentId);
-          if (state?.status === 'running') {
-            return {
-              success: false,
-              error: `Agent "${agent.name}" is already running.`,
-            };
-          }
-
-          await agentService.startAgent(args.agentId);
-          return {
-            success: true,
-            data: {
-              message: `Agent "${agent.name}" started successfully`,
-              agentId: args.agentId,
-              agentName: agent.name,
+          const config: OrganizationConfig = {
+            strategy: args.strategy || 'by-type',
+            options: {
+              dateFormat: args.dateFormat || 'year-month',
             },
           };
-        } catch (error: any) {
-          return {
-            success: false,
-            error: error.message || 'Failed to start agent',
-          };
-        }
 
-      case 'stop_agent':
-        const agentToStop = agentService.getAgent(args.agentId);
-        if (!agentToStop) {
-          return {
-            success: false,
-            error: `Agent with ID "${args.agentId}" not found. Use list_agents to see available agents.`,
-          };
-        }
+          const { result: operation, executionTime } = await executeWithTiming(
+            () => organizeFilesByStrategy(normalizedPath, config),
+            toolName
+          );
 
-        const stateToStop = agentService.getAgentState(args.agentId);
-        if (!stateToStop || (stateToStop.status !== 'running' && stateToStop.status !== 'paused')) {
-          return {
-            success: false,
-            error: `Agent "${agentToStop.name}" is not currently running.`,
-          };
-        }
-
-        agentService.stopAgent(args.agentId);
-        return {
-          success: true,
-          data: {
-            message: `Agent "${agentToStop.name}" stopped`,
-            agentId: args.agentId,
-            agentName: agentToStop.name,
-          },
-        };
-
-      case 'get_agent_status':
-        const state = agentService.getAgentState(args.agentId);
-        const agentInfo = agentService.getAgent(args.agentId);
-        if (!agentInfo) {
-          return {
-            success: false,
-            error: `Agent with ID "${args.agentId}" not found`,
-          };
-        }
-        return {
-          success: true,
-          data: {
-            agent: {
-              id: agentInfo.id,
-              name: agentInfo.name,
-              type: agentInfo.type,
-              enabled: agentInfo.enabled,
+          return createSuccessResult(
+            {
+              description: operation.description,
+              fileCount: operation.files.length,
+              confidence: operation.confidence,
+              requiresConfirmation: operation.requiresConfirmation,
+              path: normalizedPath,
+              strategy: config.strategy,
             },
-            state: state ? {
-              status: state.status,
-              progress: state.progress,
-              startedAt: state.startedAt,
-              completedAt: state.completedAt,
-              error: state.error,
-              results: state.results,
-              recentLogs: state.logs.slice(-5),
-            } : null,
-          },
-        };
+            operation,
+            { executionTime, itemsProcessed: operation.files.length }
+          );
+        }
 
-      case 'configure_agent':
-        try {
-          const agentToConfigure = agentService.getAgent(args.agentId);
-          if (!agentToConfigure) {
+        case 'find_duplicates': {
+          const normalizedPath = await normalizePath(path, context.currentDirectory);
+          if (!normalizedPath) {
+            return createErrorResult('No directory path provided. Please select a directory first.');
+          }
+
+          const pathValidation = await validatePath(normalizedPath, true);
+          if (!pathValidation.valid) {
+            return createErrorResult(pathValidation.error || 'Invalid directory path');
+          }
+
+          const { result: duplicates, executionTime } = await executeWithTiming(
+            () => findDuplicateFiles(normalizedPath),
+            toolName
+          );
+
+          return createSuccessResult(
+            {
+              totalDuplicates: duplicates.totalDuplicates,
+              duplicateGroups: duplicates.duplicateGroups.slice(0, 10),
+              totalWastedSpace: duplicates.totalWastedSpace,
+              summary: duplicates.summary,
+              path: normalizedPath,
+              totalGroups: duplicates.duplicateGroups.length,
+            },
+            undefined,
+            { executionTime, itemsProcessed: duplicates.totalDuplicates }
+          );
+        }
+
+        case 'rename_files': {
+          const normalizedPath = await normalizePath(path, context.currentDirectory);
+          if (!normalizedPath) {
+            return createErrorResult('No directory path provided. Please select a directory first.');
+          }
+
+          const pathValidation = await validatePath(normalizedPath, true);
+          if (!pathValidation.valid) {
+            return createErrorResult(pathValidation.error || 'Invalid directory path');
+          }
+
+          const patternMap: Record<string, string> = {
+            'date-prefix': 'Rename these files to include their creation date in YYYY-MM-DD format',
+            'snake-case': 'Rename these files to snake_case format',
+            'standardize': 'Standardize the naming of these files',
+            'clean': 'Clean up the filenames by removing special characters',
+          };
+          const renameCommand = patternMap[args.pattern] || patternMap['clean'];
+
+          const { result: renameOperation, executionTime } = await executeWithTiming(
+            () => generateRenameOperation(normalizedPath, renameCommand),
+            toolName
+          );
+
+          return createSuccessResult(
+            {
+              description: renameOperation.description,
+              fileCount: renameOperation.files.length,
+              confidence: renameOperation.confidence,
+              pattern: args.pattern,
+              path: normalizedPath,
+            },
+            renameOperation,
+            { executionTime, itemsProcessed: renameOperation.files.length }
+          );
+        }
+
+        case 'execute_operation':
+          if (!args.operation) {
             return {
               success: false,
-              error: `Agent with ID "${args.agentId}" not found. Use list_agents to see available agents.`,
+              error: 'No operation provided to execute.',
             };
           }
+          await executeFileOperation(args.operation, {
+            enableBackup: context.settings.enableBackup,
+            excludedFolders: context.settings.excludedFolders,
+          });
 
-          const updates: any = {};
-          if (args.params !== undefined) {
-            // Merge with existing params
-            updates.params = { ...agentToConfigure.params, ...args.params };
-          }
-          if (args.enabled !== undefined) {
-            updates.enabled = args.enabled;
-            // Stop agent if disabling
-            if (!args.enabled) {
-              const currentState = agentService.getAgentState(args.agentId);
-              if (currentState?.status === 'running' || currentState?.status === 'paused') {
-                agentService.stopAgent(args.agentId);
+          // Invalidate cache for affected directories after file operations
+          if (args.operation.files && args.operation.files.length > 0) {
+            const affectedPaths = new Set<string>();
+            for (const file of args.operation.files) {
+              if (file.sourcePath) {
+                const sourceDir = file.sourcePath.substring(0, file.sourcePath.lastIndexOf('/'));
+                if (sourceDir) affectedPaths.add(sourceDir);
+              }
+              if (file.targetPath) {
+                const targetDir = file.targetPath.substring(0, file.targetPath.lastIndexOf('/'));
+                if (targetDir) affectedPaths.add(targetDir);
               }
             }
+            for (const dirPath of affectedPaths) {
+              directoryCache.invalidate(dirPath);
+            }
+            console.log(`[execute_operation] Invalidated ${affectedPaths.size} cached directories`);
           }
-
-          agentService.updateAgent(args.agentId, updates);
-          const configuredAgent = agentService.getAgent(args.agentId);
 
           return {
             success: true,
             data: {
-              message: `Agent "${configuredAgent?.name || args.agentId}" configured successfully`,
-              agent: {
-                id: configuredAgent?.id,
-                type: configuredAgent?.type,
-                name: configuredAgent?.name,
-                description: configuredAgent?.description,
-                enabled: configuredAgent?.enabled,
-                params: configuredAgent?.params,
-              },
+              message: 'Operation executed successfully',
             },
           };
-        } catch (error: any) {
-          return {
-            success: false,
-            error: error.message || 'Failed to configure agent',
-          };
+
+        // Tab-based tools
+        case 'file_copy_tab': {
+          const copyResult = await toolOrchestrator.executeTool(
+            'file_copy',
+            args as FileCopyToolParams,
+            'File Copy operation'
+          );
+          // Invalidate cache for source and destination directories
+          if (copyResult.success) {
+            const copyArgs = args as FileCopyToolParams;
+            if (copyArgs.sourcePath) directoryCache.invalidate(copyArgs.sourcePath);
+            if (copyArgs.destinationPath) directoryCache.invalidate(copyArgs.destinationPath);
+          }
+          return copyResult;
         }
 
-      // ClawdBot integration tools
-      case 'clawdbot_execute':
-        try {
-          // Check if ClawdBot is enabled in settings
-          if (!context.settings.clawdbotEnabled) {
-            return {
-              success: false,
-              error: 'ClawdBot is not enabled. Please enable it in Settings → Clawdbot Integration.',
-            };
+        case 'folder_creation_tab': {
+          const folderResult = await toolOrchestrator.executeTool(
+            'folder_creation',
+            args as FolderCreationToolParams,
+            'Folder Creation operation'
+          );
+          // Invalidate cache for the root path where folders were created
+          if (folderResult.success) {
+            const folderArgs = args as FolderCreationToolParams;
+            if (folderArgs.rootPath) directoryCache.invalidate(folderArgs.rootPath);
           }
-
-          const command = args.command as string;
-          const commandArgs = (args.args as string[]) || [];
-          const workDir = args.directory || context.currentDirectory || undefined;
-
-          // Build command arguments
-          const cmdArgs = [command, ...commandArgs];
-
-          // Use helper function to find and create ClawdBot command
-          const cmdResult = await createClawdBotCommand(cmdArgs, workDir);
-
-          if (!cmdResult) {
-            return {
-              success: false,
-              error: 'ClawdBot CLI not found. Make sure it is installed and in your PATH, or install it with: npm install -g clawdbot',
-            };
-          }
-
-          const result = await cmdResult.cmd.execute();
-
-          if (result.code === 0) {
-            return {
-              success: true,
-              data: {
-                message: `ClawdBot command "${command}" executed successfully`,
-                output: result.stdout,
-                command: command,
-                args: commandArgs,
-              },
-            };
-          } else {
-            return {
-              success: false,
-              error: `ClawdBot command failed: ${result.stderr || result.stdout || 'Unknown error'}`,
-              data: {
-                output: result.stdout,
-                error: result.stderr,
-              },
-            };
-          }
-        } catch (error: any) {
-          return {
-            success: false,
-            error: `Failed to execute ClawdBot command: ${error.message || 'Unknown error'}. Make sure ClawdBot CLI is installed and in your PATH.`,
-          };
+          return folderResult;
         }
 
-      case 'clawdhub_list_skills':
-        try {
-          // Use helper function to find and create ClawdBot command
-          const cmdResult = await createClawdBotCommand(['plugins', 'list', '--json']);
-
-          if (!cmdResult) {
-            return {
-              success: false,
-              error: 'ClawdBot CLI not found. Make sure it is installed and in your PATH, or install it with: npm install -g clawdbot',
-            };
+        case 'file_creation_tab': {
+          const fileResult = await toolOrchestrator.executeTool(
+            'file_creation',
+            args as FileCreationToolParams,
+            'File Creation operation'
+          );
+          // Invalidate cache for the root path where files were created
+          if (fileResult.success) {
+            const fileArgs = args as FileCreationToolParams;
+            if (fileArgs.rootPath) directoryCache.invalidate(fileArgs.rootPath);
           }
+          return fileResult;
+        }
 
-          // Try to get skills from ClawdBot plugins list
-          const result = await cmdResult.cmd.execute();
+        case 'find_replace_tab':
+          return await toolOrchestrator.executeTool(
+            'find_replace',
+            args as FindReplaceToolParams,
+            'Find & Replace operation'
+          );
 
-          if (result.code === 0) {
-            try {
-              // Clean ANSI escape codes
-              const cleanOutput = result.stdout.replace(/\u001b\[.*?m/g, '');
-              const plugins = JSON.parse(cleanOutput);
+        // Agent management tools
+        case 'list_agents':
+          const agents = agentService.getAgents();
+          return {
+            success: true,
+            data: {
+              agents: agents.map(agent => ({
+                id: agent.id,
+                type: agent.type,
+                name: agent.name,
+                description: agent.description,
+                enabled: agent.enabled,
+                params: agent.params,
+              })),
+              total: agents.length,
+            },
+          };
 
-              return {
-                success: true,
-                data: {
-                  skills: Array.isArray(plugins) ? plugins.map((p: any) => ({
-                    name: p.name,
-                    description: p.description,
-                    enabled: p.enabled,
-                    source: p.source,
-                    origin: p.origin,
-                  })) : [],
-                  total: Array.isArray(plugins) ? plugins.length : 0,
-                },
-              };
-            } catch (parseError) {
+        case 'start_agent':
+          try {
+            const agent = agentService.getAgent(args.agentId);
+            if (!agent) {
               return {
                 success: false,
-                error: 'Failed to parse ClawdBot plugins output. Make sure ClawdBot is properly installed.',
+                error: `Agent with ID "${args.agentId}" not found. Use list_agents to see available agents.`,
               };
             }
-          } else {
-            return {
-              success: false,
-              error: `Failed to list skills: ${result.stderr || 'Unknown error'}`,
-            };
-          }
-        } catch (error: any) {
-          return {
-            success: false,
-            error: `Failed to list ClawdHub skills: ${error.message || 'Unknown error'}. Make sure ClawdBot CLI is installed.`,
-          };
-        }
 
-      case 'clawdhub_install_skill':
-        try {
-          const skillName = args.skillName as string;
-          if (!skillName) {
-            return {
-              success: false,
-              error: 'Skill name is required',
-            };
-          }
+            if (!agent.enabled) {
+              return {
+                success: false,
+                error: `Agent "${agent.name}" is not enabled. Enable it first using configure_agent.`,
+              };
+            }
 
-          // Find ClawdHub path
-          const clawdhubPath = await findClawdHubPath();
+            const state = agentService.getAgentState(args.agentId);
+            if (state?.status === 'running') {
+              return {
+                success: false,
+                error: `Agent "${agent.name}" is already running.`,
+              };
+            }
 
-          if (!clawdhubPath) {
-            return {
-              success: false,
-              error: 'ClawdHub CLI not found. Make sure it is installed and in your PATH, or install it with: npm install -g clawdhub',
-            };
-          }
-
-          // Use clawdhub to install the skill
-          // Use sh -c to ensure $HOME expansion works
-          let installCmd;
-          if (clawdhubPath === 'clawdhub') {
-            installCmd = Command.create('sh', ['-c', `clawdhub install "${skillName}" --workdir "$HOME/clawd"`]);
-          } else {
-            installCmd = Command.create('sh', ['-c', `${clawdhubPath} install "${skillName}" --workdir "$HOME/clawd"`]);
-          }
-
-          const result = await installCmd.execute();
-
-          if (result.code === 0) {
+            await agentService.startAgent(args.agentId);
             return {
               success: true,
               data: {
-                message: `Skill "${skillName}" installed successfully from ClawdHub`,
-                output: result.stdout,
+                message: `Agent "${agent.name}" started successfully`,
+                agentId: args.agentId,
+                agentName: agent.name,
               },
             };
-          } else {
+          } catch (error: any) {
             return {
               success: false,
-              error: `Failed to install skill: ${result.stderr || result.stdout || 'Unknown error'}`,
-              data: {
-                output: result.stdout,
-                error: result.stderr,
-              },
+              error: error.message || 'Failed to start agent',
             };
           }
-        } catch (error: any) {
-          return {
-            success: false,
-            error: `Failed to install ClawdHub skill: ${error.message || 'Unknown error'}. Make sure clawdhub is installed and in your PATH.`,
-          };
-        }
 
-      // New utility tools
-      case 'search_files':
-        return await executeSearchFiles(args, context);
-
-      case 'list_directory_contents':
-        return await executeListDirectoryContents(args, context);
-
-      case 'get_file_info':
-        return await executeGetFileInfo(args, context);
-
-      case 'read_file_content':
-        return await executeReadFileContent(args, context);
-
-      case 'write_file_content':
-        return await executeWriteFileContent(args, context);
-
-      case 'delete_files':
-        return await executeDeleteFiles(args, context);
-
-      case 'calculate_directory_size':
-        return await executeCalculateDirectorySize(args, context);
-
-      case 'file_search_by_content':
-        return await executeFileSearchByContent(args, context);
-
-      case 'compare_directories':
-        return await executeCompareDirectories(args, context);
-
-      case 'batch_delete':
-        return await executeBatchDelete(args, context);
-
-      case 'create_directory':
-        return await executeCreateDirectory(args, context);
-
-      case 'move_file':
-        return await executeMoveFile(args, context);
-
-      case 'copy_file':
-        return await executeCopyFile(args, context);
-
-      case 'execute_terminal_command':
-        try {
-          const { Command } = await import('@tauri-apps/plugin-shell');
-          const command = args.command as string;
-          const cmdArgs = (args.args as string[]) || [];
-          const cwd = args.cwd || context.currentDirectory || undefined;
-
-          // Create the command
-          // Note: Tauri's shell plugin requires commands to be configured in capabilities
-          // For general usage, we might act as a wrapper around 'sh -c' if allowed,
-          // or rely on specific binary allowlists.
-          // Assuming 'sh' is allowed for flexibility as per previous patterns.
-          let cmd;
-          if (command === 'sh' || command === 'bash') {
-            // For shell commands, we can prepend cd if cwd is specified
-            if (cwd) {
-              const shellCmd = cmdArgs.length > 0 ? cmdArgs.join(' ') : '';
-              cmd = Command.create(command, ['-c', `cd "${cwd}" && ${shellCmd}`]);
-            } else {
-              cmd = Command.create(command, cmdArgs);
-            }
-          } else {
-            // Wrap in sh -c for maximum compatibility if direct execution isn't whitelisted for every bin
-            // But let's try direct first if it matches known patterns, otherwise fallback to sh
-            // Actually, the most robust way for arbitrary CLI tools (like node, curl) in this context
-            // is often to interpret the whole thing through sh
-            let fullCmd = `${command} ${cmdArgs.map(a => `'${a.replace(/'/g, "'\\''")}'`).join(' ')}`;
-            if (cwd) {
-              fullCmd = `cd "${cwd}" && ${fullCmd}`;
-            }
-            cmd = Command.create('sh', ['-c', fullCmd]);
+        case 'stop_agent':
+          const agentToStop = agentService.getAgent(args.agentId);
+          if (!agentToStop) {
+            return {
+              success: false,
+              error: `Agent with ID "${args.agentId}" not found. Use list_agents to see available agents.`,
+            };
           }
-          // Note: For direct commands (not shell), cwd cannot be set in Tauri v2 Command API
-          // The command will run in the current working directory
 
-          const result = await cmd.execute();
-
-          return {
-            success: result.code === 0,
-            data: {
-              stdout: result.stdout,
-              stderr: result.stderr,
-              code: result.code,
-            },
-            error: result.code !== 0 ? `Command failed with code ${result.code}: ${result.stderr}` : undefined,
-          };
-        } catch (error: any) {
-          return {
-            success: false,
-            error: `Failed to execute command: ${error.message}`
-          };
-        }
-
-      // ========== NEW TOOL IMPLEMENTATIONS ==========
-
-      case 'get_recent_files':
-        return await executeGetRecentFiles(args, context);
-
-      case 'get_large_files':
-        return await executeGetLargeFiles(args, context);
-
-      case 'get_empty_folders':
-        return await executeGetEmptyFolders(args, context);
-
-      case 'backup_file':
-        return await executeBackupFile(args, context);
-
-      case 'get_disk_usage':
-        return await executeGetDiskUsage(args, context);
-
-      case 'flatten_directory':
-        return await executeFlattenDirectory(args, context);
-
-      case 'get_file_types_summary':
-        return await executeGetFileTypesSummary(args, context);
-
-      case 'preview_operation':
-        return await executePreviewOperation(args, context);
-
-      case 'merge_text_files':
-        return await executeMergeTextFiles(args, context);
-
-      case 'sync_directories':
-        return await executeSyncDirectories(args, context);
-
-      case 'get_tool_help':
-        return await executeGetToolHelp(args);
-
-      // ========== WORKFLOW TOOLS ==========
-      case 'list_workflows': {
-        await workflowManager.initialize();
-        let workflows = workflowManager.getAllWorkflows();
-        
-        // Apply filters
-        if (args.category) {
-          workflows = workflows.filter(w => w.category === args.category);
-        }
-        if (args.favoritesOnly) {
-          workflows = workflows.filter(w => w.isFavorite);
-        }
-        
-        return {
-          success: true,
-          data: {
-            workflows: workflows.map(w => ({
-              id: w.id,
-              name: w.name,
-              description: w.description,
-              category: w.category,
-              steps: w.steps.length,
-              runCount: w.runCount,
-              isFavorite: w.isFavorite,
-              lastRunAt: w.lastRunAt,
-              tags: w.tags,
-            })),
-            total: workflows.length,
-          },
-        };
-      }
-
-      case 'run_workflow': {
-        await workflowManager.initialize();
-        
-        // Find workflow by ID or name
-        let workflow;
-        if (args.workflowId) {
-          workflow = workflowManager.getWorkflow(args.workflowId);
-        } else if (args.workflowName) {
-          const allWorkflows = workflowManager.getAllWorkflows();
-          workflow = allWorkflows.find(w => 
-            w.name.toLowerCase() === args.workflowName.toLowerCase()
-          );
-        }
-        
-        if (!workflow) {
-          return {
-            success: false,
-            error: `Workflow not found: ${args.workflowId || args.workflowName}`,
-          };
-        }
-        
-        // Create a tool executor function for the workflow
-        const toolExecutor = async (toolName: string, toolArgs: Record<string, any>) => {
-          const result = await executeTool(toolName, toolArgs, context);
-          if (!result.success) {
-            throw new Error(result.error || 'Tool execution failed');
+          const stateToStop = agentService.getAgentState(args.agentId);
+          if (!stateToStop || (stateToStop.status !== 'running' && stateToStop.status !== 'paused')) {
+            return {
+              success: false,
+              error: `Agent "${agentToStop.name}" is not currently running.`,
+            };
           }
-          return result;
-        };
-        
-        try {
-          const execution = await workflowManager.executeWorkflow(
-            workflow.id,
-            args.parameters || {},
-            toolExecutor,
-            { triggeredBy: 'api' }
-          );
-          
+
+          agentService.stopAgent(args.agentId);
           return {
-            success: execution.status === 'completed',
+            success: true,
             data: {
-              executionId: execution.id,
-              workflowName: execution.workflowName,
-              status: execution.status,
-              stepsCompleted: execution.stepResults.filter(s => s.status === 'success').length,
-              totalSteps: execution.totalSteps,
-              filesAffected: execution.totalFilesAffected,
-              duration: execution.duration,
-              error: execution.error,
+              message: `Agent "${agentToStop.name}" stopped`,
+              agentId: args.agentId,
+              agentName: agentToStop.name,
             },
           };
-        } catch (error: any) {
+
+        case 'get_agent_status':
+          const state = agentService.getAgentState(args.agentId);
+          const agentInfo = agentService.getAgent(args.agentId);
+          if (!agentInfo) {
+            return {
+              success: false,
+              error: `Agent with ID "${args.agentId}" not found`,
+            };
+          }
           return {
-            success: false,
-            error: `Workflow execution failed: ${error.message}`,
+            success: true,
+            data: {
+              agent: {
+                id: agentInfo.id,
+                name: agentInfo.name,
+                type: agentInfo.type,
+                enabled: agentInfo.enabled,
+              },
+              state: state ? {
+                status: state.status,
+                progress: state.progress,
+                startedAt: state.startedAt,
+                completedAt: state.completedAt,
+                error: state.error,
+                results: state.results,
+                recentLogs: state.logs.slice(-5),
+              } : null,
+            },
           };
-        }
-      }
 
-      case 'create_workflow': {
-        await workflowManager.initialize();
-        
-        let newWorkflow;
-        
-        if (args.templateId) {
-          // Create from template
-          newWorkflow = workflowManager.createFromTemplate(args.templateId, {
-            name: args.name,
-            description: args.description,
-            category: args.category as WorkflowCategory,
-          });
-        } else {
-          // Create from scratch
-          newWorkflow = workflowManager.createWorkflow({
-            name: args.name,
-            description: args.description || '',
-            category: (args.category as WorkflowCategory) || 'custom',
-            steps: [],
-            parameters: [],
-          });
-        }
-        
-        if (!newWorkflow) {
-          return {
-            success: false,
-            error: 'Failed to create workflow. Template may not exist.',
-          };
-        }
-        
-        return {
-          success: true,
-          data: {
-            id: newWorkflow.id,
-            name: newWorkflow.name,
-            description: newWorkflow.description,
-            category: newWorkflow.category,
-            steps: newWorkflow.steps.length,
-            message: `Created workflow "${newWorkflow.name}"`,
-          },
-        };
-      }
-
-      case 'get_workflow_templates': {
-        let templates = [...BUILTIN_TEMPLATES];
-        
-        if (args.category) {
-          templates = templates.filter(t => t.category === args.category);
-        }
-        
-        return {
-          success: true,
-          data: {
-            templates: templates.map(t => ({
-              id: t.id,
-              name: t.name,
-              description: t.description,
-              category: t.category,
-              icon: t.icon,
-            })),
-            total: templates.length,
-          },
-        };
-      }
-
-      // Handle Clawdhub skill tools (skill_*)
-      default:
-        // Check if this is a skill tool (starts with 'skill_')
-        if (toolName.startsWith('skill_')) {
+        case 'configure_agent':
           try {
-            // Check if ClawdBot is enabled
+            const agentToConfigure = agentService.getAgent(args.agentId);
+            if (!agentToConfigure) {
+              return {
+                success: false,
+                error: `Agent with ID "${args.agentId}" not found. Use list_agents to see available agents.`,
+              };
+            }
+
+            const updates: any = {};
+            if (args.params !== undefined) {
+              // Merge with existing params
+              updates.params = { ...agentToConfigure.params, ...args.params };
+            }
+            if (args.enabled !== undefined) {
+              updates.enabled = args.enabled;
+              // Stop agent if disabling
+              if (!args.enabled) {
+                const currentState = agentService.getAgentState(args.agentId);
+                if (currentState?.status === 'running' || currentState?.status === 'paused') {
+                  agentService.stopAgent(args.agentId);
+                }
+              }
+            }
+
+            agentService.updateAgent(args.agentId, updates);
+            const configuredAgent = agentService.getAgent(args.agentId);
+
+            return {
+              success: true,
+              data: {
+                message: `Agent "${configuredAgent?.name || args.agentId}" configured successfully`,
+                agent: {
+                  id: configuredAgent?.id,
+                  type: configuredAgent?.type,
+                  name: configuredAgent?.name,
+                  description: configuredAgent?.description,
+                  enabled: configuredAgent?.enabled,
+                  params: configuredAgent?.params,
+                },
+              },
+            };
+          } catch (error: any) {
+            return {
+              success: false,
+              error: error.message || 'Failed to configure agent',
+            };
+          }
+
+        // ClawdBot integration tools
+        case 'clawdbot_execute':
+          try {
+            // Check if ClawdBot is enabled in settings
             if (!context.settings.clawdbotEnabled) {
               return {
                 success: false,
-                error: 'ClawdBot is not enabled. Please enable it in Settings → Clawdbot Integration to use skills.',
+                error: 'ClawdBot is not enabled. Please enable it in Settings → Clawdbot Integration.',
               };
             }
 
-            // Extract skill name from tool name (skill_<name>)
-            const skillName = toolName.replace('skill_', '');
-            const skillArgs = (args.args as string[]) || [];
-            const cwd = args.cwd || context.currentDirectory || undefined;
+            const command = args.command as string;
+            const commandArgs = (args.args as string[]) || [];
+            const workDir = args.directory || context.currentDirectory || undefined;
 
-            // Get skill information
-            const { discoverClawdhubSkills } = await import('./clawdhubToolDiscovery');
-            const skills = await discoverClawdhubSkills();
-            const skill = skills.find(s => s.name === skillName && s.isExecutable);
+            // Build command arguments
+            const cmdArgs = [command, ...commandArgs];
 
-            if (!skill || !skill.executablePath || !skill.nodePath) {
+            // Use helper function to find and create ClawdBot command
+            const cmdResult = await createClawdBotCommand(cmdArgs, workDir);
+
+            if (!cmdResult) {
               return {
                 success: false,
-                error: `Skill "${skillName}" not found or is not executable. Available skills: ${skills.filter(s => s.isExecutable).map(s => s.name).join(', ')}`,
+                error: 'ClawdBot CLI not found. Make sure it is installed and in your PATH, or install it with: npm install -g clawdbot',
               };
             }
 
-            // Execute the skill using Node
-            const { Command } = await import('@tauri-apps/plugin-shell');
-            const cmdArgs = [skill.executablePath, ...skillArgs];
-            
-            // Use sh -c to execute with the node path
-            let fullCmd = `${skill.nodePath} ${cmdArgs.map(a => `'${a.replace(/'/g, "'\\''")}'`).join(' ')}`;
-            if (cwd) {
-              fullCmd = `cd "${cwd}" && ${fullCmd}`;
+            const result = await cmdResult.cmd.execute();
+
+            if (result.code === 0) {
+              return {
+                success: true,
+                data: {
+                  message: `ClawdBot command "${command}" executed successfully`,
+                  output: result.stdout,
+                  command: command,
+                  args: commandArgs,
+                },
+              };
+            } else {
+              return {
+                success: false,
+                error: `ClawdBot command failed: ${result.stderr || result.stdout || 'Unknown error'}`,
+                data: {
+                  output: result.stdout,
+                  error: result.stderr,
+                },
+              };
             }
-            const cmd = Command.create('sh', ['-c', fullCmd]);
+          } catch (error: any) {
+            return {
+              success: false,
+              error: `Failed to execute ClawdBot command: ${error.message || 'Unknown error'}. Make sure ClawdBot CLI is installed and in your PATH.`,
+            };
+          }
+
+        case 'clawdhub_list_skills':
+          try {
+            // Use helper function to find and create ClawdBot command
+            const cmdResult = await createClawdBotCommand(['plugins', 'list', '--json']);
+
+            if (!cmdResult) {
+              return {
+                success: false,
+                error: 'ClawdBot CLI not found. Make sure it is installed and in your PATH, or install it with: npm install -g clawdbot',
+              };
+            }
+
+            // Try to get skills from ClawdBot plugins list
+            const result = await cmdResult.cmd.execute();
+
+            if (result.code === 0) {
+              try {
+                // Clean ANSI escape codes
+                const cleanOutput = result.stdout.replace(/\u001b\[.*?m/g, '');
+                const plugins = JSON.parse(cleanOutput);
+
+                return {
+                  success: true,
+                  data: {
+                    skills: Array.isArray(plugins) ? plugins.map((p: any) => ({
+                      name: p.name,
+                      description: p.description,
+                      enabled: p.enabled,
+                      source: p.source,
+                      origin: p.origin,
+                    })) : [],
+                    total: Array.isArray(plugins) ? plugins.length : 0,
+                  },
+                };
+              } catch (parseError) {
+                return {
+                  success: false,
+                  error: 'Failed to parse ClawdBot plugins output. Make sure ClawdBot is properly installed.',
+                };
+              }
+            } else {
+              return {
+                success: false,
+                error: `Failed to list skills: ${result.stderr || 'Unknown error'}`,
+              };
+            }
+          } catch (error: any) {
+            return {
+              success: false,
+              error: `Failed to list ClawdHub skills: ${error.message || 'Unknown error'}. Make sure ClawdBot CLI is installed.`,
+            };
+          }
+
+        case 'clawdhub_install_skill':
+          try {
+            const skillName = args.skillName as string;
+            if (!skillName) {
+              return {
+                success: false,
+                error: 'Skill name is required',
+              };
+            }
+
+            // Find ClawdHub path
+            const clawdhubPath = await findClawdHubPath();
+
+            if (!clawdhubPath) {
+              return {
+                success: false,
+                error: 'ClawdHub CLI not found. Make sure it is installed and in your PATH, or install it with: npm install -g clawdhub',
+              };
+            }
+
+            // Use clawdhub to install the skill
+            // Use sh -c to ensure $HOME expansion works
+            let installCmd;
+            if (clawdhubPath === 'clawdhub') {
+              installCmd = Command.create('sh', ['-c', `clawdhub install "${skillName}" --workdir "$HOME/clawd"`]);
+            } else {
+              installCmd = Command.create('sh', ['-c', `${clawdhubPath} install "${skillName}" --workdir "$HOME/clawd"`]);
+            }
+
+            const result = await installCmd.execute();
+
+            if (result.code === 0) {
+              return {
+                success: true,
+                data: {
+                  message: `Skill "${skillName}" installed successfully from ClawdHub`,
+                  output: result.stdout,
+                },
+              };
+            } else {
+              return {
+                success: false,
+                error: `Failed to install skill: ${result.stderr || result.stdout || 'Unknown error'}`,
+                data: {
+                  output: result.stdout,
+                  error: result.stderr,
+                },
+              };
+            }
+          } catch (error: any) {
+            return {
+              success: false,
+              error: `Failed to install ClawdHub skill: ${error.message || 'Unknown error'}. Make sure clawdhub is installed and in your PATH.`,
+            };
+          }
+
+        // New utility tools
+        case 'search_files':
+          return await executeSearchFiles(args, context);
+
+        case 'list_directory_contents':
+          return await executeListDirectoryContents(args, context);
+
+        case 'get_file_info':
+          return await executeGetFileInfo(args, context);
+
+        case 'read_file_content':
+          return await executeReadFileContent(args, context);
+
+        case 'write_file_content':
+          return await executeWriteFileContent(args, context);
+
+        case 'delete_files':
+          return await executeDeleteFiles(args, context);
+
+        case 'calculate_directory_size':
+          return await executeCalculateDirectorySize(args, context);
+
+        case 'file_search_by_content':
+          return await executeFileSearchByContent(args, context);
+
+        case 'compare_directories':
+          return await executeCompareDirectories(args, context);
+
+        case 'batch_delete':
+          return await executeBatchDelete(args, context);
+
+        case 'create_directory':
+          return await executeCreateDirectory(args, context);
+
+        case 'move_file':
+          return await executeMoveFile(args, context);
+
+        case 'copy_file':
+          return await executeCopyFile(args, context);
+
+        case 'execute_terminal_command':
+          try {
+            const { Command } = await import('@tauri-apps/plugin-shell');
+            const command = args.command as string;
+            const cmdArgs = (args.args as string[]) || [];
+            const cwd = args.cwd || context.currentDirectory || undefined;
+
+            // Create the command
+            // Note: Tauri's shell plugin requires commands to be configured in capabilities
+            // For general usage, we might act as a wrapper around 'sh -c' if allowed,
+            // or rely on specific binary allowlists.
+            // Assuming 'sh' is allowed for flexibility as per previous patterns.
+            let cmd;
+            if (command === 'sh' || command === 'bash') {
+              // For shell commands, we can prepend cd if cwd is specified
+              if (cwd) {
+                const shellCmd = cmdArgs.length > 0 ? cmdArgs.join(' ') : '';
+                cmd = Command.create(command, ['-c', `cd "${cwd}" && ${shellCmd}`]);
+              } else {
+                cmd = Command.create(command, cmdArgs);
+              }
+            } else {
+              // Wrap in sh -c for maximum compatibility if direct execution isn't whitelisted for every bin
+              // But let's try direct first if it matches known patterns, otherwise fallback to sh
+              // Actually, the most robust way for arbitrary CLI tools (like node, curl) in this context
+              // is often to interpret the whole thing through sh
+              let fullCmd = `${command} ${cmdArgs.map(a => `'${a.replace(/'/g, "'\\''")}'`).join(' ')}`;
+              if (cwd) {
+                fullCmd = `cd "${cwd}" && ${fullCmd}`;
+              }
+              cmd = Command.create('sh', ['-c', fullCmd]);
+            }
+            // Note: For direct commands (not shell), cwd cannot be set in Tauri v2 Command API
+            // The command will run in the current working directory
 
             const result = await cmd.execute();
 
@@ -2635,35 +2385,285 @@ export async function executeTool(
                 stdout: result.stdout,
                 stderr: result.stderr,
                 code: result.code,
-                skill: skillName,
               },
-              error: result.code !== 0 ? `Skill "${skillName}" failed with code ${result.code}: ${result.stderr || result.stdout}` : undefined,
+              error: result.code !== 0 ? `Command failed with code ${result.code}: ${result.stderr}` : undefined,
             };
           } catch (error: any) {
             return {
               success: false,
-              error: `Failed to execute skill tool: ${error.message}`,
+              error: `Failed to execute command: ${error.message}`
+            };
+          }
+
+        // ========== NEW TOOL IMPLEMENTATIONS ==========
+
+        case 'get_recent_files':
+          return await executeGetRecentFiles(args, context);
+
+        case 'get_large_files':
+          return await executeGetLargeFiles(args, context);
+
+        case 'get_empty_folders':
+          return await executeGetEmptyFolders(args, context);
+
+        case 'backup_file':
+          return await executeBackupFile(args, context);
+
+        case 'get_disk_usage':
+          return await executeGetDiskUsage(args, context);
+
+        case 'flatten_directory':
+          return await executeFlattenDirectory(args, context);
+
+        case 'get_file_types_summary':
+          return await executeGetFileTypesSummary(args, context);
+
+        case 'preview_operation':
+          return await executePreviewOperation(args, context);
+
+        case 'merge_text_files':
+          return await executeMergeTextFiles(args, context);
+
+        case 'sync_directories':
+          return await executeSyncDirectories(args, context);
+
+        case 'get_tool_help':
+          return await executeGetToolHelp(args);
+
+        // ========== WORKFLOW TOOLS ==========
+        case 'list_workflows': {
+          await workflowManager.initialize();
+          let workflows = workflowManager.getAllWorkflows();
+
+          // Apply filters
+          if (args.category) {
+            workflows = workflows.filter(w => w.category === args.category);
+          }
+          if (args.favoritesOnly) {
+            workflows = workflows.filter(w => w.isFavorite);
+          }
+
+          return {
+            success: true,
+            data: {
+              workflows: workflows.map(w => ({
+                id: w.id,
+                name: w.name,
+                description: w.description,
+                category: w.category,
+                steps: w.steps.length,
+                runCount: w.runCount,
+                isFavorite: w.isFavorite,
+                lastRunAt: w.lastRunAt,
+                tags: w.tags,
+              })),
+              total: workflows.length,
+            },
+          };
+        }
+
+        case 'run_workflow': {
+          await workflowManager.initialize();
+
+          // Find workflow by ID or name
+          let workflow;
+          if (args.workflowId) {
+            workflow = workflowManager.getWorkflow(args.workflowId);
+          } else if (args.workflowName) {
+            const allWorkflows = workflowManager.getAllWorkflows();
+            workflow = allWorkflows.find(w =>
+              w.name.toLowerCase() === args.workflowName.toLowerCase()
+            );
+          }
+
+          if (!workflow) {
+            return {
+              success: false,
+              error: `Workflow not found: ${args.workflowId || args.workflowName}`,
+            };
+          }
+
+          // Create a tool executor function for the workflow
+          const toolExecutor = async (toolName: string, toolArgs: Record<string, any>) => {
+            const result = await executeTool(toolName, toolArgs, context);
+            if (!result.success) {
+              throw new Error(result.error || 'Tool execution failed');
+            }
+            return result;
+          };
+
+          try {
+            const execution = await workflowManager.executeWorkflow(
+              workflow.id,
+              args.parameters || {},
+              toolExecutor,
+              { triggeredBy: 'api' }
+            );
+
+            return {
+              success: execution.status === 'completed',
+              data: {
+                executionId: execution.id,
+                workflowName: execution.workflowName,
+                status: execution.status,
+                stepsCompleted: execution.stepResults.filter(s => s.status === 'success').length,
+                totalSteps: execution.totalSteps,
+                filesAffected: execution.totalFilesAffected,
+                duration: execution.duration,
+                error: execution.error,
+              },
+            };
+          } catch (error: any) {
+            return {
+              success: false,
+              error: `Workflow execution failed: ${error.message}`,
             };
           }
         }
 
-        // Unknown tool
-        return {
-          success: false,
-          error: `Unknown tool: ${toolName}. Use list_available_tools to see all available tools.`,
-        };
+        case 'create_workflow': {
+          await workflowManager.initialize();
+
+          let newWorkflow;
+
+          if (args.templateId) {
+            // Create from template
+            newWorkflow = workflowManager.createFromTemplate(args.templateId, {
+              name: args.name,
+              description: args.description,
+              category: args.category as WorkflowCategory,
+            });
+          } else {
+            // Create from scratch
+            newWorkflow = workflowManager.createWorkflow({
+              name: args.name,
+              description: args.description || '',
+              category: (args.category as WorkflowCategory) || 'custom',
+              steps: [],
+              parameters: [],
+            });
+          }
+
+          if (!newWorkflow) {
+            return {
+              success: false,
+              error: 'Failed to create workflow. Template may not exist.',
+            };
+          }
+
+          return {
+            success: true,
+            data: {
+              id: newWorkflow.id,
+              name: newWorkflow.name,
+              description: newWorkflow.description,
+              category: newWorkflow.category,
+              steps: newWorkflow.steps.length,
+              message: `Created workflow "${newWorkflow.name}"`,
+            },
+          };
+        }
+
+        case 'get_workflow_templates': {
+          let templates = [...BUILTIN_TEMPLATES];
+
+          if (args.category) {
+            templates = templates.filter(t => t.category === args.category);
+          }
+
+          return {
+            success: true,
+            data: {
+              templates: templates.map(t => ({
+                id: t.id,
+                name: t.name,
+                description: t.description,
+                category: t.category,
+                icon: t.icon,
+              })),
+              total: templates.length,
+            },
+          };
+        }
+
+        // Handle Clawdhub skill tools (skill_*)
+        default:
+          // Check if this is a skill tool (starts with 'skill_')
+          if (toolName.startsWith('skill_')) {
+            try {
+              // Check if ClawdBot is enabled
+              if (!context.settings.clawdbotEnabled) {
+                return {
+                  success: false,
+                  error: 'ClawdBot is not enabled. Please enable it in Settings → Clawdbot Integration to use skills.',
+                };
+              }
+
+              // Extract skill name from tool name (skill_<name>)
+              const skillName = toolName.replace('skill_', '');
+              const skillArgs = (args.args as string[]) || [];
+              const cwd = args.cwd || context.currentDirectory || undefined;
+
+              // Get skill information
+              const { discoverClawdhubSkills } = await import('./clawdhubToolDiscovery');
+              const skills = await discoverClawdhubSkills();
+              const skill = skills.find(s => s.name === skillName && s.isExecutable);
+
+              if (!skill || !skill.executablePath || !skill.nodePath) {
+                return {
+                  success: false,
+                  error: `Skill "${skillName}" not found or is not executable. Available skills: ${skills.filter(s => s.isExecutable).map(s => s.name).join(', ')}`,
+                };
+              }
+
+              // Execute the skill using Node
+              const { Command } = await import('@tauri-apps/plugin-shell');
+              const cmdArgs = [skill.executablePath, ...skillArgs];
+
+              // Use sh -c to execute with the node path
+              let fullCmd = `${skill.nodePath} ${cmdArgs.map(a => `'${a.replace(/'/g, "'\\''")}'`).join(' ')}`;
+              if (cwd) {
+                fullCmd = `cd "${cwd}" && ${fullCmd}`;
+              }
+              const cmd = Command.create('sh', ['-c', fullCmd]);
+
+              const result = await cmd.execute();
+
+              return {
+                success: result.code === 0,
+                data: {
+                  stdout: result.stdout,
+                  stderr: result.stderr,
+                  code: result.code,
+                  skill: skillName,
+                },
+                error: result.code !== 0 ? `Skill "${skillName}" failed with code ${result.code}: ${result.stderr || result.stdout}` : undefined,
+              };
+            } catch (error: any) {
+              return {
+                success: false,
+                error: `Failed to execute skill tool: ${error.message}`,
+              };
+            }
+          }
+
+          // Unknown tool
+          return {
+            success: false,
+            error: `Unknown tool: ${toolName}. Use list_available_tools to see all available tools.`,
+          };
+      }
+    } catch (error: any) {
+      // Re-throw to be caught by outer catch
+      throw error;
     }
-  } catch (error: any) {
-    // Re-throw to be caught by outer catch
-    throw error;
-  }
   } catch (error: any) {
     const executionTime = Date.now() - startTime;
     console.error(`Error executing tool ${toolName} (took ${executionTime}ms):`, error);
-    
+
     // Provide more helpful error messages
     let errorMessage = error.message || `Failed to execute ${toolName}`;
-    
+
     // Check for common error patterns
     if (error.message?.includes('ENOENT')) {
       errorMessage = `File or directory not found. Please check the path and try again.`;
@@ -2672,12 +2672,12 @@ export async function executeTool(
     } else if (error.message?.includes('ENOSPC')) {
       errorMessage = `No space left on device. Please free up some space and try again.`;
     }
-    
+
     // Log tool execution failure to audit log
     auditLogger.logToolExecution(toolName, args, false, executionTime, {
       error: errorMessage,
     });
-    
+
     return createErrorResult(errorMessage, undefined);
   }
 }
@@ -2930,7 +2930,7 @@ async function executeReadFileContent(args: Record<string, any>, context: ToolCo
  */
 function sanitizePath(inputPath: string, currentDirectory: string | undefined): string {
   let cleanPath = inputPath.trim();
-  
+
   // Remove common AI placeholder patterns
   const placeholderPatterns = [
     /^\[currentDirectory\]\/?/i,         // [currentDirectory]/
@@ -2941,7 +2941,7 @@ function sanitizePath(inputPath: string, currentDirectory: string | undefined): 
     /^\/path\/to\/current\/directory\/?/i, // /path/to/current/directory/
     /^\.\/(?=\w)/,                        // ./ (but keep the rest)
   ];
-  
+
   for (const pattern of placeholderPatterns) {
     if (pattern.test(cleanPath)) {
       cleanPath = cleanPath.replace(pattern, '');
@@ -2949,13 +2949,13 @@ function sanitizePath(inputPath: string, currentDirectory: string | undefined): 
       break;
     }
   }
-  
+
   // Remove any leading slashes if we're going to join with currentDirectory
   // (but only if the path doesn't look like an absolute Unix path to a real location)
   if (!cleanPath.startsWith('/Users/') && !cleanPath.startsWith('/home/') && !cleanPath.startsWith('/var/')) {
     cleanPath = cleanPath.replace(/^\/+/, '');
   }
-  
+
   return cleanPath;
 }
 
@@ -2976,10 +2976,10 @@ async function executeWriteFileContent(args: Record<string, any>, context: ToolC
   try {
     // Sanitize and normalize the file path
     let normalizedPath = sanitizePath(filePath, context.currentDirectory);
-    
+
     console.log(`[write_file_content] Original path: ${filePath}`);
     console.log(`[write_file_content] Sanitized path: ${normalizedPath}`);
-    
+
     // If path doesn't start with /, assume it's relative to current directory
     if (!normalizedPath.startsWith('/') && context.currentDirectory) {
       normalizedPath = await join(context.currentDirectory, normalizedPath);
@@ -3024,9 +3024,9 @@ async function executeWriteFileContent(args: Record<string, any>, context: ToolC
       console.error(`[write_file_content] Write error:`, writeError);
       // Try to get more details about the error
       const errorDetails = writeError?.message || writeError?.toString() || 'Unknown write error';
-      return { 
-        success: false, 
-        error: `Failed to write file: ${errorDetails}. Path: ${normalizedPath}` 
+      return {
+        success: false,
+        error: `Failed to write file: ${errorDetails}. Path: ${normalizedPath}`
       };
     }
 
@@ -3077,16 +3077,16 @@ async function executeWriteFileContent(args: Record<string, any>, context: ToolC
     console.error(`[write_file_content] Error creating file:`, error);
     const errorMessage = error?.message || error?.toString() || 'Unknown error';
     const errorStack = error?.stack ? `\nStack: ${error.stack.substring(0, 200)}` : '';
-    
+
     // Log file operation failure
     auditLogger.logFileOperation('write_file', [filePath], false, {
       error: errorMessage,
       toolName: 'write_file_content',
     });
-    
-    return { 
-      success: false, 
-      error: `Failed to write file content: ${errorMessage}${errorStack}. Path: ${filePath}` 
+
+    return {
+      success: false,
+      error: `Failed to write file content: ${errorMessage}${errorStack}. Path: ${filePath}`
     };
   }
 }
@@ -3153,8 +3153,8 @@ async function executeDeleteFiles(args: Record<string, any>, context: ToolContex
     if (context.settings.operationHistory?.enabled !== false && deleted.length > 0) {
       // Create backup of deleted files for potential restore
       const backupPath = await operationHistory.createBackup(deleted);
-      
-      const changes: FileChange[] = deleted.map(filePath => 
+
+      const changes: FileChange[] = deleted.map(filePath =>
         createFileChange('delete', filePath, {
           success: true,
           isDirectory: false, // Would need stat info for accuracy
@@ -3564,10 +3564,10 @@ async function executeCreateDirectory(args: Record<string, any>, context: ToolCo
 
     // Sanitize and normalize the path - resolve placeholder paths and relative paths
     let normalizedPath = sanitizePath(dirPath, context.currentDirectory);
-    
+
     console.log(`[create_directory] Original path: ${dirPath}`);
     console.log(`[create_directory] Sanitized path: ${normalizedPath}`);
-    
+
     // If path doesn't start with /, assume it's relative to current directory
     if (!normalizedPath.startsWith('/') && context.currentDirectory) {
       normalizedPath = await join(context.currentDirectory, normalizedPath);
@@ -3578,7 +3578,7 @@ async function executeCreateDirectory(args: Record<string, any>, context: ToolCo
 
     const dirExists = await exists(normalizedPath);
     if (dirExists) {
-      return { 
+      return {
         success: true, // Changed to success - directory already exists is not an error for our use case
         data: {
           path: normalizedPath,
@@ -3813,7 +3813,7 @@ async function executeGetRecentFiles(args: Record<string, any>, context: ToolCon
 
     // Calculate cutoff time
     const now = Date.now();
-    const cutoffTime = withinHours 
+    const cutoffTime = withinHours
       ? now - (withinHours * 60 * 60 * 1000)
       : now - (withinDays * 24 * 60 * 60 * 1000);
 
@@ -3837,7 +3837,7 @@ async function executeGetRecentFiles(args: Record<string, any>, context: ToolCon
 
           try {
             const metadata = await stat(entryPath);
-            const modifiedTime = metadata.mtime 
+            const modifiedTime = metadata.mtime
               ? (typeof metadata.mtime === 'number' ? metadata.mtime : new Date(metadata.mtime).getTime())
               : 0;
 
@@ -3911,7 +3911,7 @@ async function executeGetLargeFiles(args: Record<string, any>, context: ToolCont
           const entryPath = await join(dirPath, entry.name);
 
           // Check exclude patterns
-          const shouldExclude = excludePatterns.some((pattern: string) => 
+          const shouldExclude = excludePatterns.some((pattern: string) =>
             matchPattern(entry.name, pattern, false)
           );
           if (shouldExclude) continue;
@@ -3984,10 +3984,10 @@ async function executeGetEmptyFolders(args: Record<string, any>, context: ToolCo
     async function checkDirectory(dirPath: string): Promise<boolean> {
       try {
         const entries = await readDir(dirPath);
-        
+
         if (entries.length === 0) {
           emptyFolders.push(dirPath);
-          
+
           if (deleteEmpty) {
             try {
               await remove(dirPath);
@@ -4008,7 +4008,7 @@ async function executeGetEmptyFolders(args: Record<string, any>, context: ToolCo
             }
           }
         }
-        
+
         return false;
       } catch (e) {
         return false;
@@ -4165,7 +4165,7 @@ async function executeFlattenDirectory(args: Record<string, any>, context: ToolC
           if (!matchPattern(entry.name, filePattern, false)) continue;
 
           let targetName = entry.name;
-          
+
           // Handle duplicate names
           if (handleDuplicates === 'rename') {
             nameCount[entry.name] = (nameCount[entry.name] || 0) + 1;
@@ -4238,19 +4238,19 @@ async function executeGetFileTypesSummary(args: Record<string, any>, context: To
 
     // Category mappings for groupBy: 'category'
     const categoryMap: Record<string, string> = {
-      '.jpg': 'Images', '.jpeg': 'Images', '.png': 'Images', '.gif': 'Images', 
+      '.jpg': 'Images', '.jpeg': 'Images', '.png': 'Images', '.gif': 'Images',
       '.bmp': 'Images', '.webp': 'Images', '.svg': 'Images', '.ico': 'Images',
-      '.mp4': 'Videos', '.avi': 'Videos', '.mov': 'Videos', '.mkv': 'Videos', 
+      '.mp4': 'Videos', '.avi': 'Videos', '.mov': 'Videos', '.mkv': 'Videos',
       '.wmv': 'Videos', '.webm': 'Videos',
-      '.mp3': 'Audio', '.wav': 'Audio', '.flac': 'Audio', '.aac': 'Audio', 
+      '.mp3': 'Audio', '.wav': 'Audio', '.flac': 'Audio', '.aac': 'Audio',
       '.ogg': 'Audio', '.m4a': 'Audio',
-      '.pdf': 'Documents', '.doc': 'Documents', '.docx': 'Documents', 
-      '.xls': 'Documents', '.xlsx': 'Documents', '.ppt': 'Documents', 
+      '.pdf': 'Documents', '.doc': 'Documents', '.docx': 'Documents',
+      '.xls': 'Documents', '.xlsx': 'Documents', '.ppt': 'Documents',
       '.pptx': 'Documents', '.txt': 'Documents', '.rtf': 'Documents',
-      '.zip': 'Archives', '.rar': 'Archives', '.7z': 'Archives', 
+      '.zip': 'Archives', '.rar': 'Archives', '.7z': 'Archives',
       '.tar': 'Archives', '.gz': 'Archives',
-      '.js': 'Code', '.ts': 'Code', '.py': 'Code', '.java': 'Code', 
-      '.cpp': 'Code', '.c': 'Code', '.h': 'Code', '.css': 'Code', 
+      '.js': 'Code', '.ts': 'Code', '.py': 'Code', '.java': 'Code',
+      '.cpp': 'Code', '.c': 'Code', '.h': 'Code', '.css': 'Code',
       '.html': 'Code', '.jsx': 'Code', '.tsx': 'Code', '.rs': 'Code',
     };
 
@@ -4270,7 +4270,7 @@ async function executeGetFileTypesSummary(args: Record<string, any>, context: To
           try {
             const metadata = await stat(entryPath);
             const ext = (await extname(entry.name)).toLowerCase() || 'no extension';
-            
+
             let key: string;
             if (groupBy === 'category') {
               key = categoryMap[ext] || 'Other';
@@ -4452,7 +4452,7 @@ async function executeSyncDirectories(args: Record<string, any>, context: ToolCo
     async function scanSource(srcDir: string, destDir: string): Promise<void> {
       try {
         const entries = await readDir(srcDir);
-        
+
         for (const entry of entries) {
           const srcPath = await join(srcDir, entry.name);
           const dstPath = await join(destDir, entry.name);
@@ -4463,7 +4463,7 @@ async function executeSyncDirectories(args: Record<string, any>, context: ToolCo
           }
 
           const destExists = await exists(dstPath);
-          
+
           if (!destExists) {
             toCopy.push({ source: srcPath, dest: dstPath, reason: 'new' });
           } else {
@@ -4471,7 +4471,7 @@ async function executeSyncDirectories(args: Record<string, any>, context: ToolCo
             try {
               const srcStat = await stat(srcPath);
               const dstStat = await stat(dstPath);
-              
+
               const srcMtime = srcStat.mtime ? new Date(srcStat.mtime).getTime() : 0;
               const dstMtime = dstStat.mtime ? new Date(dstStat.mtime).getTime() : 0;
               if (srcMtime > dstMtime || srcStat.size !== dstStat.size) {
@@ -4608,7 +4608,7 @@ export async function getMCPTools(): Promise<ToolDefinition[]> {
  * Gets all available tools (custom + MCP + Skills).
  * Optionally filters tools based on settings (e.g., ClawdBot tools).
  */
-export async function getAllTools(settings?: AISettings): Promise<ToolDefinition[]> {
+export async function getAllTools(settings?: Partial<AISettings>): Promise<ToolDefinition[]> {
   let customTools = TOOLS;
 
   // Filter ClawdBot tools if not enabled
@@ -4629,7 +4629,7 @@ export async function getAllTools(settings?: AISettings): Promise<ToolDefinition
   }
 
   const mcpTools = await getMCPTools();
-  
+
   // Get skill tools if ClawdBot is enabled
   let skillTools: ToolDefinition[] = [];
   if (settings?.clawdbotEnabled) {
@@ -4640,7 +4640,7 @@ export async function getAllTools(settings?: AISettings): Promise<ToolDefinition
       console.warn('Failed to get Clawdhub skill tools:', error);
     }
   }
-  
+
   return [...customTools, ...mcpTools, ...skillTools];
 }
 
@@ -4666,20 +4666,20 @@ export async function listAvailableTools(settings?: { clawdbotEnabled?: boolean 
   byCategory: Record<string, number>;
 }> {
   const allTools = await getAllTools(settings);
-  
+
   const tools = allTools.map(tool => ({
     name: tool.name,
     description: tool.description,
     category: tool.category,
     examples: tool.examples,
   }));
-  
+
   const byCategory: Record<string, number> = {};
   tools.forEach(tool => {
     const category = tool.category || 'uncategorized';
     byCategory[category] = (byCategory[category] || 0) + 1;
   });
-  
+
   return {
     tools,
     total: tools.length,

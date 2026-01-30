@@ -226,7 +226,7 @@ export const AIProviderSetupWizard = ({
           setConnectionResult({ success: true, message: "Successfully connected to OpenRouter!" });
           setCurrentStep("verify-connection");
         } else {
-          setConnectionResult({ success: false, message: result.message || "Invalid API key" });
+          setConnectionResult({ success: false, message: result.error || "Invalid API key" });
         }
       } else if (selectedProvider === "anthropic") {
         // Validate Anthropic API key
