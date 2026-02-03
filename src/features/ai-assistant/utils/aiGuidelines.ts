@@ -13,8 +13,8 @@ import type { ToolDefinition } from './toolsRegistry';
  * @param aiName - Optional custom name for the AI. Defaults to "FilePro".
  */
 export function getAIPersona(aiName?: string): string {
-    const name = aiName || "FilePro";
-    return `You are "${name}," an intelligent and supportive AI File Assistant. Think of yourself as the user's favorite coworker: professional and capable, but also friendly, encouraging, and genuinely happy to help them accomplish their work.
+  const name = aiName || "FilePro";
+  return `You are "${name}," an intelligent and supportive AI File Assistant. Think of yourself as the user's favorite coworker: professional and capable, but also friendly, encouraging, and genuinely happy to help them accomplish their work.
 Your goal is to be helpful, safe, and transparent while making file management feel less like a chore.
 You are running within a desktop application with direct access to the user's local file system through specific tools.
 
@@ -266,67 +266,67 @@ The user is speaking to you. You MUST adjust your responses for TTS (Text-to-Spe
  * Generates the full system prompt based on available tools and settings.
  */
 export function generateSystemPrompt(
-    tools: ToolDefinition[],
-    settings: { clawdbotEnabled?: boolean; aiName?: string; userName?: string },
-    skillContext?: string,
-    voiceContext?: { enabled: boolean; persona?: string }
+  tools: ToolDefinition[],
+  settings: { clawdbotEnabled?: boolean; aiName?: string; userName?: string },
+  skillContext?: string,
+  voiceContext?: { enabled: boolean; persona?: string }
 ): string {
-    // Separate tools by category for better organization
-    const fileTools = tools.filter(t => 
-        !t.name.startsWith('skill_') && 
-        !t.name.startsWith('clawdbot_') && 
-        !t.name.startsWith('clawdhub_') &&
-        !t.name.includes('::') &&
-        t.name !== 'execute_terminal_command'
-    );
-    const mcpTools = tools.filter(t => t.name.includes('::'));
-    const skillTools = tools.filter(t => t.name.startsWith('skill_'));
-    const utilityTools = tools.filter(t => 
-        t.name.startsWith('clawdbot_') || 
-        t.name.startsWith('clawdhub_') ||
-        t.name === 'execute_terminal_command'
-    );
+  // Separate tools by category for better organization
+  const fileTools = tools.filter(t =>
+    !t.name.startsWith('skill_') &&
+    !t.name.startsWith('clawdbot_') &&
+    !t.name.startsWith('clawdhub_') &&
+    !t.name.includes('::') &&
+    t.name !== 'execute_terminal_command'
+  );
+  const mcpTools = tools.filter(t => t.name.includes('::'));
+  const skillTools = tools.filter(t => t.name.startsWith('skill_'));
+  const utilityTools = tools.filter(t =>
+    t.name.startsWith('clawdbot_') ||
+    t.name.startsWith('clawdhub_') ||
+    t.name === 'execute_terminal_command'
+  );
 
-    let toolList = '';
-    
-    if (fileTools.length > 0) {
-        toolList += `## File Operation Tools\n${fileTools.map(t => `- ${t.name}: ${t.description}`).join('\n')}\n\n`;
-    }
-    
-    if (mcpTools.length > 0) {
-        toolList += `## MCP Tools (External Services)\n${mcpTools.map(t => `- ${t.name}: ${t.description}`).join('\n')}\n\n`;
-    }
-    
+  let toolList = '';
+
+  if (fileTools.length > 0) {
+    toolList += `## File Operation Tools\n${fileTools.map(t => `- ${t.name}: ${t.description}`).join('\n')}\n\n`;
+  }
+
+  if (mcpTools.length > 0) {
+    toolList += `## MCP Tools (External Services)\n${mcpTools.map(t => `- ${t.name}: ${t.description}`).join('\n')}\n\n`;
+  }
+
+  if (skillTools.length > 0) {
+    toolList += `## Clawdhub Skill Tools (Direct Access)\n${skillTools.map(t => `- ${t.name}: ${t.description}`).join('\n')}\n\n`;
+    toolList += `**Note**: These skill tools are available as direct tools you can call. You can also use the \`execute_terminal_command\` tool if you need more control over command execution.\n\n`;
+  }
+
+  if (utilityTools.length > 0) {
+    toolList += `## Utility Tools\n${utilityTools.map(t => `- ${t.name}: ${t.description}`).join('\n')}\n\n`;
+  }
+
+  let aiPersona = getAIPersona(settings.aiName);
+
+  // Expand persona if Clawdbot is enabled
+  if (settings.clawdbotEnabled) {
+    aiPersona += `\n\nYou are also a capable general-purpose assistant thanks to your integrated Clawdhub skills. You can perform a wide range of tasks beyond file management, such as checking weather, searching the web, or running system commands, by using your tools. When a user asks for something outside of file management (like weather, news, or general questions), assume you CAN help if you have a relevant skill or tool. Do NOT refuse these requests claiming you are only a file assistant.`;
+
+    // Add specific guidance about skill tools
     if (skillTools.length > 0) {
-        toolList += `## Clawdhub Skill Tools (Direct Access)\n${skillTools.map(t => `- ${t.name}: ${t.description}`).join('\n')}\n\n`;
-        toolList += `**Note**: These skill tools are available as direct tools you can call. You can also use the \`execute_terminal_command\` tool if you need more control over command execution.\n\n`;
+      aiPersona += `\n\nYou have ${skillTools.length} skill tool(s) available as direct tools (prefixed with "skill_"). These are the easiest way to use installed Clawdhub skills - simply call the tool with the appropriate arguments. For example, if you have a "weather" skill, you can call \`skill_weather\` with the required arguments.`;
     }
-    
-    if (utilityTools.length > 0) {
-        toolList += `## Utility Tools\n${utilityTools.map(t => `- ${t.name}: ${t.description}`).join('\n')}\n\n`;
-    }
+  }
 
-    let aiPersona = getAIPersona(settings.aiName);
+  const userNameInstruction = settings.userName
+    ? `\n- When addressing the user, use their name "${settings.userName}" instead of generic terms like "you" or "user".`
+    : '';
 
-    // Expand persona if Clawdbot is enabled
-    if (settings.clawdbotEnabled) {
-        aiPersona += `\n\nYou are also a capable general-purpose assistant thanks to your integrated Clawdhub skills. You can perform a wide range of tasks beyond file management, such as checking weather, searching the web, or running system commands, by using your tools. When a user asks for something outside of file management (like weather, news, or general questions), assume you CAN help if you have a relevant skill or tool. Do NOT refuse these requests claiming you are only a file assistant.`;
-        
-        // Add specific guidance about skill tools
-        if (skillTools.length > 0) {
-            aiPersona += `\n\nYou have ${skillTools.length} skill tool(s) available as direct tools (prefixed with "skill_"). These are the easiest way to use installed Clawdhub skills - simply call the tool with the appropriate arguments. For example, if you have a "weather" skill, you can call \`skill_weather\` with the required arguments.`;
-        }
-    }
+  const voiceInstructions = voiceContext?.enabled
+    ? `\n${VOICE_MODE_GUIDELINES}\n\nCurrent Persona: ${voiceContext.persona || 'Friendly'}`
+    : '';
 
-    const userNameInstruction = settings.userName
-        ? `\n- When addressing the user, use their name "${settings.userName}" instead of generic terms like "you" or "user".`
-        : '';
-
-    const voiceInstructions = voiceContext?.enabled
-        ? `\n${VOICE_MODE_GUIDELINES}\n\nCurrent Persona: ${voiceContext.persona || 'Friendly'}`
-        : '';
-
-    return `${aiPersona}
+  return `${aiPersona}
 
 # Available Tools
 ${toolList}
@@ -394,12 +394,12 @@ ${userNameInstruction}
  * Simplified system prompt for smaller models (like local LLMs) that might get confused by long prompts.
  */
 export function generateCompactSystemPrompt(tools: ToolDefinition[], aiName?: string, userName?: string): string {
-    const aiPersona = getAIPersona(aiName);
-    const userNameInstruction = userName
-        ? ` When addressing the user, use their name "${userName}".`
-        : '';
+  const aiPersona = getAIPersona(aiName);
+  const userNameInstruction = userName
+    ? ` When addressing the user, use their name "${userName}".`
+    : '';
 
-    return `${aiPersona}
+  return `${aiPersona}
 
 You can help with: organizing files, finding duplicates, analyzing disk usage, and more.
 Be safe and always ask before deleting files.${userNameInstruction}
@@ -415,12 +415,12 @@ Use these tools to help the user. If a request is ambiguous, ask for clarificati
  * System prompt for simple conversational queries (no tools active).
  */
 export function getConversationalSystemPrompt(aiName?: string, userName?: string): string {
-    const name = aiName || "FilePro";
-    const userNameInstruction = userName
-        ? ` When addressing the user, use their name "${userName}" instead of generic terms.`
-        : '';
+  const name = aiName || "FilePro";
+  const userNameInstruction = userName
+    ? ` When addressing the user, use their name "${userName}" instead of generic terms.`
+    : '';
 
-    return `You are "${name}," a friendly AI File Assistant. You help users with file management through natural conversation.${userNameInstruction}
+  return `You are "${name}," a friendly AI File Assistant. You help users with file management through natural conversation.${userNameInstruction}
 
 When users greet you or ask simple questions, respond naturally and conversationally. You can mention your capabilities, but keep it brief and friendly.
 
@@ -437,71 +437,73 @@ export const CONVERSATIONAL_SYSTEM_PROMPT = getConversationalSystemPrompt();
  * Instructs them to output JSON commands in a specific format.
  */
 export function generateJsonCommandModePrompt(
-    tools: ToolDefinition[],
-    aiName?: string,
-    userName?: string,
-    skillContext?: string
+  tools: ToolDefinition[],
+  aiName?: string,
+  userName?: string,
+  skillContext?: string
 ): string {
-    const toolDefs = tools.map(t => {
-        return `Tool: ${t.name}
+  const toolDefs = tools.map(t => {
+    return `Tool: ${t.name}
 Description: ${t.description}
 Parameters: ${JSON.stringify(t.input_schema.properties, null, 2)}`;
-    }).join('\n\n');
+  }).join('\n\n');
 
-    let aiPersona = getAIPersona(aiName);
+  let aiPersona = getAIPersona(aiName);
 
-    // Expand persona if skills are present (implied by skillContext presence)
-    if (skillContext) {
-        aiPersona += `\n\nYou are also a capable general-purpose assistant thanks to your integrated Clawdhub skills. You can perform a wide range of tasks beyond file management. Do NOT refuse requests claiming you are only a file assistant if you have a relevant skill tool.`;
-    }
+  // Expand persona if skills are present (implied by skillContext presence)
+  if (skillContext) {
+    aiPersona += `\n\nYou are also a capable general-purpose assistant thanks to your integrated Clawdhub skills. You can perform a wide range of tasks beyond file management. Do NOT refuse requests claiming you are only a file assistant if you have a relevant skill tool.`;
+  }
 
-    const userNameInstruction = userName
-        ? ` When addressing the user, use their name "${userName}" instead of generic terms.`
-        : '';
+  const userNameInstruction = userName
+    ? ` When addressing the user, use their name "${userName}" instead of generic terms.`
+    : '';
 
-    return `${aiPersona}
+  return `${aiPersona}
 
-You do not have native tool access, but you can still perform actions by outputting a JSON command block.${userNameInstruction}
+You are running in JSON COMMAND MODE. You do not have native tool access, so you must output JSON commands to perform actions.${userNameInstruction}
 
-IMPORTANT - USER-FACING RESPONSES:
-- NEVER show JSON command blocks or technical details to the user.
-- NEVER display tool parameters, arguments, or internal formats.
-- Describe what you're doing in natural language, then output the JSON silently.
-- The JSON block should be for internal processing only, not shown to users.
+# RESPONSE FORMAT (Strictly Follow This)
 
-To use a tool, you MUST output a single Markdown code block containing a JSON object with "tool" and "arguments" fields. However, this JSON should NOT appear in your user-facing response.
+You must structure your response in two parts:
 
-Example of what NOT to show:
-"Here's the JSON command: \`\`\`json {...}\`\`\`"
+Part 1: Natural Language
+- Respond to the user's request conversationally.
+- Describe what you are going to do.
+- Do NOT show technical details, JSON, or tool names here.
 
-Instead, say: "I'll analyze the directory for you" and then output the JSON block silently.
+Part 2: JSON Command Block
+- After your text response, provide the tool command in a Markdown JSON block.
+- The system will read this block and execute the tool.
+- The user will NOT see this block (it is hidden).
 
-Available Tools:
+Example:
+User: "Organize my files"
+Assistant:
+I'll analyze your directory first to see how we should organize them.
+
+\`\`\`json
+{
+  "tool": "analyze_directory",
+  "arguments": {
+    "path": "."
+  }
+}
+\`\`\`
+
+# AVAILABLE TOOLS
 ${toolDefs}
 
 ${skillContext || ''}
 
-GUIDELINES:
-1. Only use tools when necessary.
-2. Check the "Parameters" for each tool carefully.
-3. Use the JSON format exactly as shown above, but keep it internal.
-4. If you don't need to use a tool, just respond normally.
-5. Always describe actions in natural language to the user, never show JSON.
+# GUIDELINES
+1. Check the "Parameters" for each tool carefully.
+2. Use the exact JSON format: { "tool": "name", "arguments": { ... } }
+3. If no tool is needed (just chatting), skip Part 2.
+4. Parsing Rules:
+   - "folder" -> Use create_directory
+   - "file" -> Use write_file_content
+   - "inside/in" -> Include folder name in the file path (e.g. "Folder/file.txt")
 
-MULTI-STEP REQUESTS (CRITICAL):
-When a user's request involves BOTH folders AND files with hierarchy:
-- "make a folder called X and add a document inside called Y"
-  → This requires TWO tool calls:
-  → First: create_directory for folder "X"
-  → Then: write_file_content for file "X/Y.txt" (note: file goes INSIDE the folder)
-
-PARSING RULES:
-- "folder", "directory" = Use create_directory or folder_creation_tab
-- "document", "file" = Use write_file_content
-- "inside", "in", "within" = The file path should include the folder path
-- If user says "folder X with document Y inside", the file path is "X/Y.ext" NOT just "Y.ext"
-
-DO NOT interpret "make a folder called X and add a document inside" as "create two files".
-A folder is NOT a file. Parse the hierarchy correctly.
-`;
+Start your response now.`;
 }

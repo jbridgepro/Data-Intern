@@ -53,8 +53,32 @@ export class PromptBuilder {
             'organize', 'organize files', 'sort', 'move', 'copy', 'delete', 'rename',
             'find', 'search', 'duplicate', 'analyze', 'create', 'generate', 'list',
             'show', 'display', 'count', 'size', 'folder', 'file', 'directory', 'project',
-            'run', 'execute', 'install'
+            'run', 'execute', 'install', 'fix', 'solve', 'issue', 'problem', 'task',
+            'audit', 'check', 'scan', 'verify', 'test', 'debug', 'convert', 'transform'
         ];
+
+        // Explicitly check for file extensions
+        if (/\.(txt|docx|doc|pdf|md|rtf|xlsx|xls|csv|py|js|ts|sql|json|xml|html|css)/i.test(lowerCommand)) {
+            return true;
+        }
+
+        // Check for "document" keyword which often implies file creation
+        if (lowerCommand.includes('document')) {
+            return true;
+        }
+
+        // Check for confirmation keywords that might be responding to a previous tool proposal
+        const confirmationKeywords = ['yes', 'yeah', 'yep', 'ok', 'okay', 'sure', 'proceed', 'confirm', 'approve', 'do it', 'go ahead'];
+        // Only trigger if it's a short command (likely a response)
+        if (command.split(' ').length < 10 && confirmationKeywords.some(kw => lowerCommand === kw || lowerCommand.includes(kw))) {
+            return true;
+        }
+
+        // Strong action verbs that should almost always trigger tool mode
+        const strongActions = ['create', 'make', 'generate', 'build', 'write', 'delete', 'remove', 'move', 'copy', 'rename'];
+        if (strongActions.some(action => lowerCommand.startsWith(action + ' '))) {
+            return true;
+        }
 
         return toolKeywords.some(keyword => lowerCommand.includes(keyword));
     }
@@ -172,7 +196,7 @@ export class PromptBuilder {
 
         // Detect composite folder+file requests (e.g., "make folder X and add document Y inside")
         const isCompositeRequest = this.isCompositeCreationRequest(command);
-        
+
         // Detect if user wants to create documents/files (not folders)
         const wantsDocuments = /(?:create|make|generate)\s+(?:two|three|four|five|\d+)?\s*(?:document|documents|file|files|\.docx|\.txt|\.md)/i.test(command);
         const hasSpecificFileNames = /(?:called|named|titled|with name|with the name|one that says|that says|the first|the second)\s+["']?([^"']+)["']?/i.test(command);
@@ -292,15 +316,15 @@ export class PromptBuilder {
      */
     private static isCompositeCreationRequest(command: string): boolean {
         const lower = command.toLowerCase();
-        
+
         // Check for folder creation followed by file creation with "inside/in/within"
         const hasFolderKeyword = /(?:folder|directory)/.test(lower);
         const hasFileKeyword = /(?:document|file)/.test(lower);
         const hasHierarchy = /(?:inside|in\s+it|within|in\s+the\s+folder|into\s+it|put\s+.+\s+in)/.test(lower);
-        
+
         // Also check for "and add/put" pattern which implies hierarchy
         const hasAndAdd = /folder.*(?:and\s+(?:add|put|create)).*(?:document|file)/i.test(lower);
-        
+
         return hasFolderKeyword && hasFileKeyword && (hasHierarchy || hasAndAdd);
     }
 
@@ -310,11 +334,11 @@ export class PromptBuilder {
      */
     private static needsFileTypeClarification(command: string): boolean {
         const lower = command.toLowerCase();
-        
+
         // Check if extension is explicitly specified
         const hasExplicitExtension = /\.(txt|docx|doc|pdf|md|rtf|xlsx|xls|csv|py|js|ts|sql|json|xml|html|css)(?:\s|$|,)/i.test(command);
         if (hasExplicitExtension) return false;
-        
+
         // Check for clear file type indicators (no clarification needed)
         const clearTypes = [
             /text\s*file/i,           // "text file" → .txt
@@ -330,9 +354,9 @@ export class PromptBuilder {
             /html\s*(?:file|page)/i,  // "HTML file" → .html
             /readme/i,                // "README" → .md
         ];
-        
+
         if (clearTypes.some(pattern => pattern.test(command))) return false;
-        
+
         // These terms are ambiguous and need clarification
         const ambiguousTerms = [
             /(?:create|make|add|put)\s+(?:a\s+)?document/i,  // "create a document"
@@ -341,7 +365,7 @@ export class PromptBuilder {
             /document\s+(?:called|named|inside)/i,          // "document called X"
             /file\s+(?:called|named)\s+[^.]+(?:\s|$)/i,     // "file called X" (no extension)
         ];
-        
+
         return ambiguousTerms.some(pattern => pattern.test(command));
     }
 
@@ -350,11 +374,11 @@ export class PromptBuilder {
      */
     private static generateCompositeCreationPrompt(command: string, currentDirectory: string): string {
         const needsClarification = this.needsFileTypeClarification(command);
-        
+
         let prompt = '';
         prompt += `\n\n=== COMPOSITE FOLDER + FILE REQUEST ===\n`;
         prompt += `The user wants to create a FOLDER and put a FILE INSIDE it.\n\n`;
-        
+
         if (needsClarification) {
             // File type is ambiguous - ask for clarification
             prompt += `\n⚠️ **STOP - CLARIFICATION REQUIRED** ⚠️\n\n`;
@@ -385,18 +409,18 @@ export class PromptBuilder {
             prompt += `- Use RELATIVE paths only - resolves to: ${currentDirectory || 'current directory'}\n`;
             prompt += `- Execute BOTH tools in sequence: folder first, then file inside\n\n`;
         }
-        
+
         return prompt;
     }
-    
+
     /**
      * Generates prompt for file creation that may need clarification.
      */
     private static generateFileCreationPrompt(command: string): string {
         const needsClarification = this.needsFileTypeClarification(command);
-        
+
         let prompt = '';
-        
+
         if (needsClarification) {
             // File type is ambiguous - ask for clarification
             prompt += `\n\n⚠️ **STOP - CLARIFICATION REQUIRED** ⚠️\n\n`;
@@ -428,7 +452,7 @@ export class PromptBuilder {
             prompt += `- NEVER use placeholder text like "[currentDirectory]"\n`;
             prompt += `- Execute immediately - no confirmation needed for file creation\n\n`;
         }
-        
+
         return prompt;
     }
 }

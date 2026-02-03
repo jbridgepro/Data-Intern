@@ -24,6 +24,7 @@ import { generateSystemPrompt } from './aiGuidelines';
 import { getClawdhubSkillsContext } from './clawdhubToolDiscovery';
 import type { ToolExecutionInfo } from '../components/ToolExecutionCard';
 import type { ReasoningStep } from '../components/ReasoningChain';
+import { ResponseParser } from '../services/ResponseParser';
 import {
   initializeOllamaClient,
   processCommandWithOllama,
@@ -279,6 +280,9 @@ async function processCommandWithAnthropicProvider(
     };
   }
 
+  const toolExecutions: ToolExecutionInfo[] = [];
+  const reasoningSteps: ReasoningStep[] = [];
+
   try {
     // Get all available tools (custom + MCP), filtered by settings
     const tools = await getAllTools(settings);
@@ -363,8 +367,7 @@ async function processCommandWithAnthropicProvider(
 
     let finalResponse = '';
     let operation: FileOperation | undefined;
-    const toolExecutions: ToolExecutionInfo[] = [];
-    const reasoningSteps: ReasoningStep[] = [];
+    // Definitions moved to outer scope
     let maxIterations = 10; // Prevent infinite loops
     let iteration = 0;
     let stepCounter = 1;
@@ -1007,6 +1010,13 @@ async function processCommandWithAnthropicProvider(
 
     return {
       content: `I encountered an error: ${error.message || 'Unknown error'}. Please try again.`,
+      metadata: {
+        model: settings.model,
+        toolsUsed: toolExecutions.length,
+        toolExecutions,
+        reasoningSteps,
+        isError: true,
+      }
     };
   }
 }
@@ -1090,6 +1100,8 @@ async function processCommandWithOpenRouterProvider(
   // Update service with current settings
   openRouterService.updateSettings(openRouterSettings);
 
+  const toolExecutions: ToolExecutionInfo[] = [];
+
   try {
     // Get all available tools (custom + MCP), filtered by settings
     const tools = await getAllTools(settings);
@@ -1148,6 +1160,7 @@ async function processCommandWithOpenRouterProvider(
     const toolContext: ToolContext = {
       currentDirectory,
       settings,
+      directoryAnalysis,
     };
 
     // Create tool executor function
@@ -1187,7 +1200,7 @@ async function processCommandWithOpenRouterProvider(
 
     // Extract the final content
     const assistantMessage = response.choices[0]?.message;
-    const content = typeof assistantMessage?.content === 'string'
+    let finalResponse = typeof assistantMessage?.content === 'string'
       ? assistantMessage.content
       : '';
 
@@ -1202,16 +1215,300 @@ async function processCommandWithOpenRouterProvider(
     // Check for operation in tool results
     let operation: FileOperation | undefined;
     for (const toolResult of toolResults) {
+      if (toolResult.result?.operation) {
+        operation = toolResult.result.operation;
+        break;
+      }
       if (toolResult.result?.data?.operation) {
         operation = toolResult.result.data.operation;
         break;
       }
     }
 
+    // Normalize tool results into execution info for UI + verification
+    for (const toolResult of toolResults) {
+      const status = toolResult.error
+        ? 'error'
+        : toolResult.result?.success
+          ? 'success'
+          : 'error';
+      toolExecutions.push({
+        tool: toolResult.toolName,
+        description: getToolDescription(toolResult.toolName, toolResult.args || {}),
+        params: toolResult.args || {},
+        status,
+        result: toolResult.error
+          ? { success: false, error: toolResult.error }
+          : toolResult.result,
+      });
+    }
+
+    // ===== JSON COMMAND FALLBACK =====
+    // Some OpenRouter models respond with JSON blocks instead of tool_calls.
+    if (toolExecutions.length === 0) {
+      const parsedJson = ResponseParser.parseJsonCommand(finalResponse);
+      if (parsedJson) {
+        let jsonArgs: Record<string, any> = {};
+        try {
+          jsonArgs = typeof parsedJson.arguments === 'string'
+            ? JSON.parse(parsedJson.arguments)
+            : (parsedJson.arguments || {});
+        } catch {
+          jsonArgs = {};
+        }
+
+        let jsonResult: ToolResult;
+        try {
+          if (isMCPTool(parsedJson.tool)) {
+            const parsed = parseMCPToolName(parsedJson.tool);
+            if (!parsed) {
+              jsonResult = { success: false, error: `Invalid MCP tool name: ${parsedJson.tool}` };
+            } else {
+              jsonResult = await executeMCPTool(parsed.server, parsed.tool, jsonArgs);
+            }
+          } else {
+            jsonResult = await executeTool(parsedJson.tool, jsonArgs, toolContext);
+          }
+        } catch (error: any) {
+          jsonResult = { success: false, error: error.message || 'Tool execution failed' };
+        }
+
+        toolExecutions.push({
+          tool: parsedJson.tool,
+          description: getToolDescription(parsedJson.tool, jsonArgs),
+          params: jsonArgs,
+          status: jsonResult.success ? 'success' : 'error',
+          result: jsonResult,
+        });
+
+        if (!operation && jsonResult.operation) {
+          operation = jsonResult.operation;
+        }
+
+        finalResponse = formatToolResultForUser(parsedJson.tool, jsonResult);
+      }
+    }
+
+    // ===== DIRECT CREATION FALLBACK =====
+    // If no tools executed, ensure folder/file creation requests are fulfilled.
+    const executedToolsCount = toolExecutions.length;
+    const requiresClarification = needsFileTypeClarification(command);
+
+    if (!requiresClarification) {
+      if (isCompositeCreationRequest(command)) {
+        const createdFolders = toolExecutions.filter((e) =>
+          e.tool === 'create_directory' || e.tool === 'folder_creation_tab'
+        );
+        const createdFiles = toolExecutions.filter((e) => e.tool === 'write_file_content');
+
+        if ((createdFolders.length === 0 || createdFiles.length === 0) && toolContext.currentDirectory) {
+          const parsed = parseCompositeCreationRequest(command);
+          const createdItems: string[] = [];
+          const errors: string[] = [];
+
+          for (const folder of parsed.folders) {
+            const folderPath = `${toolContext.currentDirectory}/${folder.folderName}`;
+            const folderRes = await executeTool('create_directory', { path: folderPath }, toolContext);
+            toolExecutions.push({
+              tool: 'create_directory',
+              description: `Create folder: ${folder.folderName}`,
+              params: { path: folderPath },
+              status: folderRes.success ? 'success' : 'error',
+              result: folderRes,
+            });
+
+            if (folderRes.success) {
+              createdItems.push(`📁 ${folder.folderName}`);
+
+              for (const file of folder.filesInside) {
+                const filePath = `${folderPath}/${file.fileName}`;
+                const fileRes = await executeTool(
+                  'write_file_content',
+                  { path: filePath, content: file.content || '', createDirectories: true },
+                  toolContext
+                );
+                toolExecutions.push({
+                  tool: 'write_file_content',
+                  description: `Create file: ${file.fileName}`,
+                  params: { path: filePath, content: file.content || '', createDirectories: true },
+                  status: fileRes.success ? 'success' : 'error',
+                  result: fileRes,
+                });
+
+                if (fileRes.success) {
+                  createdItems.push(`  📄 ${file.fileName}`);
+                } else if (fileRes.error) {
+                  errors.push(fileRes.error);
+                }
+              }
+            } else if (folderRes.error) {
+              errors.push(folderRes.error);
+            }
+          }
+
+          if (createdItems.length > 0) {
+            finalResponse = `Done! I created:\n${createdItems.join('\n')}`;
+            if (errors.length > 0) finalResponse += `\n\n⚠️ Some errors: ${errors.join('; ')}`;
+          }
+        }
+      } else if (isFolderCreationRequest(command)) {
+        const createdFolders = toolExecutions.filter((e) =>
+          e.tool === 'create_directory' || e.tool === 'folder_creation_tab'
+        );
+
+        if (createdFolders.length === 0 && toolContext.currentDirectory) {
+          const folder = parseFolderCreationRequest(command);
+          if (folder) {
+            const folderPath = `${toolContext.currentDirectory}/${folder.folderName}`;
+            const res = await executeTool('create_directory', { path: folderPath }, toolContext);
+            toolExecutions.push({
+              tool: 'create_directory',
+              description: `Create folder: ${folder.folderName}`,
+              params: { path: folderPath },
+              status: res.success ? 'success' : 'error',
+              result: res,
+            });
+
+            if (res.success) {
+              finalResponse = `Done! I created the folder: 📁 ${folder.folderName}`;
+            } else {
+              finalResponse = `I encountered an error creating the folder: ${res.error}`;
+            }
+          }
+        }
+      } else if (isFileCreationRequest(command)) {
+        const wrote = toolExecutions.filter((e) => e.tool === 'write_file_content');
+        if (wrote.length === 0 && toolContext.currentDirectory) {
+          const items = parseFileCreationRequest(command);
+          if (items.length > 0) {
+            const created: string[] = [];
+            const errors: string[] = [];
+            for (const item of items) {
+              const params = {
+                path: `${toolContext.currentDirectory}/${item.fileName}`,
+                content: item.content || '',
+                createDirectories: true,
+                overwrite: false,
+              };
+              const res = await executeTool('write_file_content', params, toolContext);
+              toolExecutions.push({
+                tool: 'write_file_content',
+                description: `Create file: ${item.fileName}`,
+                params,
+                status: res.success ? 'success' : 'error',
+                result: res,
+              });
+              if (res.success) created.push(item.fileName);
+              else if (res.error) errors.push(res.error);
+            }
+            const successCount = created.length;
+            if (successCount > 0) {
+              finalResponse = `Created ${successCount} file(s): ${created.join(', ')}.`;
+              if (errors.length > 0) finalResponse += ` ${errors.length} failed: ${errors.join('; ')}`;
+            } else {
+              finalResponse = `I attempted to create the files but encountered errors: ${errors.join('; ')}.`;
+            }
+          }
+        }
+      }
+    }
+
+    if (toolExecutions.length > executedToolsCount && (!finalResponse || finalResponse.trim().length === 0)) {
+      finalResponse = 'Done! I completed the operation.';
+    }
+
+    // ===== CLARIFICATION OVERRIDE =====
+    const allToolsFailed = toolExecutions.length > 0 && toolExecutions.every(t => t.status === 'error');
+    const noSuccessfulTools = toolExecutions.length === 0 || allToolsFailed;
+
+    if (requiresClarification && noSuccessfulTools) {
+      const alreadyAsking = /what\s+(?:type|kind|format)\s+(?:of\s+)?(?:file|document)/i.test(finalResponse);
+      if (!alreadyAsking) {
+        if (isCompositeCreationRequest(command)) {
+          const parsed = parseCompositeCreationRequest(command);
+          if (parsed.folders.length > 0) {
+            const folder = parsed.folders[0];
+            const fileName = folder.filesInside[0]?.fileName?.replace(/\.[^.]+$/, '') || 'the document';
+            finalResponse = `I'll create the folder "${folder.folderName}" for you.\n\nWhat type of file would you like for "${fileName}"?\n- **.txt** - Plain text\n- **.docx** - Word document\n- **.md** - Markdown\n- Or tell me another format`;
+          } else {
+            finalResponse = `What type of file would you like to create?\n- **.txt** - Plain text\n- **.docx** - Word document\n- **.md** - Markdown\n- Or tell me another format`;
+          }
+        } else {
+          finalResponse = `What type of file would you like to create?\n- **.txt** - Plain text\n- **.docx** - Word document\n- **.md** - Markdown\n- Or tell me another format`;
+        }
+      }
+    }
+
+    // Clean any JSON/tool artifacts from the final response
+    finalResponse = ResponseParser.cleanResponse(finalResponse);
+
+    // Verify folder creation responses
+    const wantsFolderCreation = isFolderCreationRequest(command) || isCompositeCreationRequest(command);
+    if (wantsFolderCreation) {
+      const folderExecutions = toolExecutions.filter(
+        exec => exec.tool === 'create_directory' || exec.tool === 'folder_creation_tab'
+      );
+      const successfulFolderExecutions = folderExecutions.filter(exec => exec.status === 'success' && exec.result?.success);
+
+      if (folderExecutions.length === 0) {
+        if (/created|done|completed/i.test(finalResponse)) {
+          finalResponse = 'I apologize, but I was unable to create the folder. The tools were not executed. Please try again.';
+        }
+      } else if (successfulFolderExecutions.length === 0) {
+        const errors = folderExecutions
+          .filter(exec => exec.result && !exec.result.success)
+          .map(exec => exec.result?.error || 'Unknown error')
+          .join('; ');
+        finalResponse = `I attempted to create the folder but encountered errors: ${errors}. Please check the path and permissions.`;
+      }
+    }
+
+    // Verify file creation responses
+    const wantsFileCreation = /(?:create|make|generate).*(?:document|file|files)/i.test(command);
+    if (wantsFileCreation) {
+      const writeFileExecutions = toolExecutions.filter(exec => exec.tool === 'write_file_content');
+      const successfulExecutions = writeFileExecutions.filter(exec => exec.status === 'success' && exec.result?.success);
+
+      if (writeFileExecutions.length === 0) {
+        if (/created|done|completed/i.test(finalResponse)) {
+          finalResponse = 'I apologize, but I was unable to create the files. The tools were not executed. Please try again.';
+        }
+      } else if (successfulExecutions.length === 0) {
+        const errors = writeFileExecutions
+          .filter(exec => exec.result && !exec.result.success)
+          .map(exec => exec.result?.error || 'Unknown error')
+          .join('; ');
+        finalResponse = `I attempted to create the files but encountered errors: ${errors}. Please check the file paths and permissions.`;
+      } else if (successfulExecutions.length < writeFileExecutions.length) {
+        const failedCount = writeFileExecutions.length - successfulExecutions.length;
+        const errors = writeFileExecutions
+          .filter(exec => exec.result && !exec.result.success)
+          .map(exec => exec.result?.error || 'Unknown error')
+          .join('; ');
+        const createdFiles = successfulExecutions
+          .map(exec => exec.result?.data?.fileName || exec.params?.path?.split('/').pop())
+          .filter(Boolean);
+        finalResponse = `Created ${successfulExecutions.length} file(s): ${createdFiles.join(', ')}. However, ${failedCount} file(s) failed: ${errors}`;
+      } else {
+        const createdFiles = successfulExecutions
+          .map(exec => exec.result?.data?.fileName || exec.params?.path?.split('/').pop())
+          .filter(Boolean);
+        if (createdFiles.length > 0) {
+          finalResponse = `Created ${createdFiles.length} file(s): ${createdFiles.join(', ')}.`;
+        }
+      }
+    }
+
+    const toolsUsedNames = toolExecutions.map(exec => exec.tool);
     return {
-      content: content || 'I completed the requested operation.',
+      content: finalResponse || 'I completed the requested operation.',
       operation,
-      metadata,
+      metadata: {
+        ...metadata,
+        toolsUsed: toolsUsedNames,
+        toolsUsedCount: toolExecutions.length,
+        toolExecutions,
+      },
     };
 
   } catch (error: any) {

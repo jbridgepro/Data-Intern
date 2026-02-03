@@ -5,7 +5,14 @@
  * Handles persistence of user data
  */
 
-import { DatabaseConnection, ExportTemplate, ImportTemplate, SavedQuery, ScheduledExport } from "../types";
+import {
+  ActivityEntry,
+  DatabaseConnection,
+  ExportTemplate,
+  ImportTemplate,
+  SavedQuery,
+  ScheduledExport,
+} from "../types";
 import { encryptPassword, decryptPassword } from "./databaseConnection";
 
 const STORAGE_KEYS = {
@@ -15,6 +22,7 @@ const STORAGE_KEYS = {
   QUERIES: "sql-export-wizard-queries",
   SCHEDULES: "sql-export-wizard-schedules",
   SETTINGS: "sql-export-wizard-settings",
+  ACTIVITY: "sql-export-wizard-activity",
 };
 
 // Connection Storage
@@ -276,4 +284,33 @@ export function saveSettings(settings: Partial<WizardSettings>): void {
   const current = getSettings();
   const updated = { ...current, ...settings };
   localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(updated));
+}
+
+// Activity Timeline Storage
+export function getActivityEntries(): ActivityEntry[] {
+  try {
+    const data = localStorage.getItem(STORAGE_KEYS.ACTIVITY);
+    if (!data) return [];
+
+    const entries: ActivityEntry[] = JSON.parse(data);
+    return entries
+      .filter((entry) => entry && entry.timestamp)
+      .sort(
+        (a, b) =>
+          new Date(b.timestamp).getTime() -
+          new Date(a.timestamp).getTime(),
+      );
+  } catch {
+    return [];
+  }
+}
+
+export function addActivityEntry(entry: ActivityEntry): void {
+  const entries = getActivityEntries();
+  const updated = [entry, ...entries].slice(0, 30);
+  localStorage.setItem(STORAGE_KEYS.ACTIVITY, JSON.stringify(updated));
+}
+
+export function clearActivityEntries(): void {
+  localStorage.removeItem(STORAGE_KEYS.ACTIVITY);
 }

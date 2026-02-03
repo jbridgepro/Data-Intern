@@ -38,7 +38,7 @@ import type {
 import { agentService } from '../../agents/services/agentService';
 import { Command } from '@tauri-apps/plugin-shell';
 import { readDir, stat, readTextFile, writeTextFile, remove, mkdir, exists } from '@tauri-apps/plugin-fs';
-import { join, basename, dirname, extname } from '@tauri-apps/api/path';
+import { join, basename, dirname, extname, homeDir } from '@tauri-apps/api/path';
 
 /**
  * Tool definition interface matching Anthropic's tool use format.
@@ -2980,9 +2980,22 @@ async function executeWriteFileContent(args: Record<string, any>, context: ToolC
     console.log(`[write_file_content] Original path: ${filePath}`);
     console.log(`[write_file_content] Sanitized path: ${normalizedPath}`);
 
-    // If path doesn't start with /, assume it's relative to current directory
-    if (!normalizedPath.startsWith('/') && context.currentDirectory) {
-      normalizedPath = await join(context.currentDirectory, normalizedPath);
+    // If path doesn't start with /, assume it's relative to current directory or home directory
+    if (!normalizedPath.startsWith('/')) {
+      // Use currentDirectory if available, otherwise fall back to home directory
+      let baseDir = context.currentDirectory;
+      if (!baseDir) {
+        try {
+          baseDir = await homeDir();
+          console.log(`[write_file_content] No currentDirectory set, using home directory: ${baseDir}`);
+        } catch (e) {
+          console.error(`[write_file_content] Failed to get home directory:`, e);
+          return { success: false, error: 'No current directory set and could not determine home directory. Please select a directory first.' };
+        }
+      }
+      if (baseDir) {
+        normalizedPath = await join(baseDir, normalizedPath);
+      }
     }
 
     console.log(`[write_file_content] Final resolved path: ${normalizedPath}`);
@@ -3568,9 +3581,22 @@ async function executeCreateDirectory(args: Record<string, any>, context: ToolCo
     console.log(`[create_directory] Original path: ${dirPath}`);
     console.log(`[create_directory] Sanitized path: ${normalizedPath}`);
 
-    // If path doesn't start with /, assume it's relative to current directory
-    if (!normalizedPath.startsWith('/') && context.currentDirectory) {
-      normalizedPath = await join(context.currentDirectory, normalizedPath);
+    // If path doesn't start with /, assume it's relative to current directory or home directory
+    if (!normalizedPath.startsWith('/')) {
+      // Use currentDirectory if available, otherwise fall back to home directory
+      let baseDir = context.currentDirectory;
+      if (!baseDir) {
+        try {
+          baseDir = await homeDir();
+          console.log(`[create_directory] No currentDirectory set, using home directory: ${baseDir}`);
+        } catch (e) {
+          console.error(`[create_directory] Failed to get home directory:`, e);
+          return { success: false, error: 'No current directory set and could not determine home directory. Please select a directory first.' };
+        }
+      }
+      if (baseDir) {
+        normalizedPath = await join(baseDir, normalizedPath);
+      }
     }
 
     console.log(`[create_directory] Final resolved path: ${normalizedPath}`);

@@ -60,16 +60,16 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { 
-  auditLogger, 
-  formatDuration, 
+import {
+  auditLogger,
+  formatDuration,
   formatLogTimestamp,
   getLogLevelColor,
 } from "../utils/auditLogger";
-import type { 
-  AuditLogEntry, 
-  AuditLogLevel, 
-  AuditLogCategory, 
+import type {
+  AuditLogEntry,
+  AuditLogLevel,
+  AuditLogCategory,
   AuditLogFilter,
   AuditLogStats,
   AuditLogExportFormat,
@@ -96,7 +96,9 @@ export const AuditLogPanel = ({
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
   const [searchText, setSearchText] = useState("");
   const [levelFilter, setLevelFilter] = useState<AuditLogLevel | "all">("all");
-  const [categoryFilter, setCategoryFilter] = useState<AuditLogCategory | "all">("all");
+  const [categoryFilter, setCategoryFilter] = useState<
+    AuditLogCategory | "all"
+  >("all");
   const [showOnlyErrors, setShowOnlyErrors] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
@@ -113,7 +115,7 @@ export const AuditLogPanel = ({
 
     // Subscribe to new log entries
     const unsubscribe = auditLogger.addListener((entry, newStats) => {
-      setLogs(prev => [entry, ...prev].slice(0, 100));
+      setLogs((prev) => [entry, ...prev].slice(0, 100));
       setStats(newStats);
     });
 
@@ -147,15 +149,17 @@ export const AuditLogPanel = ({
     setIsExporting(true);
     try {
       const exportData = auditLogger.exportLogs(format);
-      
+
       // Create download
-      const blob = new Blob([exportData.data], { 
-        type: format === 'json' ? 'application/json' : 'text/plain' 
+      const blob = new Blob([exportData.data], {
+        type: format === "json" ? "application/json" : "text/plain",
       });
       const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
+      const a = document.createElement("a");
       a.href = url;
-      a.download = `audit-log-${new Date().toISOString().split('T')[0]}.${format}`;
+      a.download = `audit-log-${
+        new Date().toISOString().split("T")[0]
+      }.${format}`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -178,27 +182,42 @@ export const AuditLogPanel = ({
   // Get icon for log category
   const getCategoryIcon = (category: AuditLogCategory) => {
     switch (category) {
-      case 'tool_execution': return <Wrench className="h-4 w-4" />;
-      case 'file_operation': return <FileText className="h-4 w-4" />;
-      case 'ai_request': return <Send className="h-4 w-4" />;
-      case 'ai_response': return <MessageSquare className="h-4 w-4" />;
-      case 'permission': return <Shield className="h-4 w-4" />;
-      case 'settings': return <Settings className="h-4 w-4" />;
-      case 'session': return <User className="h-4 w-4" />;
-      case 'error': return <AlertCircle className="h-4 w-4" />;
-      case 'security': return <Lock className="h-4 w-4" />;
-      default: return <Info className="h-4 w-4" />;
+      case "tool_execution":
+        return <Wrench className="h-4 w-4" />;
+      case "file_operation":
+        return <FileText className="h-4 w-4" />;
+      case "ai_request":
+        return <Send className="h-4 w-4" />;
+      case "ai_response":
+        return <MessageSquare className="h-4 w-4" />;
+      case "permission":
+        return <Shield className="h-4 w-4" />;
+      case "settings":
+        return <Settings className="h-4 w-4" />;
+      case "session":
+        return <User className="h-4 w-4" />;
+      case "error":
+        return <AlertCircle className="h-4 w-4" />;
+      case "security":
+        return <Lock className="h-4 w-4" />;
+      default:
+        return <Info className="h-4 w-4" />;
     }
   };
 
   // Get icon for log level
   const getLevelIcon = (level: AuditLogLevel) => {
     switch (level) {
-      case 'debug': return <Bug className="h-3.5 w-3.5 text-gray-500" />;
-      case 'info': return <Info className="h-3.5 w-3.5 text-blue-500" />;
-      case 'warn': return <AlertTriangle className="h-3.5 w-3.5 text-yellow-500" />;
-      case 'error': return <XCircle className="h-3.5 w-3.5 text-red-500" />;
-      case 'critical': return <Zap className="h-3.5 w-3.5 text-red-700" />;
+      case "debug":
+        return <Bug className="h-3.5 w-3.5 text-gray-500" />;
+      case "info":
+        return <Info className="h-3.5 w-3.5 text-blue-500" />;
+      case "warn":
+        return <AlertTriangle className="h-3.5 w-3.5 text-yellow-500" />;
+      case "error":
+        return <XCircle className="h-3.5 w-3.5 text-red-500" />;
+      case "critical":
+        return <Zap className="h-3.5 w-3.5 text-red-700" />;
     }
   };
 
@@ -246,13 +265,13 @@ export const AuditLogPanel = ({
                   "flex items-center gap-2 p-2 rounded-md text-xs",
                   log.success
                     ? "bg-slate-50 dark:bg-slate-800/50"
-                    : "bg-red-50 dark:bg-red-900/20"
+                    : "bg-red-50 dark:bg-red-900/20",
                 )}
               >
                 {getCategoryIcon(log.category)}
                 <span className="flex-1 truncate">{log.message}</span>
                 <span className="text-muted-foreground">
-                  {formatLogTimestamp(log.timestamp).split(' ')[1]}
+                  {formatLogTimestamp(log.timestamp).split(" ")[1]}
                 </span>
               </div>
             ))}
@@ -273,7 +292,8 @@ export const AuditLogPanel = ({
               Audit Log
             </CardTitle>
             <CardDescription>
-              {stats?.totalEntries || 0} entries • {stats?.successRate?.toFixed(0) || 100}% success
+              {stats?.totalEntries || 0} entries •{" "}
+              {stats?.successRate?.toFixed(0) || 100}% success
             </CardDescription>
           </div>
           {onClose && (
@@ -288,20 +308,26 @@ export const AuditLogPanel = ({
           {stats && (
             <div className="grid grid-cols-4 gap-2 mb-4">
               <div className="text-center p-2 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
-                <div className="text-lg font-semibold text-blue-600">{stats.byLevel.info}</div>
+                <div className="text-lg font-semibold text-blue-600">
+                  {stats.byLevel.info}
+                </div>
                 <div className="text-xs text-muted-foreground">Info</div>
               </div>
               <div className="text-center p-2 bg-yellow-50 dark:bg-yellow-900/20 rounded-lg">
-                <div className="text-lg font-semibold text-yellow-600">{stats.byLevel.warn}</div>
+                <div className="text-lg font-semibold text-yellow-600">
+                  {stats.byLevel.warn}
+                </div>
                 <div className="text-xs text-muted-foreground">Warnings</div>
               </div>
               <div className="text-center p-2 bg-red-50 dark:bg-red-900/20 rounded-lg">
-                <div className="text-lg font-semibold text-red-600">{stats.errorCount}</div>
+                <div className="text-lg font-semibold text-red-600">
+                  {stats.errorCount}
+                </div>
                 <div className="text-xs text-muted-foreground">Errors</div>
               </div>
               <div className="text-center p-2 bg-green-50 dark:bg-green-900/20 rounded-lg">
                 <div className="text-lg font-semibold text-green-600">
-                  {stats.avgDuration ? formatDuration(stats.avgDuration) : '-'}
+                  {stats.avgDuration ? formatDuration(stats.avgDuration) : "-"}
                 </div>
                 <div className="text-xs text-muted-foreground">Avg Time</div>
               </div>
@@ -321,7 +347,10 @@ export const AuditLogPanel = ({
             </div>
 
             <div className="flex gap-2">
-              <Select value={levelFilter} onValueChange={(v) => setLevelFilter(v as any)}>
+              <Select
+                value={levelFilter}
+                onValueChange={(v) => setLevelFilter(v as any)}
+              >
                 <SelectTrigger className="flex-1">
                   <SelectValue placeholder="Level" />
                 </SelectTrigger>
@@ -335,7 +364,10 @@ export const AuditLogPanel = ({
                 </SelectContent>
               </Select>
 
-              <Select value={categoryFilter} onValueChange={(v) => setCategoryFilter(v as any)}>
+              <Select
+                value={categoryFilter}
+                onValueChange={(v) => setCategoryFilter(v as any)}
+              >
                 <SelectTrigger className="flex-1">
                   <SelectValue placeholder="Category" />
                 </SelectTrigger>
@@ -388,7 +420,7 @@ export const AuditLogPanel = ({
                       "p-3 rounded-lg border transition-colors",
                       log.success
                         ? "bg-white dark:bg-slate-800/50 border-slate-200 dark:border-slate-700"
-                        : "bg-red-50 dark:bg-red-900/10 border-red-200 dark:border-red-800"
+                        : "bg-red-50 dark:bg-red-900/10 border-red-200 dark:border-red-800",
                     )}
                   >
                     {/* Log Header */}
@@ -429,11 +461,15 @@ export const AuditLogPanel = ({
                       <div className="mt-3 pt-3 border-t border-slate-200 dark:border-slate-700 space-y-2 text-xs">
                         <div className="grid grid-cols-2 gap-2">
                           <div>
-                            <span className="text-muted-foreground">Category:</span>{" "}
+                            <span className="text-muted-foreground">
+                              Category:
+                            </span>{" "}
                             <span className="font-medium">{log.category}</span>
                           </div>
                           <div>
-                            <span className="text-muted-foreground">Action:</span>{" "}
+                            <span className="text-muted-foreground">
+                              Action:
+                            </span>{" "}
                             <span className="font-medium">{log.action}</span>
                           </div>
                         </div>
@@ -447,26 +483,36 @@ export const AuditLogPanel = ({
 
                         {log.fileCount !== undefined && (
                           <div>
-                            <span className="text-muted-foreground">Files:</span>{" "}
+                            <span className="text-muted-foreground">
+                              Files:
+                            </span>{" "}
                             <span className="font-medium">{log.fileCount}</span>
                           </div>
                         )}
 
                         {log.error && (
                           <div className="p-2 bg-red-100 dark:bg-red-900/30 rounded text-red-700 dark:text-red-300">
-                            <span className="font-medium">Error:</span> {log.error}
+                            <span className="font-medium">Error:</span>{" "}
+                            {log.error}
                           </div>
                         )}
 
                         {log.affectedFiles && log.affectedFiles.length > 0 && (
                           <div>
-                            <span className="text-muted-foreground">Files:</span>
+                            <span className="text-muted-foreground">
+                              Files:
+                            </span>
                             <div className="mt-1 space-y-1">
-                              {log.affectedFiles.slice(0, 3).map((file, idx) => (
-                                <div key={idx} className="text-muted-foreground truncate pl-2">
-                                  • {file.split('/').pop()}
-                                </div>
-                              ))}
+                              {log.affectedFiles
+                                .slice(0, 3)
+                                .map((file, idx) => (
+                                  <div
+                                    key={idx}
+                                    className="text-muted-foreground truncate pl-2"
+                                  >
+                                    • {file.split("/").pop()}
+                                  </div>
+                                ))}
                               {log.affectedFiles.length > 3 && (
                                 <div className="text-muted-foreground pl-2">
                                   ... and {log.affectedFiles.length - 3} more
@@ -489,7 +535,7 @@ export const AuditLogPanel = ({
 
           {/* Actions */}
           <Separator className="my-4" />
-          
+
           <div className="flex gap-2">
             <TooltipProvider>
               <Tooltip>
@@ -498,7 +544,7 @@ export const AuditLogPanel = ({
                     variant="outline"
                     size="sm"
                     className="flex-1"
-                    onClick={() => handleExport('json')}
+                    onClick={() => handleExport("json")}
                     disabled={isExporting}
                   >
                     <Download className="h-4 w-4 mr-2" />
@@ -516,7 +562,7 @@ export const AuditLogPanel = ({
                     variant="outline"
                     size="sm"
                     className="flex-1"
-                    onClick={() => handleExport('csv')}
+                    onClick={() => handleExport("csv")}
                     disabled={isExporting}
                   >
                     <Download className="h-4 w-4 mr-2" />
@@ -552,11 +598,14 @@ export const AuditLogPanel = ({
           <div className="bg-white dark:bg-slate-800 rounded-lg p-6 m-4 max-w-sm shadow-xl">
             <h3 className="text-lg font-semibold mb-2">Clear Audit Logs?</h3>
             <p className="text-sm text-muted-foreground mb-4">
-              This will permanently delete all {stats?.totalEntries || 0} log entries.
-              This action cannot be undone.
+              This will permanently delete all {stats?.totalEntries || 0} log
+              entries. This action cannot be undone.
             </p>
             <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={() => setShowClearConfirm(false)}>
+              <Button
+                variant="outline"
+                onClick={() => setShowClearConfirm(false)}
+              >
                 Cancel
               </Button>
               <Button variant="destructive" onClick={handleClearLogs}>

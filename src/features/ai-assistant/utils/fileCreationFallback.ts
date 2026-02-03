@@ -38,7 +38,7 @@ export function isFileCreationRequest(command: string): boolean {
   if (isCompositeCreationRequest(command)) {
     return false;
   }
-  
+
   const lower = command.toLowerCase();
   const createMatch = /(?:create|make|generate)\s+(?:two|three|four|five|\d+)?\s*(?:new\s+)?(?:document|documents|file|files)/.test(lower);
   const hasNames =
@@ -53,11 +53,11 @@ export function isFileCreationRequest(command: string): boolean {
  */
 export function needsFileTypeClarification(command: string): boolean {
   const lower = command.toLowerCase();
-  
+
   // Check if extension is explicitly specified
   const hasExplicitExtension = /\.(txt|docx|doc|pdf|md|rtf|xlsx|xls|csv|py|js|ts|sql|json|xml|html|css)(?:\s|$|,)/i.test(command);
   if (hasExplicitExtension) return false;
-  
+
   // Check for clear file type indicators (no clarification needed)
   const clearTypes = [
     /text\s*file/i,           // "text file" → .txt
@@ -73,9 +73,9 @@ export function needsFileTypeClarification(command: string): boolean {
     /html\s*(?:file|page)/i,  // "HTML file" → .html
     /readme/i,                // "README" → .md
   ];
-  
+
   if (clearTypes.some(pattern => pattern.test(command))) return false;
-  
+
   // These terms are ambiguous and need clarification
   const ambiguousTerms = [
     /(?:create|make|add|put)\s+(?:a\s+)?document/i,  // "create a document"
@@ -84,7 +84,7 @@ export function needsFileTypeClarification(command: string): boolean {
     /document\s+(?:called|named|inside)/i,          // "document called X"
     /file\s+(?:called|named)\s+[^.]+(?:\s|$)/i,     // "file called X" (no extension)
   ];
-  
+
   return ambiguousTerms.some(pattern => pattern.test(command));
 }
 
@@ -106,18 +106,18 @@ export function isFolderCreationRequest(command: string): boolean {
  */
 export function isCompositeCreationRequest(command: string): boolean {
   const lower = command.toLowerCase();
-  
+
   // Check for folder creation followed by file creation with "inside/in/within"
   const hasFolderKeyword = /(?:folder|directory)/.test(lower);
   const hasFileKeyword = /(?:document|file)/.test(lower);
   const hasHierarchy = /(?:inside|in\s+it|within|in\s+the\s+folder|into\s+it|put\s+.+\s+in)/.test(lower);
-  
+
   // Also check for "and add/put" pattern which implies hierarchy
   const hasAndAdd = /folder.*(?:and\s+(?:add|put|create)).*(?:document|file)/i.test(lower);
-  
+
   // Debug logging
   console.log(`[isCompositeCreationRequest] folder=${hasFolderKeyword}, file=${hasFileKeyword}, hierarchy=${hasHierarchy}, andAdd=${hasAndAdd}`);
-  
+
   return hasFolderKeyword && hasFileKeyword && (hasHierarchy || hasAndAdd);
 }
 
@@ -188,9 +188,9 @@ export function parseCompositeCreationRequest(command: string): CreationParseRes
   if (folderName && fileName) {
     // Determine file extension based on context - but we should ask for clarification!
     // For now, use a placeholder that signals clarification is needed
-    const defaultExt = /docx|word\s+document/i.test(command) ? '.docx' : 
-                       /text\s+file|\.txt/i.test(command) ? '.txt' : 
-                       '.txt'; // Default, but AI should ask
+    const defaultExt = /docx|word\s+document/i.test(command) ? '.docx' :
+      /text\s+file|\.txt/i.test(command) ? '.txt' :
+        '.txt'; // Default, but AI should ask
     result.folders.push({
       folderName: folderName,
       filesInside: [{ fileName: addExt(fileName, defaultExt), content: '' }],
@@ -248,7 +248,7 @@ export function parseFileCreationRequest(command: string): FileCreationItem[] {
     console.log('[parseFileCreationRequest] Skipping - this is a composite request');
     return [];
   }
-  
+
   const items: FileCreationItem[] = [];
   const addExt = (name: string) => {
     const n = name.trim().replace(/\.+$/, "");

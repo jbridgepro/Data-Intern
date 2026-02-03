@@ -20,9 +20,12 @@ import {
 import { Separator } from "../../../components/ui/separator";
 import { Switch } from "../../../components/ui/switch";
 import { Slider } from "../../../components/ui/slider";
-import { FolderOpen, Save, Download, Upload, XCircle, List, Type, FileSpreadsheet } from "lucide-react";
+import { FolderOpen, Save, Download, Upload, XCircle, List, Type, FileSpreadsheet, ChevronRight, Hash, Calendar, Settings2 } from "lucide-react";
 import { motion } from "framer-motion";
 import { CsvConfigForm } from "../../../components/common/CsvConfigForm";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../../../components/ui/collapsible";
+import { cn } from "../../../lib/utils";
+import { useState } from "react";
 
 interface ConfigPreset {
   name: string;
@@ -56,6 +59,11 @@ export const FolderForm = ({
   onExportConfig,
   onImportConfig,
 }: FolderFormProps) => {
+  // Collapsible section states
+  const [numberingOpen, setNumberingOpen] = useState(config.useNumbering || false);
+  const [dateOpen, setDateOpen] = useState(config.useDate || false);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+
   const handleSelectRoot = async () => {
     try {
       const selected = await open({
@@ -248,154 +256,208 @@ export const FolderForm = ({
         </div>
       </section>
 
-      <Separator />
-
-      {/* Custom Prefix/Suffix */}
-      <section className="space-y-4">
-        <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-          Custom Prefix & Suffix
-        </Label>
-        <div className="grid grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <Label className="text-xs">Prefix</Label>
-            <Input
-              value={config.customPrefix}
-              onChange={(e) =>
-                setConfig({ ...config, customPrefix: e.target.value })
-              }
-              placeholder="e.g. project_"
-              className="h-8 text-sm"
-              disabled={isCreating}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label className="text-xs">Suffix</Label>
-            <Input
-              value={config.customSuffix}
-              onChange={(e) =>
-                setConfig({ ...config, customSuffix: e.target.value })
-              }
-              placeholder="e.g. _final"
-              className="h-8 text-sm"
-              disabled={isCreating}
-            />
-          </div>
-        </div>
-      </section>
-
-      <Separator />
-
-      {/* Numbering Options */}
-      <section className="space-y-4">
-        <div className="flex items-center justify-between">
-          <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-            Numbering
-          </Label>
-          <Switch
-            checked={config.useNumbering}
-            onCheckedChange={(c: boolean) =>
-              setConfig({ ...config, useNumbering: c })
-            }
-            disabled={isCreating}
-          />
-        </div>
-
-        {config.useNumbering && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            className="grid grid-cols-2 gap-4 pl-2 border-l-2 ml-1"
-          >
-            <div className="space-y-2">
-              <Label className="text-xs">Start From</Label>
-              <Input
-                type="number"
-                value={config.startNumber}
-                onChange={(e) =>
-                  setConfig({
-                    ...config,
-                    startNumber: parseInt(e.target.value) || 1,
-                  })
-                }
-                className="h-8"
-                disabled={isCreating}
-              />
+      {/* Custom Prefix/Suffix - Collapsible Advanced Options */}
+      <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
+        <div className="border rounded-lg overflow-hidden">
+          <CollapsibleTrigger className="w-full flex items-center justify-between p-3 hover:bg-muted/50 transition-colors">
+            <div className="flex items-center gap-2">
+              <Settings2 className="h-4 w-4 text-muted-foreground" />
+              <span className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+                Advanced Options
+              </span>
             </div>
-            <div className="space-y-2">
-              <Label className="text-xs">Padding (001)</Label>
-              <div className="pt-2">
-                <Slider
-                  min={1}
-                  max={6}
-                  step={1}
-                  value={[config.digitCount]}
-                  onValueChange={([v]: number[]) =>
-                    setConfig({ ...config, digitCount: v })
-                  }
-                  disabled={isCreating}
-                />
-                <div className="text-right text-[10px] text-muted-foreground mt-1">
-                  {config.digitCount} digits
+            <div className="flex items-center gap-2">
+              {(config.customPrefix || config.customSuffix) && (
+                <span className="text-xs text-blue-600 dark:text-blue-400">Active</span>
+              )}
+              <ChevronRight className={cn(
+                "h-4 w-4 transition-transform text-muted-foreground",
+                advancedOpen && "rotate-90"
+              )} />
+            </div>
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <div className="p-4 border-t space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label className="text-xs">Custom Prefix</Label>
+                  <Input
+                    value={config.customPrefix}
+                    onChange={(e) =>
+                      setConfig({ ...config, customPrefix: e.target.value })
+                    }
+                    placeholder="e.g. project_"
+                    className="h-8 text-sm"
+                    disabled={isCreating}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-xs">Custom Suffix</Label>
+                  <Input
+                    value={config.customSuffix}
+                    onChange={(e) =>
+                      setConfig({ ...config, customSuffix: e.target.value })
+                    }
+                    placeholder="e.g. _final"
+                    className="h-8 text-sm"
+                    disabled={isCreating}
+                  />
                 </div>
               </div>
             </div>
-            <div className="col-span-2 space-y-2">
-              <Label className="text-xs">Position</Label>
-              <Select
-                value={config.numberPosition}
-                onValueChange={(
-                  v: "prefix" | "suffix" | "after-prefix" | "before-suffix"
-                ) => setConfig({ ...config, numberPosition: v })}
-                disabled={isCreating}
-              >
-                <SelectTrigger className="h-8">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="suffix">Suffix (Name_001)</SelectItem>
-                  <SelectItem value="prefix">Prefix (001_Name)</SelectItem>
-                  <SelectItem value="after-prefix">
-                    After Prefix (Name_001)
-                  </SelectItem>
-                  <SelectItem value="before-suffix">
-                    Before Suffix (001_Name)
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </motion.div>
-        )}
-      </section>
-
-      <Separator />
-
-      {/* Date Options */}
-      <section className="space-y-4">
-        <div className="flex items-center justify-between">
-          <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-            Timestamp
-          </Label>
-          <Switch
-            checked={config.useDate}
-            onCheckedChange={(c: boolean) =>
-              setConfig({ ...config, useDate: c })
-            }
-            disabled={isCreating}
-          />
+          </CollapsibleContent>
         </div>
+      </Collapsible>
 
-        {config.useDate && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            className="grid grid-cols-2 gap-4 pl-2 border-l-2 ml-1"
-          >
-            <div className="space-y-2">
-              <Label className="text-xs">Format</Label>
-              <Select
-                value={config.dateFormat}
-                onValueChange={(v: any) =>
-                  setConfig({ ...config, dateFormat: v })
+      {/* Numbering Options - Collapsible */}
+      <Collapsible
+        open={numberingOpen}
+        onOpenChange={(open) => {
+          setNumberingOpen(open);
+          if (!open) setConfig({ ...config, useNumbering: false });
+          else setConfig({ ...config, useNumbering: true });
+        }}
+      >
+        <div className="border rounded-lg overflow-hidden">
+          <CollapsibleTrigger className="w-full flex items-center justify-between p-3 hover:bg-muted/50 transition-colors">
+            <div className="flex items-center gap-2">
+              <Hash className="h-4 w-4 text-muted-foreground" />
+              <span className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+                Numbering Options
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <Switch
+                checked={config.useNumbering}
+                onClick={(e) => e.stopPropagation()}
+                onCheckedChange={(c: boolean) => {
+                  setConfig({ ...config, useNumbering: c });
+                  setNumberingOpen(c);
+                }}
+                disabled={isCreating}
+              />
+              <ChevronRight className={cn(
+                "h-4 w-4 transition-transform text-muted-foreground",
+                numberingOpen && "rotate-90"
+              )} />
+            </div>
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="p-4 border-t space-y-4"
+            >
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label className="text-xs">Start From</Label>
+                  <Input
+                    type="number"
+                    value={config.startNumber}
+                    onChange={(e) =>
+                      setConfig({
+                        ...config,
+                        startNumber: parseInt(e.target.value) || 1,
+                      })
+                    }
+                    className="h-8"
+                    disabled={isCreating}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-xs">Padding (001)</Label>
+                  <div className="pt-2">
+                    <Slider
+                      min={1}
+                      max={6}
+                      step={1}
+                      value={[config.digitCount]}
+                      onValueChange={([v]: number[]) =>
+                        setConfig({ ...config, digitCount: v })
+                      }
+                      disabled={isCreating}
+                    />
+                    <div className="text-right text-[10px] text-muted-foreground mt-1">
+                      {config.digitCount} digits
+                    </div>
+                  </div>
+                </div>
+                <div className="col-span-2 space-y-2">
+                  <Label className="text-xs">Position</Label>
+                  <Select
+                    value={config.numberPosition}
+                    onValueChange={(
+                      v: "prefix" | "suffix" | "after-prefix" | "before-suffix"
+                    ) => setConfig({ ...config, numberPosition: v })}
+                    disabled={isCreating}
+                  >
+                    <SelectTrigger className="h-8">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="suffix">Suffix (Name_001)</SelectItem>
+                      <SelectItem value="prefix">Prefix (001_Name)</SelectItem>
+                      <SelectItem value="after-prefix">
+                        After Prefix (Name_001)
+                      </SelectItem>
+                      <SelectItem value="before-suffix">
+                        Before Suffix (001_Name)
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            </motion.div>
+          </CollapsibleContent>
+        </div>
+      </Collapsible>
+
+      {/* Date/Timestamp Options - Collapsible */}
+      <Collapsible
+        open={dateOpen}
+        onOpenChange={(open) => {
+          setDateOpen(open);
+          if (!open) setConfig({ ...config, useDate: false });
+          else setConfig({ ...config, useDate: true });
+        }}
+      >
+        <div className="border rounded-lg overflow-hidden">
+          <CollapsibleTrigger className="w-full flex items-center justify-between p-3 hover:bg-muted/50 transition-colors">
+            <div className="flex items-center gap-2">
+              <Calendar className="h-4 w-4 text-muted-foreground" />
+              <span className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+                Timestamp Options
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <Switch
+                checked={config.useDate}
+                onClick={(e) => e.stopPropagation()}
+                onCheckedChange={(c: boolean) => {
+                  setConfig({ ...config, useDate: c });
+                  setDateOpen(c);
+                }}
+                disabled={isCreating}
+              />
+              <ChevronRight className={cn(
+                "h-4 w-4 transition-transform text-muted-foreground",
+                dateOpen && "rotate-90"
+              )} />
+            </div>
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="p-4 border-t space-y-4"
+            >
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label className="text-xs">Format</Label>
+                  <Select
+                    value={config.dateFormat}
+                    onValueChange={(v: any) =>
+                      setConfig({ ...config, dateFormat: v })
                 }
                 disabled={isCreating}
               >
@@ -435,11 +497,11 @@ export const FolderForm = ({
                 </SelectContent>
               </Select>
             </div>
-          </motion.div>
-        )}
-      </section>
-
-      <Separator />
+          </div>
+            </motion.div>
+          </CollapsibleContent>
+        </div>
+      </Collapsible>
 
       {/* Random String Options */}
       <section className="space-y-4">

@@ -35,6 +35,10 @@ import { AgentSelectionProvider } from "./features/agents/contexts/AgentSelectio
 import { ChatProvider } from "./features/chat/contexts/ChatContext";
 import { EditorProvider } from "./contexts/EditorContext";
 import { AudioTranscriptionProvider } from "./features/quick-tools/contexts/AudioTranscriptionContext";
+import {
+  applyThemePreferences,
+  loadThemePreferences,
+} from "./lib/themePreferences";
 
 function App() {
   // Use persistent state for active tab
@@ -92,6 +96,10 @@ function App() {
     // Persist choice
     localStorage.setItem("theme-mode", themeMode);
   }, [themeMode]);
+
+  useEffect(() => {
+    applyThemePreferences(loadThemePreferences());
+  }, []);
 
   useEffect(() => {
     // Persist agent sidebar state

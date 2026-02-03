@@ -32,4 +32,4 @@ tiberius = { version = "0.12", features = ["sql-browser-tokio", "chrono", "time"
 tokio-util = { version = "0.7", features = ["compat"] }
 futures = "0.3"
 base64 = "0.22"
-
+sqlx = { version = "0.7", features = ["runtime-tokio-native-tls", "mysql", "postgres", "sqlite", "macros"] }

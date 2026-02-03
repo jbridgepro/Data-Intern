@@ -71,11 +71,23 @@ import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { Badge } from "@/components/ui/badge";
 import { AIProviderSetupWizard } from "@/features/ai-assistant/components/AIProviderSetupWizard";
-import { 
-  checkProviderConfiguration, 
+import {
+  checkProviderConfiguration,
   getProviderHelpUrl,
-  markSetupCompleted 
+  markSetupCompleted,
 } from "@/features/ai-assistant/utils/providerStatus";
+import {
+  ACCENT_PRESETS,
+  SURFACE_PRESETS,
+  FONT_FAMILY_PRESETS,
+  FONT_SCALE_PRESETS,
+  applyThemePreferences,
+  loadThemePreferences,
+  saveThemePreferences,
+  FontFamilyPreset,
+  FontScalePreset,
+  ThemePreferences,
+} from "@/lib/themePreferences";
 
 // ============================================================================
 // Type Definitions
@@ -350,6 +362,9 @@ export const Settings = ({
     const saved = localStorage.getItem("language");
     return saved || "en";
   });
+  const [themePreferences, setThemePreferences] = useState(() =>
+    loadThemePreferences(),
+  );
 
   // File Mapper Settings
   const [mapperShowFileSizes, setMapperShowFileSizes] = useState(() => {
@@ -556,20 +571,41 @@ export const Settings = ({
   }, []);
 
   // Individual setters that update the unified settings
-  const setAiProvider = useCallback((value: string) => updateAiSettings({ provider: value }), [updateAiSettings]);
-  const setAiModel = useCallback((value: string) => updateAiSettings({ model: value }), [updateAiSettings]);
-  const setAiCreativityLevel = useCallback((value: string) => updateAiSettings({ creativityLevel: value }), [updateAiSettings]);
-  const setAiEnableBackup = useCallback((value: boolean) => updateAiSettings({ enableBackup: value }), [updateAiSettings]);
-  const setAiDryRunDefault = useCallback((value: boolean) => updateAiSettings({ dryRunDefault: value }), [updateAiSettings]);
-  const setAiEnableHistory = useCallback((value: boolean) => {
-    updateAiSettings({ 
-      operationHistory: { 
-        ...aiSettings.operationHistory, 
-        enabled: value 
-      } 
-    });
-  }, [updateAiSettings, aiSettings.operationHistory]);
-  const setAiAutoApproveThreshold = useCallback((value: number) => updateAiSettings({ autoApproveThreshold: value }), [updateAiSettings]);
+  const setAiProvider = useCallback(
+    (value: string) => updateAiSettings({ provider: value }),
+    [updateAiSettings],
+  );
+  const setAiModel = useCallback(
+    (value: string) => updateAiSettings({ model: value }),
+    [updateAiSettings],
+  );
+  const setAiCreativityLevel = useCallback(
+    (value: string) => updateAiSettings({ creativityLevel: value }),
+    [updateAiSettings],
+  );
+  const setAiEnableBackup = useCallback(
+    (value: boolean) => updateAiSettings({ enableBackup: value }),
+    [updateAiSettings],
+  );
+  const setAiDryRunDefault = useCallback(
+    (value: boolean) => updateAiSettings({ dryRunDefault: value }),
+    [updateAiSettings],
+  );
+  const setAiEnableHistory = useCallback(
+    (value: boolean) => {
+      updateAiSettings({
+        operationHistory: {
+          ...aiSettings.operationHistory,
+          enabled: value,
+        },
+      });
+    },
+    [updateAiSettings, aiSettings.operationHistory],
+  );
+  const setAiAutoApproveThreshold = useCallback(
+    (value: number) => updateAiSettings({ autoApproveThreshold: value }),
+    [updateAiSettings],
+  );
 
   // Check if AI provider is configured
   const isAiProviderConfigured = useMemo(() => {
@@ -615,6 +651,7 @@ export const Settings = ({
     confirmBeforeDelete,
     defaultViewMode,
     language,
+    themePreferences,
     mapperShowFileSizes,
     mapperShowFileCounts,
     mapperMaxDepth,
@@ -672,6 +709,11 @@ export const Settings = ({
   useEffect(() => {
     localStorage.setItem("language", language);
   }, [language]);
+
+  useEffect(() => {
+    saveThemePreferences(themePreferences);
+    applyThemePreferences(themePreferences);
+  }, [themePreferences]);
 
   useEffect(() => {
     localStorage.setItem(
@@ -1014,13 +1056,44 @@ export const Settings = ({
     );
   }, [searchQuery]);
 
+  const updateThemePreferences = useCallback(
+    (updates: Partial<ThemePreferences>) => {
+      setThemePreferences((prev) => ({
+        ...prev,
+        ...updates,
+      }));
+    },
+    [],
+  );
+
+  const handleCustomColorsToggle = useCallback(
+    (enabled: boolean) => {
+      setThemePreferences((prev) => {
+        if (!enabled) {
+          return { ...prev, useCustomColors: false };
+        }
+        const defaultBackground =
+          themeMode === "dark" ? "#0f172a" : "#f8fafc";
+        return {
+          ...prev,
+          useCustomColors: true,
+          customBackground: prev.customBackground || defaultBackground,
+          customAccent: prev.customAccent || "#3b82f6",
+        };
+      });
+    },
+    [themeMode],
+  );
+
   // ============================================================================
   // Render Functions - Settings Sections
   // ============================================================================
 
   const renderAppearanceSection = () => (
     <div
-      ref={(el) => { sectionRefs.current["appearance"] = el; }}
+      ref={(el) => {
+        sectionRefs.current["appearance"] = el;
+      }}
       id="appearance"
       className="scroll-mt-6"
     >
@@ -1067,6 +1140,231 @@ export const Settings = ({
                 Dark
               </Button>
             </div>
+          </div>
+
+          <Separator />
+
+          {/* Theme Presets */}
+          <div className="space-y-4">
+            <div className="space-y-0.5">
+              <Label className="text-base font-medium">Theme Presets</Label>
+              <p className="text-sm text-slate-600 dark:text-slate-400">
+                Pick an accent and surface base for the UI
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <div className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                  Accent
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  {ACCENT_PRESETS.map((preset) => (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      disabled={themePreferences.useCustomColors}
+                      onClick={() =>
+                        updateThemePreferences({ accentPreset: preset.id })
+                      }
+                      className={`flex items-center gap-2 rounded-lg border px-2 py-2 text-xs font-medium transition ${
+                        themePreferences.accentPreset === preset.id
+                          ? "border-blue-500 bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-300"
+                          : "border-slate-200 text-slate-600 hover:border-slate-300 hover:bg-slate-50 dark:border-slate-800 dark:text-slate-400 dark:hover:bg-slate-800/50"
+                      } ${themePreferences.useCustomColors ? "opacity-50 cursor-not-allowed" : ""}`}
+                    >
+                      <span
+                        className="h-4 w-4 rounded-full border border-black/10"
+                        style={{ backgroundColor: preset.color }}
+                      />
+                      <span className="truncate">{preset.name}</span>
+                    </button>
+                  ))}
+                </div>
+                {themePreferences.useCustomColors && (
+                  <p className="text-xs text-slate-500">
+                    Presets are disabled while custom colors are active.
+                  </p>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <div className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                  Surface
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  {SURFACE_PRESETS.map((preset) => (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      disabled={themePreferences.useCustomColors}
+                      onClick={() =>
+                        updateThemePreferences({ surfacePreset: preset.id })
+                      }
+                      className={`flex flex-col items-start rounded-lg border px-3 py-2 text-left text-xs transition ${
+                        themePreferences.surfacePreset === preset.id
+                          ? "border-blue-500 bg-blue-50 text-blue-700 dark:bg-blue-900/20 dark:text-blue-300"
+                          : "border-slate-200 text-slate-600 hover:border-slate-300 hover:bg-slate-50 dark:border-slate-800 dark:text-slate-400 dark:hover:bg-slate-800/50"
+                      } ${themePreferences.useCustomColors ? "opacity-50 cursor-not-allowed" : ""}`}
+                    >
+                      <span className="text-sm font-semibold">
+                        {preset.name}
+                      </span>
+                      <span className="text-[10px] text-slate-500">
+                        {preset.description}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <Separator />
+
+          {/* Typography */}
+          <div className="space-y-4">
+            <div className="space-y-0.5">
+              <Label className="text-base font-medium">Typography</Label>
+              <p className="text-sm text-slate-600 dark:text-slate-400">
+                Adjust font family and base scale
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                  Font Family
+                </Label>
+                <Select
+                  value={themePreferences.fontFamily}
+                  onValueChange={(value) =>
+                    updateThemePreferences({
+                      fontFamily: value as FontFamilyPreset,
+                    })
+                  }
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Select font" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {FONT_FAMILY_PRESETS.map((preset) => (
+                      <SelectItem key={preset.id} value={preset.id}>
+                        {preset.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-slate-500">
+                  {FONT_FAMILY_PRESETS.find(
+                    (preset) => preset.id === themePreferences.fontFamily,
+                  )?.description || ""}
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                  Size Scale
+                </Label>
+                <Select
+                  value={themePreferences.fontScale}
+                  onValueChange={(value) =>
+                    updateThemePreferences({
+                      fontScale: value as FontScalePreset,
+                    })
+                  }
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Select scale" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {FONT_SCALE_PRESETS.map((preset) => (
+                      <SelectItem key={preset.id} value={preset.id}>
+                        {preset.name} ({preset.description})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          </div>
+
+          <Separator />
+
+          {/* Custom Colors */}
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="space-y-0.5">
+                <Label className="text-base font-medium">Custom Colors</Label>
+                <p className="text-sm text-slate-600 dark:text-slate-400">
+                  Override theme colors with your own palette
+                </p>
+              </div>
+              <Switch
+                checked={themePreferences.useCustomColors}
+                onCheckedChange={handleCustomColorsToggle}
+              />
+            </div>
+
+            {themePreferences.useCustomColors && (
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                    Accent Color
+                  </Label>
+                  <div className="flex items-center gap-3">
+                    <Input
+                      type="color"
+                      value={themePreferences.customAccent}
+                      onChange={(e) =>
+                        updateThemePreferences({
+                          customAccent: e.target.value,
+                        })
+                      }
+                      className="h-10 w-14 p-1"
+                    />
+                    <Input
+                      type="text"
+                      value={themePreferences.customAccent}
+                      onChange={(e) =>
+                        updateThemePreferences({
+                          customAccent: e.target.value,
+                        })
+                      }
+                      className="h-10 w-28 font-mono text-xs"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                    Background Color
+                  </Label>
+                  <div className="flex items-center gap-3">
+                    <Input
+                      type="color"
+                      value={themePreferences.customBackground}
+                      onChange={(e) =>
+                        updateThemePreferences({
+                          customBackground: e.target.value,
+                        })
+                      }
+                      className="h-10 w-14 p-1"
+                    />
+                    <Input
+                      type="text"
+                      value={themePreferences.customBackground}
+                      onChange={(e) =>
+                        updateThemePreferences({
+                          customBackground: e.target.value,
+                        })
+                      }
+                      className="h-10 w-28 font-mono text-xs"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
           <Separator />
@@ -1125,7 +1423,9 @@ export const Settings = ({
 
   const renderGeneralSection = () => (
     <div
-      ref={(el) => { sectionRefs.current["general"] = el; }}
+      ref={(el) => {
+        sectionRefs.current["general"] = el;
+      }}
       id="general"
       className="scroll-mt-6"
     >
@@ -1187,7 +1487,9 @@ export const Settings = ({
 
   const renderFileMapperSection = () => (
     <div
-      ref={(el) => { sectionRefs.current["file-mapper"] = el; }}
+      ref={(el) => {
+        sectionRefs.current["file-mapper"] = el;
+      }}
       id="file-mapper"
       className="scroll-mt-6"
     >
@@ -1290,7 +1592,9 @@ export const Settings = ({
 
   const renderFileCopySection = () => (
     <div
-      ref={(el) => { sectionRefs.current["file-copy"] = el; }}
+      ref={(el) => {
+        sectionRefs.current["file-copy"] = el;
+      }}
       id="file-copy"
       className="scroll-mt-6"
     >
@@ -1374,7 +1678,9 @@ export const Settings = ({
 
   const renderFolderCreationSection = () => (
     <div
-      ref={(el) => { sectionRefs.current["folder-creation"] = el; }}
+      ref={(el) => {
+        sectionRefs.current["folder-creation"] = el;
+      }}
       id="folder-creation"
       className="scroll-mt-6"
     >
@@ -1439,7 +1745,9 @@ export const Settings = ({
 
   const renderEmptyFilesSection = () => (
     <div
-      ref={(el) => { sectionRefs.current["empty-files"] = el; }}
+      ref={(el) => {
+        sectionRefs.current["empty-files"] = el;
+      }}
       id="empty-files"
       className="scroll-mt-6"
     >
@@ -1520,7 +1828,9 @@ export const Settings = ({
 
   const renderTerminalSection = () => (
     <div
-      ref={(el) => { sectionRefs.current["terminal"] = el; }}
+      ref={(el) => {
+        sectionRefs.current["terminal"] = el;
+      }}
       id="terminal"
       className="scroll-mt-6"
     >
@@ -1617,7 +1927,9 @@ export const Settings = ({
 
   const renderFindReplaceSection = () => (
     <div
-      ref={(el) => { sectionRefs.current["find-replace"] = el; }}
+      ref={(el) => {
+        sectionRefs.current["find-replace"] = el;
+      }}
       id="find-replace"
       className="scroll-mt-6"
     >
@@ -1691,7 +2003,9 @@ export const Settings = ({
 
   const renderSqlExportSection = () => (
     <div
-      ref={(el) => { sectionRefs.current["sql-export"] = el; }}
+      ref={(el) => {
+        sectionRefs.current["sql-export"] = el;
+      }}
       id="sql-export"
       className="scroll-mt-6"
     >
@@ -1817,7 +2131,9 @@ export const Settings = ({
 
   const renderAIAssistantSection = () => (
     <div
-      ref={(el) => { sectionRefs.current["ai-assistant"] = el; }}
+      ref={(el) => {
+        sectionRefs.current["ai-assistant"] = el;
+      }}
       id="ai-assistant"
       className="scroll-mt-6"
     >
@@ -1882,12 +2198,11 @@ export const Settings = ({
                     Get Started with AI
                   </h4>
                   <p className="text-sm text-violet-700 dark:text-violet-300 mb-3">
-                    {aiProvider === "ollama" 
+                    {aiProvider === "ollama"
                       ? "Install Ollama and pull a model to start using AI features locally."
                       : aiProvider === "openrouter"
                       ? "Add your OpenRouter API key to access 100+ AI models."
-                      : "Add your Anthropic API key to use Claude AI."
-                    }
+                      : "Add your Anthropic API key to use Claude AI."}
                   </p>
                   <div className="flex flex-wrap gap-2">
                     <Button
@@ -1903,7 +2218,12 @@ export const Settings = ({
                         size="sm"
                         variant="outline"
                         className="border-violet-300 dark:border-violet-700 text-violet-700 dark:text-violet-300"
-                        onClick={() => window.open(getProviderHelpUrl(aiProvider as any), "_blank")}
+                        onClick={() =>
+                          window.open(
+                            getProviderHelpUrl(aiProvider as any),
+                            "_blank",
+                          )
+                        }
                       >
                         <ExternalLink className="h-4 w-4 mr-1.5" />
                         Get Help
@@ -2345,7 +2665,9 @@ export const Settings = ({
 
   const renderKeyboardSection = () => (
     <div
-      ref={(el) => { sectionRefs.current["keyboard"] = el; }}
+      ref={(el) => {
+        sectionRefs.current["keyboard"] = el;
+      }}
       id="keyboard"
       className="scroll-mt-6"
     >
@@ -2423,7 +2745,9 @@ export const Settings = ({
 
   const renderNotificationsSection = () => (
     <div
-      ref={(el) => { sectionRefs.current["notifications"] = el; }}
+      ref={(el) => {
+        sectionRefs.current["notifications"] = el;
+      }}
       id="notifications"
       className="scroll-mt-6"
     >
@@ -2461,7 +2785,9 @@ export const Settings = ({
 
   const renderSafetySection = () => (
     <div
-      ref={(el) => { sectionRefs.current["safety"] = el; }}
+      ref={(el) => {
+        sectionRefs.current["safety"] = el;
+      }}
       id="safety"
       className="scroll-mt-6"
     >
@@ -2501,7 +2827,9 @@ export const Settings = ({
 
   const renderStorageSection = () => (
     <div
-      ref={(el) => { sectionRefs.current["storage"] = el; }}
+      ref={(el) => {
+        sectionRefs.current["storage"] = el;
+      }}
       id="storage"
       className="scroll-mt-6"
     >
@@ -2605,7 +2933,9 @@ export const Settings = ({
 
   const renderAboutSection = () => (
     <div
-      ref={(el) => { sectionRefs.current["about"] = el; }}
+      ref={(el) => {
+        sectionRefs.current["about"] = el;
+      }}
       id="about"
       className="scroll-mt-6"
     >

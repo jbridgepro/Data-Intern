@@ -261,7 +261,9 @@ export const ChatInput = ({
         const paths = Array.isArray(selected) ? selected : [selected];
         if (paths.length > 0) {
           const prefix = value.trim() ? value.trimEnd() + "\n\n" : "";
-          const fileList = `[Attached ${paths.length} file${paths.length > 1 ? "s" : ""}]\n${paths.join("\n")}`;
+          const fileList = `[Attached ${paths.length} file${
+            paths.length > 1 ? "s" : ""
+          }]\n${paths.join("\n")}`;
           onChange(prefix + fileList);
           onFilesSelected?.(paths);
         }
@@ -295,8 +297,6 @@ export const ChatInput = ({
     return modelMap[model] || model;
   };
 
-
-
   return (
     <div className={cn("w-full", className)}>
       <div
@@ -304,7 +304,8 @@ export const ChatInput = ({
           "relative flex flex-col gap-3 p-4 rounded-2xl",
           "bg-white dark:bg-slate-900/95 border border-slate-200/80 dark:border-slate-800/80",
           "shadow-lg shadow-slate-200/50 dark:shadow-slate-950/50 transition-all duration-300",
-          isFocused && "ring-2 ring-violet-500/20 border-violet-300/50 dark:border-violet-700/50 shadow-xl shadow-violet-500/10",
+          isFocused &&
+            "ring-2 ring-violet-500/20 border-violet-300/50 dark:border-violet-700/50 shadow-xl shadow-violet-500/10",
           disabled && "opacity-50 cursor-not-allowed",
         )}
       >
@@ -331,13 +332,14 @@ export const ChatInput = ({
               "focus-visible:ring-0 focus-visible:ring-offset-0",
               "text-base leading-relaxed text-slate-900 dark:text-slate-100",
               disabled && "opacity-50 cursor-not-allowed",
-              isVoiceActive && "placeholder:text-violet-500/70 dark:placeholder:text-violet-400/70"
+              isVoiceActive &&
+                "placeholder:text-violet-500/70 dark:placeholder:text-violet-400/70",
             )}
             disabled={disabled || isProcessing}
             rows={1}
             style={{
-              height: "auto", 
-              overflowY: value.split('\n').length > 8 ? "auto" : "hidden"
+              height: "auto",
+              overflowY: value.split("\n").length > 8 ? "auto" : "hidden",
             }}
             // Auto-resize
             onInput={(e) => {
@@ -346,7 +348,7 @@ export const ChatInput = ({
               target.style.height = `${target.scrollHeight}px`;
             }}
           />
-          
+
           {/* Voice Active Indicator - Enhanced */}
           {isVoiceActive && (
             <div className="absolute right-0 top-0 bottom-0 flex items-center pr-2 pointer-events-none">
@@ -421,7 +423,9 @@ export const ChatInput = ({
               >
                 <FolderOpen className="h-3.5 w-3.5 text-violet-500 dark:text-violet-400 shrink-0" />
                 <span className="max-w-[100px] truncate font-medium">
-                   {currentDirectory ? currentDirectory.split("/").pop() : "Context"}
+                  {currentDirectory
+                    ? currentDirectory.split("/").pop()
+                    : "Context"}
                 </span>
               </Button>
 
@@ -504,25 +508,25 @@ export const ChatInput = ({
                     >
                       {ollamaConnectionError
                         ? "Error"
-                        : aiModel 
-                          ? (() => {
-                              // Abbreviate long model names intelligently
-                              if (aiModel.length > 10) {
-                                // For models like "deepseek-r1:8b" -> "deepseek:8b"
-                                const parts = aiModel.split(':');
-                                if (parts.length > 1) {
-                                  let firstPart = parts[0];
-                                  firstPart = firstPart.replace(/-r\d+$/, '');
-                                  if (firstPart.length > 8) {
-                                    firstPart = firstPart.substring(0, 8);
-                                  }
-                                  return firstPart + ':' + parts[1];
+                        : aiModel
+                        ? (() => {
+                            // Abbreviate long model names intelligently
+                            if (aiModel.length > 10) {
+                              // For models like "deepseek-r1:8b" -> "deepseek:8b"
+                              const parts = aiModel.split(":");
+                              if (parts.length > 1) {
+                                let firstPart = parts[0];
+                                firstPart = firstPart.replace(/-r\d+$/, "");
+                                if (firstPart.length > 8) {
+                                  firstPart = firstPart.substring(0, 8);
                                 }
-                                return aiModel.substring(0, 10);
+                                return firstPart + ":" + parts[1];
                               }
-                              return aiModel;
-                            })()
-                          : "llama3.2"}
+                              return aiModel.substring(0, 10);
+                            }
+                            return aiModel;
+                          })()
+                        : "llama3.2"}
                     </span>
                   </div>
                   <ChevronDown className="h-3 w-3 opacity-50 ml-0.5 shrink-0" />
@@ -551,7 +555,9 @@ export const ChatInput = ({
                                 Ollama (Local LLM)
                               </span>
                             </div>
-                            {provider === "ollama" && <Check className="h-4 w-4 text-purple-500 shrink-0" />}
+                            {provider === "ollama" && (
+                              <Check className="h-4 w-4 text-purple-500 shrink-0" />
+                            )}
                           </button>
                           <button
                             onClick={() => {
@@ -566,7 +572,9 @@ export const ChatInput = ({
                                 Anthropic Claude (Cloud)
                               </span>
                             </div>
-                            {(provider as string) === "anthropic" && <Check className="h-4 w-4 text-blue-500 shrink-0" />}
+                            {(provider as string) === "anthropic" && (
+                              <Check className="h-4 w-4 text-blue-500 shrink-0" />
+                            )}
                           </button>
                           <button
                             onClick={() => {
@@ -581,7 +589,9 @@ export const ChatInput = ({
                                 OpenRouter (Multi-Model)
                               </span>
                             </div>
-                            {(provider as string) === "openrouter" && <Check className="h-4 w-4 text-blue-500 shrink-0" />}
+                            {(provider as string) === "openrouter" && (
+                              <Check className="h-4 w-4 text-blue-500 shrink-0" />
+                            )}
                           </button>
                         </div>
                         <div className="border-t border-slate-200 dark:border-slate-800" />
@@ -636,7 +646,11 @@ export const ChatInput = ({
                       </>
                     ) : (
                       <div className="px-3 py-4 text-sm text-slate-500 dark:text-slate-400 text-center">
-                        <div className={ollamaConnectionError ? "text-red-500" : ""}>
+                        <div
+                          className={
+                            ollamaConnectionError ? "text-red-500" : ""
+                          }
+                        >
                           {ollamaConnectionError || "No models found"}
                         </div>
                         {ollamaConnectionError && (
@@ -679,7 +693,12 @@ export const ChatInput = ({
                   <div className="flex items-center gap-1 min-w-0 flex-1">
                     <Globe className="h-3.5 w-3.5 text-blue-500 dark:text-blue-400 shrink-0" />
                     <span className="truncate text-[10px] leading-tight">
-                      {aiModel ? (aiModel.length > 12 ? aiModel.replace(/^[^/]+\//, "").substring(0, 12) + "…" : aiModel) : "OpenRouter"}
+                      {aiModel
+                        ? aiModel.length > 12
+                          ? aiModel.replace(/^[^/]+\//, "").substring(0, 12) +
+                            "…"
+                          : aiModel
+                        : "OpenRouter"}
                     </span>
                   </div>
                   <ChevronDown className="h-3 w-3 opacity-50 ml-0.5 shrink-0" />
@@ -693,31 +712,46 @@ export const ChatInput = ({
                         </div>
                         <div className="py-1">
                           <button
-                            onClick={() => { onProviderChange("openrouter"); setShowModelMenu(false); }}
+                            onClick={() => {
+                              onProviderChange("openrouter");
+                              setShowModelMenu(false);
+                            }}
                             className="w-full px-3 py-2.5 text-left hover:bg-slate-100 dark:hover:bg-slate-800/50 flex items-center justify-between text-sm transition-colors"
                           >
                             <div className="flex items-center gap-2">
                               <Globe className="h-4 w-4 text-blue-500 dark:text-blue-400" />
-                              <span className="text-slate-900 dark:text-slate-100">OpenRouter (Multi-Model)</span>
+                              <span className="text-slate-900 dark:text-slate-100">
+                                OpenRouter (Multi-Model)
+                              </span>
                             </div>
                             <Check className="h-4 w-4 text-blue-500 shrink-0" />
                           </button>
                           <button
-                            onClick={() => { onProviderChange("anthropic"); setShowModelMenu(false); }}
+                            onClick={() => {
+                              onProviderChange("anthropic");
+                              setShowModelMenu(false);
+                            }}
                             className="w-full px-3 py-2.5 text-left hover:bg-slate-100 dark:hover:bg-slate-800/50 flex items-center justify-between text-sm transition-colors"
                           >
                             <div className="flex items-center gap-2">
                               <Cloud className="h-4 w-4 text-blue-500 dark:text-blue-400" />
-                              <span className="text-slate-900 dark:text-slate-100">Anthropic Claude (Cloud)</span>
+                              <span className="text-slate-900 dark:text-slate-100">
+                                Anthropic Claude (Cloud)
+                              </span>
                             </div>
                           </button>
                           <button
-                            onClick={() => { onProviderChange("ollama"); setShowModelMenu(false); }}
+                            onClick={() => {
+                              onProviderChange("ollama");
+                              setShowModelMenu(false);
+                            }}
                             className="w-full px-3 py-2.5 text-left hover:bg-slate-100 dark:hover:bg-slate-800/50 flex items-center justify-between text-sm transition-colors"
                           >
                             <div className="flex items-center gap-2">
                               <Server className="h-4 w-4 text-purple-500 dark:text-purple-400" />
-                              <span className="text-slate-900 dark:text-slate-100">Ollama (Local LLM)</span>
+                              <span className="text-slate-900 dark:text-slate-100">
+                                Ollama (Local LLM)
+                              </span>
                             </div>
                           </button>
                         </div>
@@ -746,7 +780,9 @@ export const ChatInput = ({
                       {(() => {
                         const displayName = getModelDisplayName(aiModel);
                         if (displayName.length > 12) {
-                          return displayName.replace(/Claude/g, "C").substring(0, 12);
+                          return displayName
+                            .replace(/Claude/g, "C")
+                            .substring(0, 12);
                         }
                         return displayName;
                       })()}
@@ -764,52 +800,80 @@ export const ChatInput = ({
                         </div>
                         <div className="py-1">
                           <button
-                            onClick={() => { onProviderChange("anthropic"); setShowModelMenu(false); }}
+                            onClick={() => {
+                              onProviderChange("anthropic");
+                              setShowModelMenu(false);
+                            }}
                             className="w-full px-3 py-2.5 text-left hover:bg-slate-100 dark:hover:bg-slate-800/50 flex items-center justify-between text-sm transition-colors"
                           >
                             <div className="flex items-center gap-2">
                               <Cloud className="h-4 w-4 text-blue-500 dark:text-blue-400" />
-                              <span className="text-slate-900 dark:text-slate-100">Anthropic Claude (Cloud)</span>
+                              <span className="text-slate-900 dark:text-slate-100">
+                                Anthropic Claude (Cloud)
+                              </span>
                             </div>
-                            {provider === "anthropic" && <Check className="h-4 w-4 text-blue-500 shrink-0" />}
+                            {provider === "anthropic" && (
+                              <Check className="h-4 w-4 text-blue-500 shrink-0" />
+                            )}
                           </button>
                           <button
-                            onClick={() => { onProviderChange("openrouter"); setShowModelMenu(false); }}
+                            onClick={() => {
+                              onProviderChange("openrouter");
+                              setShowModelMenu(false);
+                            }}
                             className="w-full px-3 py-2.5 text-left hover:bg-slate-100 dark:hover:bg-slate-800/50 flex items-center justify-between text-sm transition-colors"
                           >
                             <div className="flex items-center gap-2">
                               <Globe className="h-4 w-4 text-blue-500 dark:text-blue-400" />
-                              <span className="text-slate-900 dark:text-slate-100">OpenRouter (Multi-Model)</span>
+                              <span className="text-slate-900 dark:text-slate-100">
+                                OpenRouter (Multi-Model)
+                              </span>
                             </div>
-                            {(provider as string) === "openrouter" && <Check className="h-4 w-4 text-blue-500 shrink-0" />}
+                            {(provider as string) === "openrouter" && (
+                              <Check className="h-4 w-4 text-blue-500 shrink-0" />
+                            )}
                           </button>
                           <button
-                            onClick={() => { onProviderChange("ollama"); setShowModelMenu(false); }}
+                            onClick={() => {
+                              onProviderChange("ollama");
+                              setShowModelMenu(false);
+                            }}
                             className="w-full px-3 py-2.5 text-left hover:bg-slate-100 dark:hover:bg-slate-800/50 flex items-center justify-between text-sm transition-colors"
                           >
                             <div className="flex items-center gap-2">
                               <Server className="h-4 w-4 text-purple-500 dark:text-purple-400" />
-                              <span className="text-slate-900 dark:text-slate-100">Ollama (Local LLM)</span>
+                              <span className="text-slate-900 dark:text-slate-100">
+                                Ollama (Local LLM)
+                              </span>
                             </div>
-                            {(provider as string) === "ollama" && <Check className="h-4 w-4 text-purple-500 shrink-0" />}
+                            {(provider as string) === "ollama" && (
+                              <Check className="h-4 w-4 text-purple-500 shrink-0" />
+                            )}
                           </button>
                         </div>
                         <div className="border-t border-slate-200 dark:border-slate-800" />
                       </>
                     )}
                     <div className="py-1">
-                      {["claude-opus", "claude-sonnet", "claude-haiku"].map((m) => (
-                        <button
-                          key={m}
-                          onClick={() => { onModelChange(m); setShowModelMenu(false); }}
-                          className="w-full px-3 py-2.5 text-left hover:bg-slate-100 dark:hover:bg-slate-800/50 flex items-center justify-between text-sm transition-colors"
-                        >
-                          <div className="text-slate-900 dark:text-slate-100 font-medium">
-                            {getModelDisplayName(m)}
-                          </div>
-                          {aiModel === m && <Check className="h-4 w-4 text-blue-500 shrink-0" />}
-                        </button>
-                      ))}
+                      {["claude-opus", "claude-sonnet", "claude-haiku"].map(
+                        (m) => (
+                          <button
+                            key={m}
+                            onClick={() => {
+                              onModelChange(m);
+                              setShowModelMenu(false);
+                            }}
+                            className="w-full px-3 py-2.5 text-left hover:bg-slate-100 dark:hover:bg-slate-800/50 flex items-center justify-between text-sm transition-colors"
+                          >
+                            <div className="text-slate-900 dark:text-slate-100 font-medium">
+                              {getModelDisplayName(m)}
+                            </div>
+                            {aiModel === m && (
+                              <Check className="h-4 w-4 text-blue-500 shrink-0" />
+                            )}
+                          </button>
+                        ),
+                      )}
                     </div>
                   </div>
                 )}

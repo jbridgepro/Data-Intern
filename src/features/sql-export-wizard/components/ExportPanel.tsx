@@ -25,6 +25,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
@@ -34,20 +35,36 @@ import {
 } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
 import { PresetDialog } from "./PresetDialog";
 import { PresetManager } from "./PresetManager";
-import { getTemplates, saveTemplate, deleteTemplate } from "../utils/storage";
+import {
+  getTemplates,
+  saveTemplate,
+  deleteTemplate,
+  addActivityEntry,
+} from "../utils/storage";
+import { cn } from "@/lib/utils";
 
 interface ExportPanelProps {
   connection: DatabaseConnection | null;
   selectedDatabase?: string;
-  selectedTable?: { schema: string; name: string } | null;
+  selectedTable?: {
+    schema: string;
+    name: string;
+    rowCount?: number;
+    size?: number;
+    lastUpdated?: string;
+  } | null;
+  onActivityLogged?: () => void;
 }
 
 export function ExportPanel({
   connection,
   selectedDatabase,
   selectedTable,
+  onActivityLogged,
 }: ExportPanelProps) {
   const [exportFormat, setExportFormat] = useState<ExportFormat>("csv");
   const [useCustomQuery, setUseCustomQuery] = useState(false);
@@ -55,6 +72,7 @@ export function ExportPanel({
   const [outputFolder, setOutputFolder] = useState("");
   const [fileName, setFileName] = useState("");
   const [includeHeaders, setIncludeHeaders] = useState(true);
+  const [stepIndex, setStepIndex] = useState(0);
   const [showPresetDialog, setShowPresetDialog] = useState(false);
   const [showPresetManager, setShowPresetManager] = useState(false);
   const [editingPreset, setEditingPreset] = useState<ExportTemplate | null>(
@@ -143,14 +161,60 @@ export function ExportPanel({
     loadPresets();
   };
 
-  const formatIcons: Record<ExportFormat, React.ReactNode> = {
-    csv: <FileText className="h-4 w-4" />,
-    excel: <FileSpreadsheet className="h-4 w-4" />,
-    json: <Code className="h-4 w-4" />,
-    xml: <Code className="h-4 w-4" />,
-    sql: <Database className="h-4 w-4" />,
-    parquet: <Database className="h-4 w-4" />,
-  };
+  const steps = [
+    { id: "source", label: "Source" },
+    { id: "format", label: "Format" },
+    { id: "destination", label: "Destination" },
+    { id: "review", label: "Review & Run" },
+  ];
+  const progressValue = Math.round(
+    ((stepIndex + 1) / steps.length) * 100,
+  );
+  const isLastStep = stepIndex === steps.length - 1;
+
+  const formatOptions: {
+    id: ExportFormat;
+    label: string;
+    description: string;
+    icon: React.ReactNode;
+  }[] = [
+    {
+      id: "csv",
+      label: "CSV",
+      description: "Spreadsheet-friendly rows with configurable delimiters.",
+      icon: <FileText className="h-4 w-4" />,
+    },
+    {
+      id: "excel",
+      label: "Excel",
+      description: "Create .xlsx files for analysts and ops teams.",
+      icon: <FileSpreadsheet className="h-4 w-4" />,
+    },
+    {
+      id: "json",
+      label: "JSON",
+      description: "Emit structured arrays or line-delimited events.",
+      icon: <Code className="h-4 w-4" />,
+    },
+    {
+      id: "xml",
+      label: "XML",
+      description: "Legacy integrations and enterprise exchange formats.",
+      icon: <Code className="h-4 w-4" />,
+    },
+    {
+      id: "sql",
+      label: "SQL Inserts",
+      description: "Generate INSERT statements for migrations.",
+      icon: <Database className="h-4 w-4" />,
+    },
+    {
+      id: "parquet",
+      label: "Parquet",
+      description: "Columnar exports tuned for analytics pipelines.",
+      icon: <Database className="h-4 w-4" />,
+    },
+  ];
 
   const handleExport = () => {
     // In production, this would call a backend API to execute the export
@@ -164,6 +228,23 @@ export function ExportPanel({
       outputFolder,
       fileName,
     });
+
+    const tableLabel = selectedTable?.name || "Custom selection";
+    const detailParts = [
+      exportFormat.toUpperCase(),
+      selectedDatabase || "Database",
+      tableLabel,
+      fileName || "Unnamed file",
+    ];
+    addActivityEntry({
+      id: `export-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      type: "export",
+      title: `Exported ${tableLabel}`,
+      detail: detailParts.filter(Boolean).join(" • "),
+      timestamp: new Date().toISOString(),
+      status: "success",
+    });
+    onActivityLogged?.();
   };
 
   const handlePreview = () => {
@@ -173,7 +254,7 @@ export function ExportPanel({
 
   if (!connection) {
     return (
-      <div className="bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800 p-8 text-center">
+      <div className="rounded-2xl border border-slate-200/70 dark:border-slate-800/70 bg-white/80 dark:bg-slate-900/70 p-8 text-center shadow-sm">
         <p className="text-slate-500 dark:text-slate-400">
           Please connect to a database to start exporting
         </p>
@@ -182,18 +263,69 @@ export function ExportPanel({
   }
 
   return (
-    <div className="bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800 p-6 space-y-6 overflow-y-auto h-full">
-      <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100 flex items-center gap-2">
-        <Download className="h-5 w-5" />
-        EXPORT CONFIGURATION
-      </h2>
+    <div className="rounded-2xl border border-slate-200/70 dark:border-slate-800/70 bg-white/80 dark:bg-slate-900/70 p-6 space-y-6 overflow-y-auto h-full shadow-sm">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-slate-100">
+            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-900 text-white dark:bg-white dark:text-slate-900">
+              <Download className="h-4 w-4" />
+            </span>
+            Export Configuration
+          </div>
+          <p className="text-xs text-slate-500 dark:text-slate-400">
+            Configure the source, format, and destination for this export.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant="secondary" className="bg-slate-900/5 text-slate-600 dark:bg-white/10 dark:text-slate-300">
+            {selectedDatabase || "No database"}
+          </Badge>
+          <Badge
+            variant="outline"
+            className="border-slate-200 text-slate-500 dark:border-slate-800 dark:text-slate-400"
+          >
+            {selectedTable ? selectedTable.name : "No table selected"}
+          </Badge>
+        </div>
+      </div>
+
+      <div className="space-y-3 rounded-xl border border-slate-200/70 bg-white/70 p-4 shadow-sm dark:border-slate-800/70 dark:bg-slate-950/40">
+        <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
+          <span>
+            Step {stepIndex + 1} of {steps.length}
+          </span>
+          <span>{progressValue}% complete</span>
+        </div>
+        <Progress value={progressValue} className="h-2" />
+        <div className="flex flex-wrap gap-2">
+          {steps.map((step, index) => (
+            <button
+              key={step.id}
+              type="button"
+              onClick={() => setStepIndex(index)}
+              className={cn(
+                "flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-medium transition",
+                index === stepIndex
+                  ? "border-slate-900/20 bg-slate-900/[0.06] text-slate-800 dark:border-white/10 dark:bg-white/10 dark:text-slate-100"
+                  : "border-slate-200/70 bg-white/80 text-slate-500 hover:border-slate-300 dark:border-slate-800/70 dark:bg-slate-900/60 dark:text-slate-400",
+              )}
+            >
+              <span className="text-[10px] uppercase tracking-[0.2em] text-slate-400">
+                {String(index + 1).padStart(2, "0")}
+              </span>
+              {step.label}
+            </button>
+          ))}
+        </div>
+      </div>
 
       {/* Source Configuration */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm">Source</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
+      {stepIndex === 0 && (
+        <Card className="bg-slate-50/70 dark:bg-slate-900/60 border-slate-200/70 dark:border-slate-800/70">
+          <CardHeader>
+            <CardTitle className="text-sm">Source</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
           <div className="grid grid-cols-3 gap-4">
             <div>
               <Label>Database</Label>
@@ -267,62 +399,64 @@ export function ExportPanel({
           {useCustomQuery && (
             <div>
               <Label>SQL Query</Label>
-              <textarea
+              <Textarea
                 value={customQuery}
                 onChange={(e) => setCustomQuery(e.target.value)}
                 placeholder="SELECT * FROM Users WHERE..."
-                className="w-full mt-1 p-2 border rounded-md font-mono text-sm min-h-[100px] bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100"
+                className="mt-1 min-h-[120px] font-mono text-sm bg-white/90 dark:bg-slate-950/60"
               />
             </div>
           )}
         </CardContent>
       </Card>
+      )}
 
       {/* Export Format */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm">Export Format</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-2 gap-3">
-            {(
-              [
-                "csv",
-                "excel",
-                "json",
-                "xml",
-                "sql",
-                "parquet",
-              ] as ExportFormat[]
-            ).map((format) => (
-              <div
-                key={format}
-                className={`
-                    border rounded-lg p-3 cursor-pointer transition-colors
-                    ${
-                      exportFormat === format
-                        ? "border-blue-500 bg-blue-50 dark:bg-blue-900/20"
-                        : "border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700"
-                    }
-                  `}
-                onClick={() => setExportFormat(format)}
-              >
-                <div className="flex items-center gap-2">
-                  <input
-                    type="radio"
-                    checked={exportFormat === format}
-                    onChange={() => setExportFormat(format)}
-                    className="w-4 h-4"
-                  />
-                  <span className="text-slate-500 dark:text-slate-400">
-                    {formatIcons[format]}
-                  </span>
-                  <span className="text-sm font-medium text-slate-700 dark:text-slate-300">
-                    {format.toUpperCase()}
-                  </span>
-                </div>
-              </div>
-            ))}
+      {stepIndex === 1 && (
+        <Card className="bg-slate-50/70 dark:bg-slate-900/60 border-slate-200/70 dark:border-slate-800/70">
+          <CardHeader>
+            <CardTitle className="text-sm">Export Format</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            {formatOptions.map((option) => {
+              const isActive = exportFormat === option.id;
+              return (
+                <button
+                  key={option.id}
+                  type="button"
+                  onClick={() => setExportFormat(option.id)}
+                  className={cn(
+                    "flex h-full flex-col gap-3 rounded-xl border px-4 py-3 text-left transition-all",
+                    isActive
+                      ? "border-slate-900/20 bg-slate-900/[0.04] shadow-sm dark:border-white/10 dark:bg-white/5"
+                      : "border-slate-200/70 bg-white/80 hover:border-slate-300 dark:border-slate-800/70 dark:bg-slate-900/60",
+                  )}
+                  aria-pressed={isActive}
+                >
+                  <div className="flex items-start gap-3">
+                    <span
+                      className={cn(
+                        "flex h-8 w-8 items-center justify-center rounded-lg",
+                        isActive
+                          ? "bg-slate-900 text-white dark:bg-white dark:text-slate-900"
+                          : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300",
+                      )}
+                    >
+                      {option.icon}
+                    </span>
+                    <div>
+                      <div className="text-sm font-semibold text-slate-800 dark:text-slate-100">
+                        {option.label}
+                      </div>
+                      <div className="text-xs text-slate-500 dark:text-slate-400">
+                        {option.description}
+                      </div>
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
           </div>
 
           {/* Format-specific options */}
@@ -374,70 +508,149 @@ export function ExportPanel({
           )}
         </CardContent>
       </Card>
+      )}
 
       {/* Destination */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm">Destination</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div>
-            <Label>Output Folder</Label>
-            <div className="flex items-center gap-2 mt-1">
-              <Input
-                value={outputFolder}
-                onChange={(e) => setOutputFolder(e.target.value)}
-                placeholder="/Users/justin/Exports"
-              />
-              <Button variant="outline" size="sm">
-                Browse
-              </Button>
+      {stepIndex === 2 && (
+        <Card className="bg-slate-50/70 dark:bg-slate-900/60 border-slate-200/70 dark:border-slate-800/70">
+          <CardHeader>
+            <CardTitle className="text-sm">Destination</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div>
+              <Label>Output Folder</Label>
+              <div className="flex items-center gap-2 mt-1">
+                <Input
+                  value={outputFolder}
+                  onChange={(e) => setOutputFolder(e.target.value)}
+                  placeholder="/Users/justin/Exports"
+                />
+                <Button variant="outline" size="sm">
+                  Browse
+                </Button>
+              </div>
             </div>
-          </div>
-          <div>
-            <Label>File Name</Label>
-            <Input
-              value={fileName}
-              onChange={(e) => setFileName(e.target.value)}
-              placeholder="Users_export_2025-01-24.csv"
-              className="mt-1"
-            />
-          </div>
-        </CardContent>
-      </Card>
+            <div>
+              <Label>File Name</Label>
+              <Input
+                value={fileName}
+                onChange={(e) => setFileName(e.target.value)}
+                placeholder="Users_export_2025-01-24.csv"
+                className="mt-1"
+              />
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
-      {/* Actions */}
-      <div className="flex items-center justify-between pt-4 border-t border-slate-200 dark:border-slate-800">
+      {/* Review & Run */}
+      {stepIndex === 3 && (
+        <Card className="bg-slate-50/70 dark:bg-slate-900/60 border-slate-200/70 dark:border-slate-800/70">
+          <CardHeader>
+            <CardTitle className="text-sm">Review & Run</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-1 gap-3 text-sm md:grid-cols-3">
+              <div className="rounded-lg border border-slate-200/70 bg-white/80 p-3 dark:border-slate-800/70 dark:bg-slate-950/40">
+                <div className="text-xs text-slate-500 dark:text-slate-400">
+                  Source
+                </div>
+                <div className="mt-1 font-semibold text-slate-800 dark:text-slate-100">
+                  {selectedDatabase || "Database"} • {selectedTable?.name || "Table"}
+                </div>
+                <div className="text-xs text-slate-500 dark:text-slate-400">
+                  {useCustomQuery ? "Custom SQL query" : "Full table export"}
+                </div>
+              </div>
+              <div className="rounded-lg border border-slate-200/70 bg-white/80 p-3 dark:border-slate-800/70 dark:bg-slate-950/40">
+                <div className="text-xs text-slate-500 dark:text-slate-400">
+                  Format
+                </div>
+                <div className="mt-1 font-semibold text-slate-800 dark:text-slate-100">
+                  {exportFormat.toUpperCase()}
+                </div>
+                <div className="text-xs text-slate-500 dark:text-slate-400">
+                  {exportFormat === "csv"
+                    ? `${includeHeaders ? "With headers" : "No headers"} • UTF-8`
+                    : "Default format options"}
+                </div>
+              </div>
+              <div className="rounded-lg border border-slate-200/70 bg-white/80 p-3 dark:border-slate-800/70 dark:bg-slate-950/40">
+                <div className="text-xs text-slate-500 dark:text-slate-400">
+                  Destination
+                </div>
+                <div className="mt-1 font-semibold text-slate-800 dark:text-slate-100">
+                  {fileName || "Choose a file name"}
+                </div>
+                <div className="text-xs text-slate-500 dark:text-slate-400">
+                  {outputFolder || "Select an output folder"}
+                </div>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setEditingPreset(null);
+                    setShowPresetDialog(true);
+                  }}
+                >
+                  <Save className="h-4 w-4 mr-2" />
+                  Save as Preset
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowPresetManager(true)}
+                >
+                  <FolderOpen className="h-4 w-4 mr-2" />
+                  Load Preset
+                </Button>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button variant="outline" onClick={handlePreview}>
+                  Preview (First 100 Rows)
+                </Button>
+                <Button onClick={handleExport}>
+                  <Download className="h-4 w-4 mr-2" />
+                  Export
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      <div className="flex flex-wrap items-center justify-between gap-2 pt-4 border-t border-slate-200 dark:border-slate-800">
         <div className="flex items-center gap-2">
           <Button
             variant="outline"
             size="sm"
-            onClick={() => {
-              setEditingPreset(null);
-              setShowPresetDialog(true);
-            }}
+            onClick={() =>
+              setStepIndex((prev) => Math.max(0, prev - 1))
+            }
+            disabled={stepIndex === 0}
           >
-            <Save className="h-4 w-4 mr-2" />
-            Save as Preset
+            Back
           </Button>
           <Button
             variant="outline"
             size="sm"
-            onClick={() => setShowPresetManager(true)}
+            onClick={() =>
+              setStepIndex((prev) =>
+                Math.min(steps.length - 1, prev + 1),
+              )
+            }
+            disabled={isLastStep}
           >
-            <FolderOpen className="h-4 w-4 mr-2" />
-            Load Preset
+            Next
           </Button>
         </div>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={handlePreview}>
-            Preview (First 100 Rows)
-          </Button>
-          <Button onClick={handleExport}>
-            <Download className="h-4 w-4 mr-2" />
-            Export
-          </Button>
-        </div>
+        <span className="text-xs text-slate-500 dark:text-slate-400">
+          {steps[stepIndex].label} • Step {stepIndex + 1} of {steps.length}
+        </span>
       </div>
 
       {/* Preset Dialog */}

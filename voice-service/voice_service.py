@@ -4,7 +4,6 @@ File: voice-service/voice_service.py
 
 Python backend service for voice processing using:
 - Faster-Whisper (STT) - Fast, lightweight transcription
-- VibeVoice-ASR (STT) - Microsoft's long-form ASR with speaker diarization
 - Piper (TTS) - Text-to-speech synthesis
 
 This service provides HTTP endpoints for speech-to-text and text-to-speech operations.
@@ -35,22 +34,6 @@ except ImportError as e:
     WhisperModel = None
     np = None
     sf = None
-
-# Try to import VibeVoice-ASR dependencies
-VIBEVOICE_AVAILABLE = False
-vibevoice_model = None
-vibevoice_processor = None
-vibevoice_lock = threading.Lock()
-
-try:
-    import torch
-    import torchaudio
-    from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor, TextIteratorStreamer
-    VIBEVOICE_AVAILABLE = True
-except ImportError as e:
-    print(f"Warning: VibeVoice-ASR dependencies not available: {e}")
-    torch = None
-    torchaudio = None
 
 # Global model instances
 whisper_model: Optional[WhisperModel] = None
@@ -108,32 +91,17 @@ class VoiceServiceHandler(BaseHTTPRequestHandler):
             self.send_error(404, "Not Found")
     
     def handle_transcribe(self, body: bytes):
-        """Handle speech-to-text transcription. Routes to appropriate provider."""
+        """Handle speech-to-text transcription using Faster-Whisper."""
         try:
             # Parse request
             data = json.loads(body.decode('utf-8'))
-            provider = data.get('provider', 'faster-whisper')  # Default to faster-whisper
-            
-            if provider == 'vibevoice' or provider == 'vibevoice-asr':
-                self.handle_transcribe_vibevoice(data)
-            else:
-                self.handle_transcribe_whisper(data)
+            # Faster-Whisper is the only local provider
+            self.handle_transcribe_whisper(data)
                 
         except json.JSONDecodeError as e:
             self.send_error(400, f"Invalid JSON in request: {str(e)}")
-        except Exception as e:
             self.send_error(500, f"Transcription error: {str(e)}")
     
-    def handle_transcribe_vibevoice(self, data: Dict[str, Any]):
-        """Handle transcription using Microsoft VibeVoice-ASR."""
-        global vibevoice_model, vibevoice_processor
-        
-        if not VIBEVOICE_AVAILABLE:
-            self.send_error(503, "VibeVoice-ASR not available. Please install: pip install transformers torch torchaudio")
-            return
-        
-        try:
-            audio_data = data.get('audio')
             hotwords = data.get('hotwords', [])  # Custom terms for accuracy
             enable_diarization = data.get('enable_diarization', True)
             stream = data.get('stream', False)
@@ -379,6 +347,9 @@ class VoiceServiceHandler(BaseHTTPRequestHandler):
                     vad_filter=True,
                     vad_parameters=dict(min_silence_duration_ms=500)
                 )
+                
+                # Convert generator to list for iteration
+                segments = list(segments)
 
                 if stream:
                     # Streaming mode
@@ -653,17 +624,12 @@ class VoiceServiceHandler(BaseHTTPRequestHandler):
         response = {
             'status': 'healthy',
             'whisper_available': whisper_model is not None or FASTER_WHISPER_AVAILABLE,
-            'vibevoice_available': vibevoice_model is not None or VIBEVOICE_AVAILABLE,
             'piper_available': piper_available or self.command_exists('piper'),
             'service': 'voice-service',
             'providers': {
                 'faster-whisper': {
                     'available': FASTER_WHISPER_AVAILABLE,
                     'loaded': whisper_model is not None
-                },
-                'vibevoice-asr': {
-                    'available': VIBEVOICE_AVAILABLE,
-                    'loaded': vibevoice_model is not None
                 }
             }
         }

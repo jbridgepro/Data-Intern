@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
 import { useAgentSelection } from '../../agents/contexts/AgentSelectionContext';
 import { ChatMessageType, FileOperation, AISettings } from '../../ai-assistant/types';
 import { useAIFileAssistant } from '../../ai-assistant/hooks/useAIFileAssistant';
+import { homeDir } from '@tauri-apps/api/path';
 
 // Define the shape of a single chat session
 export interface ChatSession {
@@ -76,22 +77,38 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
   // Ensure active session exists
   useEffect(() => {
     if (selectedAgentId && !sessions[selectedAgentId]) {
-      setSessions(prev => ({
-        ...prev,
-        [selectedAgentId]: {
-          agentId: selectedAgentId,
-          messages: [{
-            id: 'welcome',
-            role: 'assistant',
-            content: 'Hi! I am your AI assistant. How can I help you with this task?',
-            timestamp: new Date()
-          }],
-          currentDirectory: '',
-          isProcessing: false,
-          inputValue: '',
-          lastActive: Date.now()
+      // Create new session with home directory as default
+      const createSession = async () => {
+        let defaultDirectory = '';
+        try {
+          defaultDirectory = await homeDir();
+        } catch (e) {
+          console.error('Failed to get home directory for new session:', e);
         }
-      }));
+
+        setSessions(prev => {
+          // Double-check session doesn't exist (race condition protection)
+          if (prev[selectedAgentId]) return prev;
+
+          return {
+            ...prev,
+            [selectedAgentId]: {
+              agentId: selectedAgentId,
+              messages: [{
+                id: 'welcome',
+                role: 'assistant',
+                content: 'Hi! I am your AI assistant. How can I help you with this task?',
+                timestamp: new Date()
+              }],
+              currentDirectory: defaultDirectory,
+              isProcessing: false,
+              inputValue: '',
+              lastActive: Date.now()
+            }
+          };
+        });
+      };
+      createSession();
     }
   }, [selectedAgentId, sessions]);
 
@@ -137,6 +154,13 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
         currentDirectory: directory
       }
     }));
+    if (directory) {
+      try {
+        localStorage.setItem('ai-assistant-current-directory', directory);
+      } catch (e) {
+        console.warn('Failed to persist current directory', e);
+      }
+    }
   }, [selectedAgentId]);
 
   const addMessage = useCallback((agentId: string, message: ChatMessageType) => {

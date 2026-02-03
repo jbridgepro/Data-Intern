@@ -106,6 +106,7 @@ export const AIFileAssistantSession = ({
     activeSession,
     sendMessage,
     setInputValue,
+    setDirectory,
     activeAgentId,
     addMessage: contextAddMessage,
     deleteMessage,
@@ -113,8 +114,18 @@ export const AIFileAssistantSession = ({
 
   // Other state needed for UI - MOVED UP
   const [currentDirectory, setCurrentDirectory] = useState(
-    initialDirectory || "",
+    initialDirectory || activeSession?.currentDirectory || "",
   );
+
+  // Keep local state in sync with active session directory
+  useEffect(() => {
+    if (
+      activeSession?.currentDirectory &&
+      activeSession.currentDirectory !== currentDirectory
+    ) {
+      setCurrentDirectory(activeSession.currentDirectory);
+    }
+  }, [activeSession?.currentDirectory, currentDirectory]);
 
   // Voice Settings State
   const [voiceSettings, setVoiceSettingsState] = useState<VoiceSettings>(() => {
@@ -350,12 +361,13 @@ export const AIFileAssistantSession = ({
       });
       if (selected && typeof selected === "string") {
         setCurrentDirectory(selected);
+        setDirectory(selected);
         if (onDirectoryChange) onDirectoryChange(selected);
       }
     } catch (err) {
       console.error("Failed to select directory", err);
     }
-  }, [currentDirectory, onDirectoryChange]);
+  }, [currentDirectory, onDirectoryChange, setDirectory]);
 
   // Tools
   const {
@@ -582,9 +594,9 @@ export const AIFileAssistantSession = ({
 
         // Auto-send logic ONLY for immersive voice mode
         if (showVoiceMode) {
-          // Additional validation for voice mode - be VERY conservative
-          // Require minimum length of 25 characters to avoid sending transcription artifacts
-          const MIN_VOICE_SEND_LENGTH = 25;
+          // Relaxed validation - allow shorter but meaningful commands
+          // Reduced from 25 to 10 chars to support commands like "yes", "help me"
+          const MIN_VOICE_SEND_LENGTH = 10;
           if (finalText.length < MIN_VOICE_SEND_LENGTH) {
             console.log(
               `[Voice] Voice mode: Transcript too short (${finalText.length} < ${MIN_VOICE_SEND_LENGTH}), waiting for more`,
@@ -602,13 +614,13 @@ export const AIFileAssistantSession = ({
             return;
           }
 
-          // Final check: require at least 4 words for voice mode
+          // Relaxed check: require at least 2 words for voice mode
           const wordCount = finalText
             .split(/\s+/)
             .filter((w) => w.length > 0).length;
-          if (wordCount < 4) {
+          if (wordCount < 2) {
             console.log(
-              `[Voice] Voice mode: Not enough words (${wordCount} < 4), waiting for more`,
+              `[Voice] Voice mode: Not enough words (${wordCount} < 2), waiting for more`,
             );
             setVoiceInputActive(false);
             return;
@@ -1481,6 +1493,7 @@ export const AIFileAssistantSession = ({
                 onSend={handleSendMessage}
                 onSelectDirectory={(path) => {
                   setCurrentDirectory(path);
+                  setDirectory(path);
                   // Store in localStorage for agents to use
                   if (path) {
                     localStorage.setItem(

@@ -428,6 +428,51 @@ export async function processCommandWithOllama(
       finalResponse = 'Done! I completed the operation.';
     }
 
+    // ========== HALLUCINATION CHECK (Native Mode) ==========
+    // Check if AI claims to have created files but no tools were executed
+    const aiClaimsCreation = /(?:created|made|generated|wrote)\s+(?:the\s+)?(?:file|folder|directory|document)/i.test(finalResponse);
+    const actuallyExecutedTools = toolExecutions.length > 0;
+
+    if (aiClaimsCreation && !actuallyExecutedTools) {
+      console.log('[Hallucination Detection] AI claimed creation but no tools executed. Checking for fallback...');
+
+      // Force fallback check for creation commands
+      if (isFolderCreationRequest(command) || isFileCreationRequest(command) || isCompositeCreationRequest(command)) {
+        // We'll let the fallback logic below handle it
+        console.log('[Hallucination Detection] Valid creation request detected, proceeding to fallback logic.');
+      } else {
+        // If it's not a clear creation request but AI claimed it, it might have been a confirmation
+        // "yes" -> "I created the file"
+        if (/^(yes|confirm|proceed)/i.test(command)) {
+          console.log('[Hallucination Detection] Confirmation detected. Attempting to infer operation from context.');
+
+          if (!currentDirectory) {
+            console.warn('[Hallucination Fix] Cannot auto-create file: No current directory selected.');
+            finalResponse += `\n(System: I wanted to create the file, but no folder is selected. Please select a folder first.)`;
+          } else {
+            // This complicates things as we don't have the context here easily without re-parsing history
+            // But we can try to parse the AI's response to see what it *thought* it created
+            // e.g. "I created the file test.docx"
+            const fileMatch = finalResponse.match(/(?:created|made|wrote).*?([a-zA-Z0-9_\-\.]+\.[a-zA-Z0-9]+)/i);
+            if (fileMatch && fileMatch[1]) {
+              const fileName = fileMatch[1];
+              console.log(`[Hallucination Fix] Found filename "${fileName}" in AI response. Triggering creation.`);
+              const params = {
+                path: `${currentDirectory}/${fileName}`,
+                content: '',
+                createDirectories: true
+              };
+              const { result, executionInfo } = await ToolExecutionService.executeToolCall('write_file_content', params, context);
+              toolExecutions.push(executionInfo);
+              if (result.success) {
+                finalResponse += `\n(System message: I verified the file "${fileName}" was created successfully.)`;
+              }
+            }
+          }
+        }
+      }
+    }
+
     // ========== CLARIFICATION OVERRIDE (Native Mode) ==========
     // If clarification was needed but the AI didn't ask (it just claimed to create files),
     // override the response with a clarification prompt.
@@ -489,7 +534,20 @@ export async function processCommandWithOllama(
         conversationHistory
       );
     }
-    throw error;
+
+    console.error('Ollama processing error:', error);
+    return {
+      content: `I encountered an error during processing: ${error.message || 'Unknown error'}`,
+      operation,
+      metadata: {
+        model: modelToUse,
+        provider: 'ollama',
+        toolsUsed: toolExecutions.length,
+        toolExecutions,
+        reasoningSteps,
+        isError: true
+      },
+    };
   }
 }
 
@@ -583,6 +641,12 @@ async function processCommandWithJsonMode(
         // Found a JSON command - execute it
         const toolName = jsonCommand.tool;
         const toolArgs = jsonCommand.arguments || {};
+
+        // Capture the natural language part of the response (Part 1)
+        const cleanedText = ResponseParser.cleanResponse(textResponse);
+        if (cleanedText.length > 0) {
+          finalResponse += cleanedText + '\n\n';
+        }
 
         // Reasoning: Selection
         const selectionStep = ToolExecutionService.createToolSelectionStep(stepCounter++, toolName, toolArgs);
@@ -763,40 +827,72 @@ async function processCommandWithJsonMode(
       }
     }
 
-    // ========== CLARIFICATION OVERRIDE (JSON Mode) ==========
-    // If clarification was needed but the AI didn't ask (it just claimed to create files),
-    // override the response with a clarification prompt.
-    // Trigger when: no tools executed OR all tools failed
-    const allToolsFailedJson = toolExecutions.length > 0 && toolExecutions.every(t => t.status === 'error');
-    const noSuccessfulToolsJson = toolExecutions.length === 0 || allToolsFailedJson;
+    // ========== HALLUCINATION CHECK (JSON Mode) ==========
+    const aiClaimsCreationJson = /(?:created|made|generated|wrote)\s+(?:the\s+)?(?:file|folder|directory|document)/i.test(finalResponse);
+    const actuallyExecutedToolsJson = toolExecutions.length > 0;
 
-    if (requiresClarificationJson && noSuccessfulToolsJson) {
-      const alreadyAskingJson = /what\s+(?:type|kind|format)\s+(?:of\s+)?(?:file|document)/i.test(finalResponse);
+    if (aiClaimsCreationJson && !actuallyExecutedToolsJson) {
+      console.log('[Hallucination Detection JSON] AI claimed creation but no tools executed.');
+      // Similar recovery logic could go here, but for now we'll rely on the Fallback logic above 
+      // which usually catches these cases if they match the patterns
+      if (!finalResponse.includes("System message")) { // Avoid double stamping
+        if (!currentDirectory) {
+          console.warn('[Hallucination Fix JSON] Cannot auto-create file: No current directory selected.');
+          finalResponse += `\n(System: I cannot create the file because no folder is selected.)`;
+        } else {
+          // Check if we can rescue it
+          const fileMatch = finalResponse.match(/(?:created|made|wrote).*?([a-zA-Z0-9_\-\.]+\.[a-zA-Z0-9]+)/i);
+          if (fileMatch && fileMatch[1]) {
+            const fileName = fileMatch[1];
+            console.log(`[Hallucination Fix JSON] Found filename "${fileName}" in AI response. Triggering creation.`);
+            const params = {
+              path: `${currentDirectory}/${fileName}`,
+              content: '',
+              createDirectories: true
+            };
+            const { result, executionInfo } = await ToolExecutionService.executeToolCall('write_file_content', params, context);
+            toolExecutions.push(executionInfo);
+            if (result.success) {
+              finalResponse += `\n(System: Verified and created "${fileName}")`;
+            }
+          }
+        }
+      }
 
-      if (!alreadyAskingJson) {
-        console.log('[JSON Fallback] Clarification needed and no successful tools. Forcing clarification prompt.');
+      // ========== CLARIFICATION OVERRIDE (JSON Mode) ==========
+      // If clarification was needed but the AI didn't ask (it just claimed to create files),
+      // override the response with a clarification prompt.
+      // Trigger when: no tools executed OR all tools failed
+      const allToolsFailedJson = toolExecutions.length > 0 && toolExecutions.every((t: any) => t.status === 'error');
+      const noSuccessfulToolsJson = toolExecutions.length === 0 || allToolsFailedJson;
+      const requiresClarificationOverride = context.directoryAnalysis ? needsFileTypeClarification(command) : false;
 
-        // Parse the request to get folder and file names for the clarification message
-        if (isCompositeCreationRequest(command)) {
-          const parsed = parseCompositeCreationRequest(command);
-          if (parsed.folders.length > 0) {
-            const folder = parsed.folders[0];
-            const fileName = folder.filesInside[0]?.fileName?.replace(/\.[^.]+$/, '') || 'the document';
-            finalResponse = `I'll create the folder "${folder.folderName}" for you.\n\nWhat type of file would you like for "${fileName}"?\n- **.txt** - Plain text\n- **.docx** - Word document\n- **.md** - Markdown\n- Or tell me another format`;
+      if (requiresClarificationOverride && noSuccessfulToolsJson) {
+        const alreadyAskingJson = /what\s+(?:type|kind|format)\s+(?:of\s+)?(?:file|document)/i.test(finalResponse);
+
+        if (!alreadyAskingJson) {
+          console.log('[JSON Fallback] Clarification needed and no successful tools. Forcing clarification prompt.');
+
+          // Parse the request to get folder and file names for the clarification message
+          if (isCompositeCreationRequest(command)) {
+            const parsed = parseCompositeCreationRequest(command);
+            if (parsed.folders.length > 0) {
+              const folder = parsed.folders[0];
+              const fileName = folder.filesInside[0]?.fileName?.replace(/\.[^.]+$/, '') || 'the document';
+              finalResponse = `I'll create the folder "${folder.folderName}" for you.\n\nWhat type of file would you like for "${fileName}"?\n- **.txt** - Plain text\n- **.docx** - Word document\n- **.md** - Markdown\n- Or tell me another format`;
+            } else {
+              finalResponse = `What type of file would you like to create?\n- **.txt** - Plain text\n- **.docx** - Word document\n- **.md** - Markdown\n- Or tell me another format`;
+            }
           } else {
             finalResponse = `What type of file would you like to create?\n- **.txt** - Plain text\n- **.docx** - Word document\n- **.md** - Markdown\n- Or tell me another format`;
           }
-        } else {
-          finalResponse = `What type of file would you like to create?\n- **.txt** - Plain text\n- **.docx** - Word document\n- **.md** - Markdown\n- Or tell me another format`;
         }
       }
-    }
 
-    // Conclusion
-    if (reasoningSteps.length > 0) {
-      reasoningSteps.push(ToolExecutionService.createConclusionStep(stepCounter++));
-    }
+      // Conclusion
+    } // end of while loop
 
+    // Force return if loop finishes without returning
     return {
       content: finalResponse.trim() || 'I processed your request.',
       operation,
@@ -806,12 +902,25 @@ async function processCommandWithJsonMode(
         toolsUsed: toolExecutions.length,
         toolExecutions,
         reasoningSteps,
-        mode: 'json_command', // Indicate we used JSON command mode
+        mode: 'json_command',
       },
     };
+
   } catch (error: any) {
     console.error('Error in JSON command mode:', error);
-    throw error;
+    return {
+      content: `I encountered an error during processing: ${error.message || 'Unknown error'}`,
+      operation,
+      metadata: {
+        model: modelToUse,
+        provider: 'ollama',
+        toolsUsed: toolExecutions.length,
+        toolExecutions,
+        reasoningSteps,
+        mode: 'json_command',
+        isError: true
+      },
+    };
   }
 }
 

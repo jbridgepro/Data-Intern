@@ -7,6 +7,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { useState } from "react";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
+import { motion, AnimatePresence } from "framer-motion";
 
 type ConflictResolution = "overwrite" | "skip" | "rename" | "ask";
 
@@ -102,41 +103,51 @@ export const OperationControls = ({
         </Button>
       </div>
 
-      {/* Advanced Options (Collapsible) */}
-      {showOptions && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 bg-muted/40 rounded-lg border animate-in slide-in-from-top-2">
-          <div className="space-y-2">
-            <Label className="text-sm">Conflict Resolution</Label>
-            <Select 
-              value={conflictResolution} 
-              onValueChange={(v) => onConflictResolutionChange(v as ConflictResolution)}
-              disabled={isProcessing}
-            >
-              <SelectTrigger className="bg-background">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="ask">Ask me what to do</SelectItem>
-                <SelectItem value="overwrite">Overwrite existing files</SelectItem>
-                <SelectItem value="skip">Skip existing files</SelectItem>
-                <SelectItem value="rename">Rename (keep both)</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          
-          <div className="flex items-center space-x-2 pt-6">
-            <Checkbox 
-              id="preserve-struct"
-              checked={preserveStructure}
-              onCheckedChange={(c) => onPreserveStructureChange(c as boolean)}
-              disabled={isProcessing}
-            />
-            <Label htmlFor="preserve-struct" className="cursor-pointer font-normal">
-              Preserve folder structure relative to source
-            </Label>
-          </div>
-        </div>
-      )}
+      {/* Advanced Options (Collapsible with smooth animation) */}
+      <AnimatePresence>
+        {showOptions && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.3, ease: "easeInOut" }}
+            className="overflow-hidden"
+          >
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 bg-muted/40 rounded-lg border">
+              <div className="space-y-2">
+                <Label className="text-sm">Conflict Resolution</Label>
+                <Select
+                  value={conflictResolution}
+                  onValueChange={(v) => onConflictResolutionChange(v as ConflictResolution)}
+                  disabled={isProcessing}
+                >
+                  <SelectTrigger className="bg-background">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="ask">Ask me what to do</SelectItem>
+                    <SelectItem value="overwrite">Overwrite existing files</SelectItem>
+                    <SelectItem value="skip">Skip existing files</SelectItem>
+                    <SelectItem value="rename">Rename (keep both)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="flex items-center space-x-2 pt-6">
+                <Checkbox
+                  id="preserve-struct"
+                  checked={preserveStructure}
+                  onCheckedChange={(c) => onPreserveStructureChange(c as boolean)}
+                  disabled={isProcessing}
+                />
+                <Label htmlFor="preserve-struct" className="cursor-pointer font-normal">
+                  Preserve folder structure relative to source
+                </Label>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <div className="h-px bg-border" />
 

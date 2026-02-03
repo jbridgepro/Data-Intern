@@ -42,6 +42,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Badge } from "../ui/badge";
 import { Input } from "@/components/ui/input";
 import { useAgentManager } from "../../features/agents/hooks/useAgentManager";
+import { toolsConfig } from "@/features/quick-tools/config/tools";
 import {
   Tooltip,
   TooltipContent,
@@ -49,6 +50,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
+import { usePersistentState } from "@/hooks/usePersistentState";
 
 interface SidebarProps {
   activeTab: string;
@@ -67,8 +69,10 @@ interface NavItem {
   label: string;
   icon: React.ComponentType<{ className?: string }>;
   shortcut?: string;
-  category: "file-operations" | "tools" | "ai" | "system";
+  category: "file-operations" | "tools" | "quick-tools" | "ai" | "system";
   description?: string;
+  isQuickTool?: boolean;
+  toolId?: string;
 }
 
 // Navigation sections configuration
@@ -83,15 +87,20 @@ const NAV_SECTIONS = {
     icon: Terminal,
     defaultExpanded: true,
   },
+  "quick-tools": {
+    label: "Quick Tools",
+    icon: Zap,
+    defaultExpanded: false,
+  },
   ai: {
     label: "AI & Assistant",
     icon: Sparkles,
-    defaultExpanded: true,
+    defaultExpanded: false, // Collapsed by default for cleaner UI
   },
   system: {
     label: "System",
     icon: Settings,
-    defaultExpanded: true,
+    defaultExpanded: false, // Collapsed by default for cleaner UI
   },
 };
 
@@ -111,13 +120,18 @@ export const Sidebar = ({
 
   // Search state
   const [searchQuery, setSearchQuery] = useState("");
-  const [expandedSections, setExpandedSections] = useState<Set<string>>(
-    new Set(
-      Object.keys(NAV_SECTIONS).filter(
-        (key) => NAV_SECTIONS[key as keyof typeof NAV_SECTIONS].defaultExpanded,
-      ),
+
+  // Persist expanded sections to localStorage
+  const [expandedSectionsArray, setExpandedSectionsArray] = usePersistentState<string[]>(
+    "sidebar-expanded-sections",
+    Object.keys(NAV_SECTIONS).filter(
+      (key) => NAV_SECTIONS[key as keyof typeof NAV_SECTIONS].defaultExpanded,
     ),
   );
+
+  // Convert array to Set for easier manipulation
+  const expandedSections = useMemo(() => new Set(expandedSectionsArray), [expandedSectionsArray]);
+
   const [recentItems, setRecentItems] = useState<string[]>(() => {
     const saved = localStorage.getItem("sidebar-recent-items");
     return saved ? JSON.parse(saved) : [];
@@ -227,6 +241,20 @@ export const Sidebar = ({
     },
   ];
 
+  const quickToolsNavItems: NavItem[] = useMemo(
+    () =>
+      toolsConfig.map((tool) => ({
+        id: `quick-tool:${tool.id}`,
+        label: tool.name,
+        icon: tool.icon,
+        category: "quick-tools",
+        description: tool.description,
+        isQuickTool: true,
+        toolId: tool.id,
+      })),
+    [],
+  );
+
   // Track recent items when active tab changes
   useEffect(() => {
     if (activeTab) {
@@ -242,14 +270,15 @@ export const Sidebar = ({
   // Filter navigation items based on search query
   const filteredNavItems = useMemo(() => {
     if (!searchQuery.trim()) return navItems;
+    const searchableItems = [...navItems, ...quickToolsNavItems];
     const query = searchQuery.toLowerCase();
-    return navItems.filter(
+    return searchableItems.filter(
       (item) =>
         item.label.toLowerCase().includes(query) ||
         item.description?.toLowerCase().includes(query) ||
         item.id.toLowerCase().includes(query),
     );
-  }, [searchQuery]);
+  }, [searchQuery, quickToolsNavItems]);
 
   // Group filtered items by category
   const groupedItems = useMemo(() => {
@@ -265,14 +294,14 @@ export const Sidebar = ({
 
   // Toggle section expansion
   const toggleSection = (sectionKey: string) => {
-    setExpandedSections((prev) => {
+    setExpandedSectionsArray((prev) => {
       const next = new Set(prev);
       if (next.has(sectionKey)) {
         next.delete(sectionKey);
       } else {
         next.add(sectionKey);
       }
-      return next;
+      return Array.from(next);
     });
   };
 
@@ -325,16 +354,67 @@ export const Sidebar = ({
       .slice(0, 3); // Show max 3 recent items
   }, [recentItems, activeTab]);
 
+  // Smart recent items - only show when appropriate
+  const shouldShowRecent = useMemo(() => {
+    // Don't show during search
+    if (searchQuery.trim()) return false;
+
+    // Only show if there are recent items
+    if (recentNavItems.length === 0) return false;
+
+    // Only show after user has visited at least 2 different tabs
+    const uniqueVisitedTabs = new Set(recentItems);
+    return uniqueVisitedTabs.size >= 2;
+  }, [searchQuery, recentNavItems.length, recentItems]);
+
+  const isSearching = searchQuery.trim().length > 0;
+
+  // Highlight matching text in search results
+  const highlightMatch = (text: string, query: string) => {
+    if (!query.trim()) return text;
+
+    const regex = new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+    const parts = text.split(regex);
+
+    return parts.map((part, index) => {
+      if (part.toLowerCase() === query.toLowerCase()) {
+        return (
+          <mark
+            key={index}
+            className="bg-yellow-200/60 dark:bg-yellow-900/40 text-slate-900 dark:text-slate-100 px-0.5 rounded"
+          >
+            {part}
+          </mark>
+        );
+      }
+      return part;
+    });
+  };
+
   // Render navigation item (Refactored for reuse)
+  const handleNavItemClick = (item: NavItem) => {
+    if (item.isQuickTool && item.toolId) {
+      const payload = { toolId: item.toolId, name: item.label };
+      sessionStorage.setItem("quick-tools-open-tool", JSON.stringify(payload));
+      window.dispatchEvent(
+        new CustomEvent("filepro:quick-tools-open", { detail: payload }),
+      );
+      setActiveTab("quick-tools");
+      return;
+    }
+
+    setActiveTab(item.id);
+  };
+
   const renderNavItem = (item: NavItem, showTooltip: boolean) => {
     const Icon = item.icon;
-    const isActive = activeTab === item.id;
+    const isActive = !item.isQuickTool && activeTab === item.id;
 
     const content = (
       <button
         key={item.id}
         onClick={() => {
-          setActiveTab(item.id);
+          handleNavItemClick(item);
           // If we are in hover-expand mode (minimized but expanded via hover),
           // we might want to collapse on select.
           if (isMinimized && isHovered) {
@@ -370,7 +450,9 @@ export const Sidebar = ({
 
         {isExpanded && (
           <div className="flex-1 text-left truncate flex items-center justify-between">
-            <span className="truncate">{item.label}</span>
+            <span className="truncate">
+              {searchQuery ? highlightMatch(item.label, searchQuery) : item.label}
+            </span>
             {item.shortcut && (
               <span className="text-[10px] text-slate-400 opacity-0 group-hover:opacity-100 transition-opacity font-mono bg-slate-100 dark:bg-slate-800 px-1 rounded border dark:border-slate-700">
                 {modifierSymbol}
@@ -535,6 +617,13 @@ export const Sidebar = ({
               </button>
             )}
           </div>
+
+          {/* Search Results Count */}
+          {searchQuery && filteredNavItems.length > 0 && (
+            <div className="px-1 py-1 mt-1.5 text-[10px] text-slate-500 dark:text-slate-400">
+              {filteredNavItems.length} result{filteredNavItems.length !== 1 ? 's' : ''}
+            </div>
+          )}
         </div>
 
         {/* Search Icon (Minimized Only) */}
@@ -561,8 +650,8 @@ export const Sidebar = ({
 
         {/* Navigation Content - Scrollable */}
         <div className="flex-1 overflow-y-auto overflow-x-hidden w-full px-2 py-2 scrollbar-none hover:scrollbar-thin">
-          {/* Recent Items (Expanded Only) */}
-          {isExpanded && !searchQuery && recentNavItems.length > 0 && (
+          {/* Recent Items (Expanded Only) - Smart display */}
+          {isExpanded && shouldShowRecent && (
             <div className="mb-4 space-y-1">
               <div className="flex items-center gap-2 px-3 py-1.5 text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest">
                 <Clock className="h-3 w-3" />
@@ -578,7 +667,9 @@ export const Sidebar = ({
               const sectionItems = groupedItems[sectionKey] || [];
               if (sectionItems.length === 0) return null;
 
-              const isSectionExpanded = expandedSections.has(sectionKey);
+              const isSectionExpanded = isSearching
+                ? true
+                : expandedSections.has(sectionKey);
 
               // Minimized Mode: Just show items directly
               if (!isExpanded) {

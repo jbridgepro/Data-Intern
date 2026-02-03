@@ -78,6 +78,7 @@ import {
 import { Slider } from "@/components/ui/slider";
 import { cn } from "@/lib/utils";
 import { usePersistentState } from "../../hooks/usePersistentState";
+import { EmptyState } from "@/components/common/EmptyState";
 
 export const FileMapper = () => {
   // State management
@@ -498,7 +499,8 @@ export const FileMapper = () => {
 
         <Separator className="bg-slate-200/60 dark:bg-slate-800/60" />
 
-        {/* Bottom Bar: Filters & Options */}
+        {/* Bottom Bar: Filters & Options - Only show when map is generated */}
+        {treeData && (
         <div className="flex items-center justify-between px-4 py-2 bg-slate-50/30 dark:bg-slate-900/10 gap-4">
              {/* Simple Filters */}
              <div className="flex items-center gap-4 flex-1 min-w-0">
@@ -569,13 +571,12 @@ export const FileMapper = () => {
                  </div>
              </div>
         </div>
+        )}
       </div>
 
       <div className="flex-1 flex overflow-hidden">
-        {/* Sidebar Configuration - Compact or Hidden? CopyToolbar usually has no sidebar, just bottom stack. 
-            But FileMapper has Style Selectors. Let's keep Sidebar but maybe simpler or consistent.
-            We will keep the sidebar as it offers important Vis Style switching, which Copy Page doesn't have.
-        */}
+        {/* Sidebar Configuration - Only show when map is generated */}
+        {treeData && (
         <div className="w-64 border-r border-slate-200/60 dark:border-slate-800/60 bg-white/40 dark:bg-slate-900/40 backdrop-blur-md flex flex-col">
           <div className="p-4 flex-1 overflow-y-auto space-y-6">
             
@@ -618,6 +619,7 @@ export const FileMapper = () => {
             )}
           </div>
         </div>
+        )}
 
         {/* Main Content Area */}
         <div className="flex-1 flex flex-col bg-white/30 dark:bg-slate-900/30 overflow-hidden relative">
@@ -669,19 +671,21 @@ export const FileMapper = () => {
                 </div>
              </div>
           ) : (
-            <div className="flex-1 flex flex-col items-center justify-center text-slate-400 p-8">
-               <div className="w-16 h-16 bg-slate-100 dark:bg-slate-800 rounded-2xl flex items-center justify-center mb-4 shadow-sm">
-                  <BarChart3 className="h-8 w-8 opacity-40" />
-               </div>
-               <h2 className="text-lg font-semibold text-slate-700 dark:text-slate-200 mb-1">Ready to Visualize</h2>
-               <p className="text-center max-w-xs text-slate-500 text-sm mb-6">
-                 Select a directory to map.
-               </p>
-               <Button onClick={handleBrowseFolder} variant="outline" className="gap-2 h-9 text-sm">
-                 <FolderSearch className="h-4 w-4" />
-                 Select Folder
-               </Button>
-            </div>
+            <EmptyState
+              icon={<BarChart3 className="h-8 w-8 text-slate-400" />}
+              title="Ready to Visualize"
+              description="Select a directory to create an interactive file structure map with multiple visualization styles"
+              action={{
+                label: "Select Folder",
+                onClick: handleBrowseFolder,
+                icon: <FolderSearch className="h-4 w-4" />
+              }}
+              tips={[
+                { label: "💡 Tip", text: "Bookmark frequently mapped directories using the star icon" },
+                { label: "⚡ Shortcut", text: "Cmd/Ctrl+1 to navigate to File Mapper" },
+                { label: "🎨 Styles", text: "Choose from Tree, Network, List, and Size Analysis views" }
+              ]}
+            />
           )}
 
         </div>

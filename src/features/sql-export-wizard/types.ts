@@ -55,6 +55,7 @@ export interface DatabaseTable {
   schema: string;
   rowCount?: number;
   size?: number;
+  lastUpdated?: string;
   columns: TableColumn[];
 }
 
@@ -84,6 +85,19 @@ export interface TableColumn {
   isPrimaryKey: boolean;
   isForeignKey: boolean;
   defaultValue?: any;
+}
+
+// Activity Timeline Types
+export type ActivityType = "export" | "import";
+export type ActivityStatus = "success" | "warning" | "error";
+
+export interface ActivityEntry {
+  id: string;
+  type: ActivityType;
+  title: string;
+  detail: string;
+  timestamp: string;
+  status: ActivityStatus;
 }
 
 // Export Types

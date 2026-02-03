@@ -18,7 +18,7 @@ import {
   Plus,
   Search,
 } from "lucide-react";
-import { DatabaseConnection, DatabaseSchema, DatabaseTable } from "../types";
+import { DatabaseConnection } from "../types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
@@ -26,6 +26,7 @@ import { cn } from "@/lib/utils";
 interface DatabaseExplorerProps {
   connection: DatabaseConnection | null;
   selectedDatabase?: string;
+  selectedTable?: { schema: string; name: string } | null;
   onTableSelect?: (table: { schema: string; name: string }) => void;
   onViewSelect?: (view: { schema: string; name: string }) => void;
 }
@@ -39,6 +40,7 @@ interface TreeNode {
   metadata?: {
     rowCount?: number;
     size?: number;
+    lastUpdated?: string;
   };
   expanded?: boolean;
 }
@@ -46,6 +48,7 @@ interface TreeNode {
 export function DatabaseExplorer({
   connection,
   selectedDatabase,
+  selectedTable,
   onTableSelect,
   onViewSelect,
 }: DatabaseExplorerProps) {
@@ -72,21 +75,33 @@ export function DatabaseExplorer({
               label: "Users",
               type: "table",
               icon: <Table className="h-4 w-4" />,
-              metadata: { rowCount: 5247, size: 2300000 },
+              metadata: {
+                rowCount: 5247,
+                size: 2300000,
+                lastUpdated: "2026-01-29T16:24:00Z",
+              },
             },
             {
               id: "table-orders",
               label: "Orders",
               type: "table",
               icon: <Table className="h-4 w-4" />,
-              metadata: { rowCount: 12891, size: 15700000 },
+              metadata: {
+                rowCount: 12891,
+                size: 15700000,
+                lastUpdated: "2026-02-02T11:08:00Z",
+              },
             },
             {
               id: "table-products",
               label: "Products",
               type: "table",
               icon: <Table className="h-4 w-4" />,
-              metadata: { rowCount: 1456, size: 890000 },
+              metadata: {
+                rowCount: 1456,
+                size: 890000,
+                lastUpdated: "2026-01-25T08:55:00Z",
+              },
             },
           ],
         },
@@ -186,15 +201,24 @@ export function DatabaseExplorer({
       <div key={node.id}>
         <div
           className={cn(
-            "flex items-center gap-2 px-2 py-1.5 rounded hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer group",
+            "flex items-center gap-2 px-2 py-1.5 rounded-lg border border-transparent hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer group transition-colors",
             level === 0 && "font-medium",
+            node.type === "table" &&
+              selectedTable?.name === node.label &&
+              "border-sky-200 bg-sky-50/80 dark:border-sky-900/40 dark:bg-sky-900/20",
           )}
           style={{ paddingLeft: `${8 + indent}px` }}
           onClick={() => {
             if (hasChildren) {
               toggleNode(node.id);
             } else if (node.type === "table" && onTableSelect) {
-              onTableSelect({ schema: "dbo", name: node.label });
+              onTableSelect({
+                schema: "dbo",
+                name: node.label,
+                rowCount: node.metadata?.rowCount,
+                size: node.metadata?.size,
+                lastUpdated: node.metadata?.lastUpdated,
+              });
             } else if (node.type === "view" && onViewSelect) {
               onViewSelect({ schema: "dbo", name: node.label });
             }
@@ -237,7 +261,7 @@ export function DatabaseExplorer({
 
   if (!connection) {
     return (
-      <div className="bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800 p-4">
+      <div className="rounded-2xl border border-slate-200/70 dark:border-slate-800/70 bg-white/80 dark:bg-slate-900/70 p-4 shadow-sm">
         <p className="text-sm text-slate-500 dark:text-slate-400 text-center py-8">
           Connect to a database to explore its structure
         </p>
@@ -246,13 +270,18 @@ export function DatabaseExplorer({
   }
 
   return (
-    <div className="bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800 flex flex-col h-full">
+    <div className="rounded-2xl border border-slate-200/70 dark:border-slate-800/70 bg-white/80 dark:bg-slate-900/70 flex flex-col h-full shadow-sm">
       {/* Header */}
-      <div className="p-4 border-b border-slate-200 dark:border-slate-800">
+      <div className="p-4 border-b border-slate-200/70 dark:border-slate-800/70">
         <div className="flex items-center justify-between mb-3">
-          <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-300">
-            DATABASE EXPLORER
-          </h3>
+          <div>
+            <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+              Database Explorer
+            </h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              {selectedDatabase ? `Browsing ${selectedDatabase}` : "Choose a database to begin"}
+            </p>
+          </div>
           <div className="flex items-center gap-2">
             <Button variant="ghost" size="sm" className="h-7 w-7 p-0">
               <RefreshCw className="h-3 w-3" />

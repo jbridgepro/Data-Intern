@@ -45,7 +45,12 @@ import {
 // Note: Using custom dialog implementation instead of AlertDialog
 import { cn } from "@/lib/utils";
 import { operationHistory } from "../utils/operationHistory";
-import type { OperationRecord, OperationType, OperationStatus, UndoResult } from "../types";
+import type {
+  OperationRecord,
+  OperationType,
+  OperationStatus,
+  UndoResult,
+} from "../types";
 
 /**
  * Props for the OperationHistoryPanel component.
@@ -85,11 +90,13 @@ export const OperationHistoryPanel = ({
     loadHistory();
 
     // Subscribe to history changes
-    const unsubscribe = operationHistory.addListener((newHistory, undo, redo) => {
-      setHistory([...newHistory].reverse().slice(0, 20));
-      setUndoCount(undo);
-      setRedoCount(redo);
-    });
+    const unsubscribe = operationHistory.addListener(
+      (newHistory, undo, redo) => {
+        setHistory([...newHistory].reverse().slice(0, 20));
+        setUndoCount(undo);
+        setRedoCount(redo);
+      },
+    );
 
     return () => unsubscribe();
   }, []);
@@ -182,7 +189,10 @@ export const OperationHistoryPanel = ({
         );
       case "undone":
         return (
-          <Badge variant="outline" className="text-yellow-600 border-yellow-600">
+          <Badge
+            variant="outline"
+            className="text-yellow-600 border-yellow-600"
+          >
             <Undo2 className="h-3 w-3 mr-1" />
             Undone
           </Badge>
@@ -196,7 +206,10 @@ export const OperationHistoryPanel = ({
         );
       case "partial":
         return (
-          <Badge variant="outline" className="text-orange-600 border-orange-600">
+          <Badge
+            variant="outline"
+            className="text-orange-600 border-orange-600"
+          >
             <AlertCircle className="h-3 w-3 mr-1" />
             Partial
           </Badge>
@@ -342,14 +355,17 @@ export const OperationHistoryPanel = ({
                 "p-3 rounded-lg mb-4 text-sm",
                 lastResult.success
                   ? "bg-green-50 dark:bg-green-900/20 text-green-800 dark:text-green-200"
-                  : "bg-red-50 dark:bg-red-900/20 text-red-800 dark:text-red-200"
+                  : "bg-red-50 dark:bg-red-900/20 text-red-800 dark:text-red-200",
               )}
             >
               {lastResult.success ? (
                 <div className="flex items-center gap-2">
                   <CheckCircle2 className="h-4 w-4" />
                   <span>
-                    Successfully {lastResult.operation?.status === "undone" ? "undone" : "redone"}{" "}
+                    Successfully{" "}
+                    {lastResult.operation?.status === "undone"
+                      ? "undone"
+                      : "redone"}{" "}
                     {lastResult.restoredFiles.length} file(s)
                   </span>
                 </div>
@@ -381,7 +397,7 @@ export const OperationHistoryPanel = ({
                       "p-3 rounded-lg border transition-colors",
                       op.status === "undone"
                         ? "bg-slate-100/50 dark:bg-slate-800/30 border-slate-200 dark:border-slate-700 opacity-60"
-                        : "bg-white dark:bg-slate-800/50 border-slate-200 dark:border-slate-700"
+                        : "bg-white dark:bg-slate-800/50 border-slate-200 dark:border-slate-700",
                     )}
                   >
                     {/* Operation Header */}
@@ -425,7 +441,8 @@ export const OperationHistoryPanel = ({
                                 key={idx}
                                 className="text-xs text-muted-foreground pl-2 truncate"
                               >
-                                • {change.type}: {change.sourcePath.split("/").pop()}
+                                • {change.type}:{" "}
+                                {change.sourcePath.split("/").pop()}
                               </div>
                             ))}
                             {op.changes.length > 5 && (
@@ -477,19 +494,21 @@ export const OperationHistoryPanel = ({
       {showClearDialog && (
         <div className="absolute inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="bg-white dark:bg-slate-800 rounded-lg p-6 m-4 max-w-sm shadow-xl">
-            <h3 className="text-lg font-semibold mb-2">Clear Operation History?</h3>
+            <h3 className="text-lg font-semibold mb-2">
+              Clear Operation History?
+            </h3>
             <p className="text-sm text-muted-foreground mb-4">
-              This will permanently delete all recorded operations. You will not be
-              able to undo any previous changes after this.
+              This will permanently delete all recorded operations. You will not
+              be able to undo any previous changes after this.
             </p>
             <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={() => setShowClearDialog(false)}>
+              <Button
+                variant="outline"
+                onClick={() => setShowClearDialog(false)}
+              >
                 Cancel
               </Button>
-              <Button
-                variant="destructive"
-                onClick={handleClearHistory}
-              >
+              <Button variant="destructive" onClick={handleClearHistory}>
                 Clear History
               </Button>
             </div>

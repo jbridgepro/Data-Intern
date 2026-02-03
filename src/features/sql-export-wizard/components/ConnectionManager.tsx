@@ -6,21 +6,12 @@
  */
 
 import { useState, useEffect } from "react";
-import {
-  Database,
-  Settings,
-  TestTube,
-  Plus,
-  Edit,
-  Trash2,
-  Copy,
-  CheckCircle2,
-  XCircle,
-} from "lucide-react";
+import { Database, TestTube, Plus, CheckCircle2, XCircle } from "lucide-react";
 import { DatabaseConnection } from "../types";
 import { testConnection } from "../utils/databaseConnection";
 import { getConnections } from "../utils/storage";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import {
   Select,
   SelectContent,
@@ -108,20 +99,29 @@ export function ConnectionManager({
     if (!activeConnection)
       return { text: "Not Connected", color: "text-slate-500" };
     return {
-      text: "🟢 Connected",
-      color: "text-green-600 dark:text-green-400",
+      text: "Connected",
+      color: "text-emerald-700 dark:text-emerald-300",
     };
   };
 
   const status = getConnectionStatus();
 
   return (
-    <div className="bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800 p-4 mb-4">
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-2">
-          <Database className="h-4 w-4" />
-          CONNECTION MANAGER
-        </h3>
+    <div className="rounded-2xl border border-slate-200/70 dark:border-slate-800/70 bg-white/80 dark:bg-slate-900/70 p-4 shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-900 text-white dark:bg-white dark:text-slate-900">
+            <Database className="h-4 w-4" />
+          </div>
+          <div>
+            <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+              Connection Manager
+            </h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              Manage and test secure database connections.
+            </p>
+          </div>
+        </div>
         <div className="flex items-center gap-2">
           <Button
             variant="outline"
@@ -139,17 +139,21 @@ export function ConnectionManager({
             className="h-8"
           >
             <TestTube className="h-3 w-3 mr-1" />
-            Test
+            {testing ? "Testing..." : "Test Connection"}
           </Button>
         </div>
       </div>
 
-      <div className="space-y-3">
+      <div className="mt-4 space-y-3">
         {/* Active Connection Selector */}
         <div className="flex items-center gap-2">
           <Select
             value={activeConnection?.id || ""}
             onValueChange={(value) => {
+              if (value === "__new__") {
+                setShowConnectionDialog(true);
+                return;
+              }
               const conn = connections.find((c) => c.id === value);
               onConnectionChange(conn || null);
               setSelectedDatabase(
@@ -187,20 +191,19 @@ export function ConnectionManager({
 
         {/* Connection Status */}
         {activeConnection && (
-          <div className="text-xs space-y-1">
-            <div className="flex items-center gap-2">
-              <span className="text-slate-500 dark:text-slate-400">
-                Status:
-              </span>
-              <span className={cn("font-medium", status.color)}>
-                {status.text}
-              </span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-slate-500 dark:text-slate-400">
-                Server:
-              </span>
-              <span className="text-slate-700 dark:text-slate-300 font-medium">
+          <div className="flex flex-wrap items-center gap-3 text-xs">
+            <Badge
+              variant="outline"
+              className={cn(
+                "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/40 dark:bg-emerald-900/20 dark:text-emerald-200",
+                status.color,
+              )}
+            >
+              {status.text}
+            </Badge>
+            <div className="text-slate-500 dark:text-slate-400">
+              Server:
+              <span className="ml-1 font-medium text-slate-700 dark:text-slate-300">
                 {activeConnection.server}
                 {activeConnection.instance && `\\${activeConnection.instance}`}
               </span>
@@ -235,10 +238,10 @@ export function ConnectionManager({
         {testResult && (
           <div
             className={cn(
-              "text-xs p-2 rounded flex items-center gap-2",
+              "text-xs p-2 rounded-lg flex items-center gap-2 border",
               testResult.success
-                ? "bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300"
-                : "bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300",
+                ? "bg-emerald-50/80 border-emerald-200 text-emerald-700 dark:bg-emerald-900/20 dark:border-emerald-900/40 dark:text-emerald-200"
+                : "bg-red-50 border-red-200 text-red-700 dark:bg-red-900/20 dark:border-red-900/40 dark:text-red-200",
             )}
           >
             {testResult.success ? (

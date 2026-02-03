@@ -2,7 +2,7 @@
  * File: src/features/quick-tools/pages/AudioTranscription.tsx
  *
  * Audio Transcription quick-tool page: record or upload audio and transcribe via
- * VibeVoice-ASR or Faster-Whisper. Supports service options, health check,
+ * Faster-Whisper. Supports service options, health check,
  * expandable transcript in the job list, and a dedicated "View transcript"
  * overlay to read the full transcript once created (with optional segments).
  */
@@ -200,8 +200,8 @@ export const AudioTranscription: React.FC = () => {
 
   const isServiceHealthy = health?.status === "healthy" || health?.whisper_available;
   const providerLabel: Record<TranscriptionProvider, string> = {
-    "vibevoice-asr": "VibeVoice-ASR",
     "faster-whisper": "Faster-Whisper",
+    "groq": "Groq",
   };
 
   return (
@@ -356,10 +356,36 @@ export const AudioTranscription: React.FC = () => {
                 className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
                 aria-label="Transcription provider"
               >
-                <option value="vibevoice-asr">VibeVoice-ASR</option>
-                <option value="faster-whisper">Faster-Whisper</option>
+                <option value="faster-whisper">Faster-Whisper (Local)</option>
+                <option value="groq">Groq (Cloud - Fast)</option>
               </select>
+              {options.provider === "faster-whisper" && (
+                <p className="mt-1 text-xs text-slate-400">For remote VibeVoice, use custom Service URL.</p>
+              )}
             </div>
+
+            {options.provider === "groq" && (
+              <div className="col-span-2">
+                <label htmlFor="groq-api-key" className="mb-1 block text-xs font-medium text-slate-500 dark:text-slate-400">
+                  Groq API Key <span className="text-red-500">*</span>
+                </label>
+                <input
+                  id="groq-api-key"
+                  type="password"
+                  value={options.groqApiKey || ""}
+                  onChange={(e) => {
+                    const key = e.target.value;
+                    updateOptions({ groqApiKey: key });
+                    localStorage.setItem("groq-api-key", key);
+                  }}
+                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
+                  placeholder="gsk_..."
+                />
+                <p className="mt-1 text-xs text-slate-400">
+                  Get a free key at <a href="https://console.groq.com/keys" target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">console.groq.com</a>
+                </p>
+              </div>
+            )}
             <div>
               <label htmlFor="audio-transcription-language" className="mb-1 block text-xs font-medium text-slate-500 dark:text-slate-400">
                 Language (optional)

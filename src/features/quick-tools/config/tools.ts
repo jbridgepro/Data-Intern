@@ -1,5 +1,5 @@
 
-import { type LucideIcon, Code2, Database, Calculator, FileJson, Key, Wand2, Camera, GitCompare, Files, Mic } from "lucide-react";
+import { type LucideIcon, Code2, Database, Calculator, FileJson, Key, Wand2, Camera, GitCompare, Files, Mic, FileVideo } from "lucide-react";
 
 export interface ToolMetadata {
     id: string;
@@ -11,14 +11,7 @@ export interface ToolMetadata {
 }
 
 export const toolsConfig: ToolMetadata[] = [
-    {
-        id: "json-parser",
-        name: "JSON Parser",
-        description: "Validate, format, and fix JSON data.",
-        icon: FileJson,
-        route: "json-parser",
-        category: "dev",
-    },
+
     {
         id: "sql-formatter",
         name: "SQL Formatter",
@@ -43,14 +36,7 @@ export const toolsConfig: ToolMetadata[] = [
         route: "unit-converter",
         category: "utility",
     },
-    {
-        id: "jwt-decoder",
-        name: "JWT Decoder",
-        description: "Decode and inspect JSON Web Tokens.",
-        icon: Key,
-        route: "jwt-decoder",
-        category: "dev",
-    },
+
     {
         id: "prompt-optimizer",
         name: "Prompt Optimizer",
@@ -59,22 +45,8 @@ export const toolsConfig: ToolMetadata[] = [
         route: "prompt-optimizer",
         category: "utility",
     },
-    {
-        id: "screenshot",
-        name: "Screenshot",
-        description: "Capture and save application screenshots.",
-        icon: Camera,
-        route: "screenshot",
-        category: "utility",
-    },
-    {
-        id: "text-diff",
-        name: "Text Diff",
-        description: "Compare two text snippets side-by-side.",
-        icon: GitCompare,
-        route: "text-diff",
-        category: "dev",
-    },
+
+
     {
         id: "duplicate-finder",
         name: "Duplicate Finder",
@@ -89,6 +61,14 @@ export const toolsConfig: ToolMetadata[] = [
         description: "Transcribe audio files to text.",
         icon: Mic,
         route: "audio-transcription",
+        category: "utility",
+    },
+    {
+        id: "file-converter",
+        name: "File Converter",
+        description: "Convert video and audio files to different formats.",
+        icon: FileVideo,
+        route: "file-converter",
         category: "utility",
     },
 ];

@@ -3,16 +3,17 @@ import { useState, useEffect, useCallback } from "react";
 import { Plus, X, Zap, LayoutGrid } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { QuickToolsHub } from "../QuickToolsHub";
-import { JsonParser } from "../pages/JsonParser";
+
 import { SqlFormatter } from "../pages/SqlFormatter";
 import { UnitConverter } from "../pages/UnitConverter";
-import { JwtDecoder } from "../pages/JwtDecoder";
+
 import { PromptOptimizer } from "../pages/PromptOptimizer";
-import { ScreenshotTool } from "../pages/ScreenshotTool";
-import { TextDiff } from "../pages/TextDiff";
+
+
 import { DuplicateFinder } from "../pages/DuplicateFinder";
 import { AudioTranscription } from "../pages/AudioTranscription";
 import { CalculatorTool } from "../pages/Calculator";
+import { FileConverter } from "../pages/FileConverter";
 
 interface QuickToolTab {
   id: string;
@@ -75,40 +76,89 @@ export const QuickToolsTabs = () => {
     }
   };
 
-  const openTool = (tabId: string, toolId: string, toolName: string) => {
-    setTabs((prev) =>
-      prev.map((tab) =>
-        tab.id === tabId
-          ? { ...tab, type: "tool", toolId, name: toolName }
-          : tab
-      )
-    );
-  };
+  const openTool = useCallback(
+    (tabId: string, toolId: string, toolName: string) => {
+      setTabs((prev) =>
+        prev.map((tab) =>
+          tab.id === tabId
+            ? { ...tab, type: "tool", toolId, name: toolName }
+            : tab
+        )
+      );
+    },
+    [],
+  );
 
   const activeTab = tabs.find((t) => t.id === activeTabId);
 
+  const openToolInActiveTab = useCallback(
+    (toolId: string, toolName: string) => {
+      const targetTabId = activeTabId || tabs[0]?.id;
+      if (!targetTabId) return;
+      if (activeTabId !== targetTabId) {
+        setActiveTabId(targetTabId);
+      }
+      openTool(targetTabId, toolId, toolName);
+    },
+    [activeTabId, tabs, openTool],
+  );
+
+  const consumePendingQuickTool = useCallback(() => {
+    const payload = sessionStorage.getItem("quick-tools-open-tool");
+    if (!payload) return;
+    try {
+      const parsed = JSON.parse(payload) as { toolId?: string; name?: string };
+      sessionStorage.removeItem("quick-tools-open-tool");
+      if (parsed.toolId && parsed.name) {
+        openToolInActiveTab(parsed.toolId, parsed.name);
+      }
+    } catch (e) {
+      console.error("Failed to open quick tool from sidebar", e);
+      sessionStorage.removeItem("quick-tools-open-tool");
+    }
+  }, [openToolInActiveTab]);
+
+  useEffect(() => {
+    consumePendingQuickTool();
+  }, [consumePendingQuickTool]);
+
+  useEffect(() => {
+    const handleQuickToolOpen = (event: CustomEvent) => {
+      if (!event.detail?.toolId || !event.detail?.name) return;
+      openToolInActiveTab(event.detail.toolId, event.detail.name);
+    };
+
+    window.addEventListener(
+      "filepro:quick-tools-open",
+      handleQuickToolOpen as EventListener,
+    );
+    return () =>
+      window.removeEventListener(
+        "filepro:quick-tools-open",
+        handleQuickToolOpen as EventListener,
+      );
+  }, [openToolInActiveTab]);
+
   const renderTool = (toolId: string) => {
     switch (toolId) {
-      case "json-parser":
-        return <JsonParser />;
+
       case "sql-formatter":
         return <SqlFormatter />;
       case "unit-converter":
         return <UnitConverter />;
-      case "jwt-decoder":
-        return <JwtDecoder />;
+
       case "prompt-optimizer":
         return <PromptOptimizer />;
-      case "screenshot":
-        return <ScreenshotTool />;
-      case "text-diff":
-        return <TextDiff />;
+
+
       case "duplicate-finder":
         return <DuplicateFinder />;
       case "audio-transcription":
         return <AudioTranscription />;
       case "calculator":
         return <CalculatorTool />;
+      case "file-converter":
+        return <FileConverter />;
       default:
         return <QuickToolsHub onOpenTool={(id, name) => openTool(activeTab?.id || "", id, name)} />;
     }

@@ -6,7 +6,7 @@
  */
 
 import { useState, useEffect } from "react";
-import { Upload, FileText, ArrowRight, Save, FolderOpen } from "lucide-react";
+import { Upload, ArrowRight, Save, FolderOpen } from "lucide-react";
 import {
   DatabaseConnection,
   ImportConfiguration,
@@ -16,6 +16,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
 import {
   Select,
   SelectContent,
@@ -31,16 +32,21 @@ import {
   getImportTemplates,
   saveImportTemplate,
   deleteImportTemplate,
+  addActivityEntry,
 } from "../utils/storage";
+import { Progress } from "@/components/ui/progress";
+import { cn } from "@/lib/utils";
 
 interface ImportPanelProps {
   connection: DatabaseConnection | null;
   selectedDatabase?: string;
+  onActivityLogged?: () => void;
 }
 
 export function ImportPanel({
   connection,
   selectedDatabase,
+  onActivityLogged,
 }: ImportPanelProps) {
   const [sourceFile, setSourceFile] = useState("");
   const [fileType, setFileType] = useState("csv");
@@ -48,6 +54,7 @@ export function ImportPanel({
   const [firstRowHeaders, setFirstRowHeaders] = useState(true);
   const [targetTable, setTargetTable] = useState("");
   const [createNewTable, setCreateNewTable] = useState(true);
+  const [stepIndex, setStepIndex] = useState(0);
   const [showPresetDialog, setShowPresetDialog] = useState(false);
   const [showPresetManager, setShowPresetManager] = useState(false);
   const [editingPreset, setEditingPreset] = useState<ImportTemplate | null>(
@@ -137,6 +144,17 @@ export function ImportPanel({
     loadPresets();
   };
 
+  const steps = [
+    { id: "source", label: "Source File" },
+    { id: "format", label: "Format" },
+    { id: "destination", label: "Destination" },
+    { id: "mapping", label: "Mapping & Run" },
+  ];
+  const progressValue = Math.round(
+    ((stepIndex + 1) / steps.length) * 100,
+  );
+  const isLastStep = stepIndex === steps.length - 1;
+
   const handleImport = () => {
     // In production, this would call a backend API to execute the import
     console.log("Importing...", {
@@ -149,6 +167,25 @@ export function ImportPanel({
       targetTable,
       createNewTable,
     });
+
+    const targetLabel = createNewTable
+      ? targetTable || "New table"
+      : "Existing table";
+    const detailParts = [
+      fileType.toUpperCase(),
+      selectedDatabase || "Database",
+      targetLabel,
+      sourceFile || "No file selected",
+    ];
+    addActivityEntry({
+      id: `import-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      type: "import",
+      title: `Imported to ${targetLabel}`,
+      detail: detailParts.filter(Boolean).join(" • "),
+      timestamp: new Date().toISOString(),
+      status: "success",
+    });
+    onActivityLogged?.();
   };
 
   const handleValidate = () => {
@@ -158,7 +195,7 @@ export function ImportPanel({
 
   if (!connection) {
     return (
-      <div className="bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800 p-8 text-center">
+      <div className="rounded-2xl border border-slate-200/70 dark:border-slate-800/70 bg-white/80 dark:bg-slate-900/70 p-8 text-center shadow-sm">
         <p className="text-slate-500 dark:text-slate-400">
           Please connect to a database to start importing
         </p>
@@ -167,33 +204,87 @@ export function ImportPanel({
   }
 
   return (
-    <div className="bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800 p-6 space-y-6 overflow-y-auto h-full">
-      <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100 flex items-center gap-2">
-        <Upload className="h-5 w-5" />
-        IMPORT CONFIGURATION
-      </h2>
+    <div className="rounded-2xl border border-slate-200/70 dark:border-slate-800/70 bg-white/80 dark:bg-slate-900/70 p-6 space-y-6 overflow-y-auto h-full shadow-sm">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-slate-100">
+            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-900 text-white dark:bg-white dark:text-slate-900">
+              <Upload className="h-4 w-4" />
+            </span>
+            Import Configuration
+          </div>
+          <p className="text-xs text-slate-500 dark:text-slate-400">
+            Map incoming data, validate rows, and choose a destination table.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant="secondary" className="bg-slate-900/5 text-slate-600 dark:bg-white/10 dark:text-slate-300">
+            {selectedDatabase || "No database"}
+          </Badge>
+          <Badge
+            variant="outline"
+            className="border-slate-200 text-slate-500 dark:border-slate-800 dark:text-slate-400"
+          >
+            {createNewTable ? "Create new table" : "Append to existing"}
+          </Badge>
+        </div>
+      </div>
+
+      <div className="space-y-3 rounded-xl border border-slate-200/70 bg-white/70 p-4 shadow-sm dark:border-slate-800/70 dark:bg-slate-950/40">
+        <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
+          <span>
+            Step {stepIndex + 1} of {steps.length}
+          </span>
+          <span>{progressValue}% complete</span>
+        </div>
+        <Progress value={progressValue} className="h-2" />
+        <div className="flex flex-wrap gap-2">
+          {steps.map((step, index) => (
+            <button
+              key={step.id}
+              type="button"
+              onClick={() => setStepIndex(index)}
+              className={cn(
+                "flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-medium transition",
+                index === stepIndex
+                  ? "border-slate-900/20 bg-slate-900/[0.06] text-slate-800 dark:border-white/10 dark:bg-white/10 dark:text-slate-100"
+                  : "border-slate-200/70 bg-white/80 text-slate-500 hover:border-slate-300 dark:border-slate-800/70 dark:bg-slate-900/60 dark:text-slate-400",
+              )}
+            >
+              <span className="text-[10px] uppercase tracking-[0.2em] text-slate-400">
+                {String(index + 1).padStart(2, "0")}
+              </span>
+              {step.label}
+            </button>
+          ))}
+        </div>
+      </div>
 
       {/* Source File */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm">Source File</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
+      {stepIndex === 0 && (
+        <Card className="bg-slate-50/70 dark:bg-slate-900/60 border-slate-200/70 dark:border-slate-800/70">
+          <CardHeader>
+            <CardTitle className="text-sm">Source File</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
           <div>
             <Label>File</Label>
-            <div className="flex items-center gap-2 mt-1">
-              <Input
-                value={sourceFile}
-                onChange={(e) => setSourceFile(e.target.value)}
-                placeholder="/Users/justin/data.csv"
-              />
-              <Button variant="outline" size="sm">
-                Browse
-              </Button>
+            <div className="mt-1 rounded-lg border border-dashed border-slate-300 bg-white/80 p-3 dark:border-slate-700 dark:bg-slate-950/40">
+              <div className="flex items-center gap-2">
+                <Input
+                  value={sourceFile}
+                  onChange={(e) => setSourceFile(e.target.value)}
+                  placeholder="/Users/justin/data.csv"
+                  className="bg-transparent"
+                />
+                <Button variant="outline" size="sm">
+                  Browse
+                </Button>
+              </div>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-2">
+                Drag & drop a file, paste a path, or browse to select.
+              </p>
             </div>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-              Drag & Drop Files Here
-            </p>
           </div>
           <div className="text-xs text-slate-500 dark:text-slate-400 space-y-1">
             <p>File Type: {fileType.toUpperCase()} (Auto-detected)</p>
@@ -202,13 +293,15 @@ export function ImportPanel({
           </div>
         </CardContent>
       </Card>
+      )}
 
       {/* File Format Settings */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm">File Format Settings</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
+      {stepIndex === 1 && (
+        <Card className="bg-slate-50/70 dark:bg-slate-900/60 border-slate-200/70 dark:border-slate-800/70">
+          <CardHeader>
+            <CardTitle className="text-sm">File Format Settings</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
           <div className="grid grid-cols-3 gap-4">
             <div>
               <Label>Delimiter</Label>
@@ -285,13 +378,15 @@ export function ImportPanel({
           </div>
         </CardContent>
       </Card>
+      )}
 
       {/* Destination */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm">Destination</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
+      {stepIndex === 2 && (
+        <Card className="bg-slate-50/70 dark:bg-slate-900/60 border-slate-200/70 dark:border-slate-800/70">
+          <CardHeader>
+            <CardTitle className="text-sm">Destination</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
           <div className="grid grid-cols-3 gap-4">
             <div>
               <Label>Server</Label>
@@ -372,14 +467,16 @@ export function ImportPanel({
           </div>
         </CardContent>
       </Card>
+      )}
 
       {/* Column Mapping Preview */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm">Column Mapping</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-2 text-sm">
+      {stepIndex === 3 && (
+        <Card className="bg-slate-50/70 dark:bg-slate-900/60 border-slate-200/70 dark:border-slate-800/70">
+          <CardHeader>
+            <CardTitle className="text-sm">Column Mapping</CardTitle>
+          </CardHeader>
+          <CardContent>
+          <div className="space-y-2 text-sm rounded-lg border border-slate-200/70 bg-white/80 p-3 dark:border-slate-800/70 dark:bg-slate-950/40">
             <div className="grid grid-cols-3 gap-4 font-medium text-slate-700 dark:text-slate-300 pb-2 border-b">
               <span>CSV Column</span>
               <span className="flex items-center justify-center">
@@ -418,44 +515,73 @@ export function ImportPanel({
               </Button>
             </div>
           </div>
+          <div className="flex flex-wrap items-center justify-between gap-2 pt-4">
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setEditingPreset(null);
+                  setShowPresetDialog(true);
+                }}
+              >
+                <Save className="h-4 w-4 mr-2" />
+                Save as Preset
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowPresetManager(true)}
+              >
+                <FolderOpen className="h-4 w-4 mr-2" />
+                Load Preset
+              </Button>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" onClick={handleValidate}>
+                Validate
+              </Button>
+              <Button variant="outline" onClick={() => console.log("Preview")}>
+                Preview Data (First 100 Rows)
+              </Button>
+              <Button onClick={handleImport}>
+                <Upload className="h-4 w-4 mr-2" />
+                Import
+              </Button>
+            </div>
+          </div>
         </CardContent>
       </Card>
+      )}
 
-      {/* Actions */}
-      <div className="flex items-center justify-between pt-4 border-t border-slate-200 dark:border-slate-800">
+      <div className="flex flex-wrap items-center justify-between gap-2 pt-4 border-t border-slate-200 dark:border-slate-800">
         <div className="flex items-center gap-2">
           <Button
             variant="outline"
             size="sm"
-            onClick={() => {
-              setEditingPreset(null);
-              setShowPresetDialog(true);
-            }}
+            onClick={() =>
+              setStepIndex((prev) => Math.max(0, prev - 1))
+            }
+            disabled={stepIndex === 0}
           >
-            <Save className="h-4 w-4 mr-2" />
-            Save as Preset
+            Back
           </Button>
           <Button
             variant="outline"
             size="sm"
-            onClick={() => setShowPresetManager(true)}
+            onClick={() =>
+              setStepIndex((prev) =>
+                Math.min(steps.length - 1, prev + 1),
+              )
+            }
+            disabled={isLastStep}
           >
-            <FolderOpen className="h-4 w-4 mr-2" />
-            Load Preset
+            Next
           </Button>
         </div>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={handleValidate}>
-            Validate
-          </Button>
-          <Button variant="outline" onClick={() => console.log("Preview")}>
-            Preview Data (First 100 Rows)
-          </Button>
-          <Button onClick={handleImport}>
-            <Upload className="h-4 w-4 mr-2" />
-            Import
-          </Button>
-        </div>
+        <span className="text-xs text-slate-500 dark:text-slate-400">
+          {steps[stepIndex].label} • Step {stepIndex + 1} of {steps.length}
+        </span>
       </div>
 
       {/* Preset Dialog */}

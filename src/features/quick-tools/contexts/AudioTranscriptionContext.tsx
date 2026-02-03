@@ -2,15 +2,16 @@
  * File: src/features/quick-tools/contexts/AudioTranscriptionContext.tsx
  *
  * Context for the Audio Transcription quick tool. Manages recording, file uploads,
- * and transcription jobs via the Tauri voice service (VibeVoice-ASR / Faster-Whisper).
+ * and transcription jobs via the Tauri voice service (Faster-Whisper).
+ * Remote VibeVoice-ASR is supported via custom service URL.
  */
 
 import React, { createContext, useContext, useState, useRef, useCallback, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
-/** Supported transcription provider: VibeVoice-ASR or Faster-Whisper */
-export type TranscriptionProvider = "vibevoice-asr" | "faster-whisper";
+/** Supported transcription provider: Faster-Whisper (local) or Groq (cloud) */
+export type TranscriptionProvider = "faster-whisper" | "groq";
 
 /** User-configurable options for the transcription service */
 export interface TranscriptionOptions {
@@ -18,13 +19,15 @@ export interface TranscriptionOptions {
   provider: TranscriptionProvider;
   language: string | null;
   enableDiarization: boolean;
+  groqApiKey?: string;
 }
 
 export const defaultTranscriptionOptions: TranscriptionOptions = {
   serviceUrl: "http://127.0.0.1:8765",
-  provider: "vibevoice-asr",
+  provider: "faster-whisper",
   language: null,
-  enableDiarization: true,
+  enableDiarization: false,
+  groqApiKey: localStorage.getItem("groq-api-key") || "",
 };
 
 export interface TranscriptionJob {
@@ -152,6 +155,105 @@ export const AudioTranscriptionProvider: React.FC<{ children: React.ReactNode }>
     return ""; // Let browser choose default if none match
   }, []);
 
+  /**
+   * Convert audio blob to WAV PCM format and return as base64.
+   * This ensures the backend receives a valid WAV file.
+   */
+  const convertBlobToWavBase64 = useCallback(async (blob: Blob): Promise<string> => {
+    return new Promise(async (resolve, reject) => {
+      try {
+        const arrayBuffer = await blob.arrayBuffer();
+        const audioContext = new AudioContext();
+        
+        let audioBuffer: AudioBuffer;
+        try {
+          audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+        } catch (decodeError) {
+          // If decoding fails, just send raw base64 and let backend handle it
+          console.warn("Audio decode failed, sending raw format:", decodeError);
+          const base64 = btoa(
+            new Uint8Array(arrayBuffer).reduce((data, byte) => data + String.fromCharCode(byte), "")
+          );
+          await audioContext.close();
+          resolve(base64);
+          return;
+        }
+
+        // Convert AudioBuffer to WAV
+        const wavBuffer = audioBufferToWav(audioBuffer);
+        const wavBlob = new Blob([wavBuffer], { type: "audio/wav" });
+        
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const result = reader.result as string;
+          const base64 = result.split(",")[1];
+          audioContext.close();
+          resolve(base64);
+        };
+        reader.onerror = (err) => {
+          audioContext.close();
+          reject(err);
+        };
+        reader.readAsDataURL(wavBlob);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }, []);
+
+  /**
+   * Convert AudioBuffer to WAV ArrayBuffer.
+   */
+  const audioBufferToWav = (buffer: AudioBuffer): ArrayBuffer => {
+    const length = buffer.length;
+    const numberOfChannels = buffer.numberOfChannels;
+    const sampleRate = buffer.sampleRate;
+    const bytesPerSample = 2;
+    const blockAlign = numberOfChannels * bytesPerSample;
+    const byteRate = sampleRate * blockAlign;
+    const dataSize = length * blockAlign;
+    const bufferSize = 44 + dataSize;
+
+    const arrayBuffer = new ArrayBuffer(bufferSize);
+    const view = new DataView(arrayBuffer);
+    const channels: Float32Array[] = [];
+
+    for (let i = 0; i < numberOfChannels; i++) {
+      channels.push(buffer.getChannelData(i));
+    }
+
+    const writeString = (offset: number, str: string) => {
+      for (let i = 0; i < str.length; i++) {
+        view.setUint8(offset + i, str.charCodeAt(i));
+      }
+    };
+
+    writeString(0, "RIFF");
+    view.setUint32(4, bufferSize - 8, true);
+    writeString(8, "WAVE");
+    writeString(12, "fmt ");
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, numberOfChannels, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, byteRate, true);
+    view.setUint16(32, blockAlign, true);
+    view.setUint16(34, 16, true);
+    writeString(36, "data");
+    view.setUint32(40, dataSize, true);
+
+    let offset = 44;
+    for (let i = 0; i < length; i++) {
+      for (let channel = 0; channel < numberOfChannels; channel++) {
+        const sample = Math.max(-1, Math.min(1, channels[channel][i]));
+        view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7FFF, true);
+        offset += 2;
+      }
+    }
+
+    return arrayBuffer;
+  };
+
   /** Check voice service health (Tauri backend). Does not rely on window.__TAURI__ (Tauri v2 may not set it). */
   const checkHealth = useCallback(async (): Promise<VoiceServiceHealth> => {
     try {
@@ -262,20 +364,79 @@ export const AudioTranscriptionProvider: React.FC<{ children: React.ReactNode }>
           }
         });
 
-        const result = await invoke<{
+
+
+        let result: {
           success: boolean;
           text?: string;
           segments?: TranscriptionSegment[];
           error?: string;
-        }>("transcribe_audio", {
-          audioBase64,
-          language: options.language || null,
-          serviceUrl: options.serviceUrl,
-          provider: options.provider,
-          hotwords: null,
-          enableDiarization: options.enableDiarization,
-          stream: true,
-        });
+        };
+
+        if (options.provider === "groq") {
+          if (!options.groqApiKey) {
+            throw new Error("Groq API Key is required. Please enter it in the settings panel.");
+          }
+
+          // Convert base64 to Blob for Groq API
+          const binaryString = window.atob(audioBase64);
+          const bytes = new Uint8Array(binaryString.length);
+          for (let i = 0; i < binaryString.length; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
+          }
+          const blob = new Blob([bytes], { type: "audio/wav" });
+          const file = new File([blob], "audio.wav", { type: "audio/wav" });
+
+          const formData = new FormData();
+          formData.append("file", file);
+          formData.append("model", "whisper-large-v3-turbo"); // Use Turbo for speed/cost
+          if (options.language && options.language !== "auto") {
+            formData.append("language", options.language);
+          }
+          formData.append("response_format", "verbose_json"); // Get segments
+
+          const response = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
+            method: "POST",
+            headers: {
+              "Authorization": `Bearer ${options.groqApiKey}`
+            },
+            body: formData
+          });
+
+          if (!response.ok) {
+            const err = await response.json().catch(() => ({ error: { message: response.statusText } }));
+            throw new Error(err.error?.message || `Groq API Error: ${response.status} ${response.statusText}`);
+          }
+
+          const data = await response.json();
+          result = {
+            success: true,
+            text: data.text,
+            segments: data.segments?.map((s: any) => ({
+              start: s.start,
+              end: s.end,
+              text: s.text,
+              confidence: 1.0
+            })) || [],
+          };
+
+        } else {
+          // Default: Tauri local voice service (Faster-Whisper)
+          result = await invoke<{
+            success: boolean;
+            text?: string;
+            segments?: TranscriptionSegment[];
+            error?: string;
+          }>("transcribe_audio", {
+            audioBase64,
+            language: options.language || null,
+            serviceUrl: options.serviceUrl,
+            provider: options.provider,
+            hotwords: null,
+            enableDiarization: options.enableDiarization,
+            stream: true,
+          });
+        }
 
         unlisten?.();
 
@@ -289,6 +450,7 @@ export const AudioTranscriptionProvider: React.FC<{ children: React.ReactNode }>
             currentTranscript.trim() ||
             fromSegments ||
             "";
+          
           setJobs((prev) =>
             prev.map((job) => {
               if (job.id !== jobId) return job;
@@ -340,16 +502,14 @@ export const AudioTranscriptionProvider: React.FC<{ children: React.ReactNode }>
   const transcribeBlob = useCallback(
     async (blob: Blob, jobId: string, displayName: string) => {
       try {
-        const arrayBuffer = await blob.arrayBuffer();
-        const base64 = btoa(
-          new Uint8Array(arrayBuffer).reduce((data, byte) => data + String.fromCharCode(byte), "")
-        );
+        // Convert to WAV format for reliable backend processing
+        const base64 = await convertBlobToWavBase64(blob);
         await runTranscribe(jobId, displayName, base64);
       } finally {
         setActiveRecording(null);
       }
     },
-    [runTranscribe]
+    [runTranscribe, convertBlobToWavBase64]
   );
 
   const startRecording = useCallback(async () => {

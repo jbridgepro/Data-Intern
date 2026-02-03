@@ -27,6 +27,9 @@ pub fn run() {
             voice_service::start_voice_service,
             voice_service::check_voice_service_dependencies,
             sql_service::test_mssql_connection,
+            sql_service::get_mssql_schema,
+            sql_service::get_database_schema,
+            sql_service::nl_to_sql,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

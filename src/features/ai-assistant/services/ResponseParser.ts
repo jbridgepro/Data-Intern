@@ -12,6 +12,12 @@ export class ResponseParser {
     static cleanResponse(text: string): string {
         let cleanText = text || '';
 
+        // Remove <think>...</think> blocks (DeepSeek R1 and other reasoning models)
+        cleanText = cleanText.replace(/<think>[\s\S]*?<\/think>/gi, '');
+
+        // Remove tool use blocks from reasoning models (often in different formats)
+        cleanText = cleanText.replace(/<tool_code>[\s\S]*?<\/tool_code>/gi, '');
+
         // Filter out JSON command blocks and technical details from user-facing responses
         // Remove JSON code blocks that show tool definitions
         cleanText = cleanText.replace(/```json\s*\{[^}]*"tool"[^}]*\}[^`]*```/gi, '');
@@ -65,11 +71,18 @@ export class ResponseParser {
     static parseJsonCommand(text: string): { tool: string; arguments: any } | null {
         if (!text) return null;
 
+        // Strip <think> blocks before parsing to avoid confusion
+        const textWithoutThoughts = text.replace(/<think>[\s\S]*?<\/think>/gi, '');
+
         // Try to find JSON code blocks first (most common format)
-        const jsonBlockPattern = /```json\s*([\s\S]*?)\s*```/gi;
+        // Support ```json, ```JSON, or just ```
+        const jsonBlockPattern = /```(?:json|JSON)?\s*([\s\S]*?)\s*```/gi;
         let jsonBlockMatch;
-        while ((jsonBlockMatch = jsonBlockPattern.exec(text)) !== null) {
+        while ((jsonBlockMatch = jsonBlockPattern.exec(textWithoutThoughts)) !== null) {
             const jsonStr = jsonBlockMatch[1].trim();
+            // Ignore if it's not looking like an object
+            if (!jsonStr.startsWith('{')) continue;
+
             const parsed = this.tryParseJsonCommand(jsonStr);
             if (parsed) return parsed;
         }
@@ -77,18 +90,18 @@ export class ResponseParser {
         // Try to find inline JSON objects with "tool" key
         const inlineJsonPattern = /\{[\s\S]*?"tool"[\s\S]*?\}/g;
         let inlineMatch;
-        while ((inlineMatch = inlineJsonPattern.exec(text)) !== null) {
+        while ((inlineMatch = inlineJsonPattern.exec(textWithoutThoughts)) !== null) {
             const jsonStr = inlineMatch[0];
             const parsed = this.tryParseJsonCommand(jsonStr);
             if (parsed) return parsed;
         }
 
-        // Try to find JSON without code block markers (might be in plain text)
-        const plainJsonPattern = /\{[\s\S]{0,2000}?"tool"[\s\S]{0,2000}?\}/;
-        const plainMatch = text.match(plainJsonPattern);
-        if (plainMatch) {
-            const parsed = this.tryParseJsonCommand(plainMatch[0]);
-            if (parsed) return parsed;
+        // Try to find JSON at the very end of the message (common for some LLMs)
+        const endJsonPattern = /\{[\s\S]*?\}$/;
+        const endMatch = textWithoutThoughts.match(endJsonPattern);
+        if (endMatch) {
+            const parsed = this.tryParseJsonCommand(endMatch[0]);
+            if (parsed && (parsed.tool || parsed.arguments)) return parsed;
         }
 
         return null;
@@ -99,16 +112,19 @@ export class ResponseParser {
      */
     private static tryParseJsonCommand(jsonStr: string): { tool: string; arguments: any } | null {
         try {
-            const cmd = JSON.parse(jsonStr);
-            
+            // Attempt to clean trailing commas which often break JSON.parse
+            const cleanJson = jsonStr.replace(/,\s*}/g, '}').replace(/,\s*]/g, ']');
+
+            const cmd = JSON.parse(cleanJson);
+
             // Support both "tool" and "name" for tool name
             const toolName = cmd.tool || cmd.name || cmd.function?.name;
-            
+
             // Support "arguments", "args", "input", "parameters", or "function.arguments"
-            const toolArgs = cmd.arguments || cmd.args || cmd.input || cmd.parameters || 
-                           cmd.function?.arguments || cmd.function?.args || 
-                           (cmd.function && typeof cmd.function === 'object' ? cmd.function : {});
-            
+            const toolArgs = cmd.arguments || cmd.args || cmd.input || cmd.parameters ||
+                cmd.function?.arguments || cmd.function?.args ||
+                (cmd.function && typeof cmd.function === 'object' ? cmd.function : {});
+
             if (toolName && typeof toolName === 'string') {
                 return {
                     tool: toolName,

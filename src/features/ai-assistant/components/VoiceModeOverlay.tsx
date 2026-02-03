@@ -104,12 +104,13 @@ export const VoiceModeOverlay = ({
   const isLikelyNoise = useCallback((text: string): boolean => {
     const trimmed = text.trim().toLowerCase();
 
-    // Too short to be meaningful speech
-    if (trimmed.length < 5) return true;
+    // Relaxed: Only filter out very short single words (< 3 chars)
+    if (trimmed.length < 3) return true;
 
     // Count actual words (at least 2 characters each)
     const words = trimmed.split(/\s+/).filter((w) => w.length >= 2);
-    if (words.length < 2) return true;
+    // Relaxed: Allow single meaningful words like "yes", "help", "stop"
+    if (words.length === 0) return true;
 
     // Common noise artifacts from speech recognition
     const noisePatterns = [
@@ -120,8 +121,6 @@ export const VoiceModeOverlay = ({
       /^(um|uh|ah|oh|eh|mm|hm|hmm|mhm)+$/i, // Just filler sounds
       /^[\s\W]+$/, // Just punctuation/spaces
       /^[a-z]$/i, // Single letter
-      /^[a-z]{1,2}\s*$/i, // One or two letters
-      /^(the|a|an|is|it|i|and|or|but)\s*$/i, // Just common short words
     ];
 
     for (const pattern of noisePatterns) {
@@ -214,12 +213,12 @@ export const VoiceModeOverlay = ({
       setInterimTranscript("");
 
       // Determine if auto-send should be enabled
-      // Require higher confidence and longer text for auto-send
+      // Relaxed requirements for auto-send
       const wordCount = trimmedText
         .split(/\s+/)
         .filter((w) => w.length >= 2).length;
       const shouldAutoSend =
-        result.confidence > 0.85 && wordCount >= 3 && trimmedText.length >= 15;
+        result.confidence > 0.70 && wordCount >= 2 && trimmedText.length >= 8;
 
       if (!shouldAutoSend) {
         // Don't auto-send - require manual confirmation
@@ -727,9 +726,32 @@ export const VoiceModeOverlay = ({
 
             {/* Interim transcript (currently speaking) */}
             {!isEditing && !pendingTranscript && interimTranscript && (
-              <p className="text-3xl font-light text-slate-800 dark:text-slate-200 leading-relaxed animate-in fade-in slide-in-from-bottom-2 pointer-events-none">
-                {interimTranscript}
-              </p>
+              <div className="space-y-3 animate-in fade-in slide-in-from-bottom-2">
+                <p className="text-3xl font-light text-slate-800 dark:text-slate-200 leading-relaxed">
+                  {interimTranscript}
+                </p>
+                {/* Force Send button - bypasses all validation */}
+                <div className="flex items-center justify-center gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="border-green-300 text-green-700 hover:bg-green-50 dark:border-green-700 dark:text-green-400 dark:hover:bg-green-900/30"
+                    onClick={() => {
+                      const text = interimTranscript.trim();
+                      if (text) {
+                        onTranscript(text);
+                        setInterimTranscript("");
+                      }
+                    }}
+                  >
+                    <Send className="w-4 h-4 mr-1" />
+                    Send Now
+                  </Button>
+                </div>
+                <p className="text-xs text-slate-400 dark:text-slate-500">
+                  Still listening... click to send now
+                </p>
+              </div>
             )}
 
             {/* Idle state hint */}

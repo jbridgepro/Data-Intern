@@ -19,6 +19,12 @@
         },
         {
           "path": "/Volumes/**"
+        },
+        {
+          "path": "/tmp/**"
+        },
+        {
+          "path": "/private/tmp/**"
         }
       ]
     },
@@ -30,6 +36,12 @@
         },
         {
           "path": "/Volumes/**"
+        },
+        {
+          "path": "/tmp/**"
+        },
+        {
+          "path": "/private/tmp/**"
         }
       ]
     },
@@ -44,6 +56,12 @@
         },
         {
           "path": "/Volumes/**"
+        },
+        {
+          "path": "/tmp/**"
+        },
+        {
+          "path": "/private/tmp/**"
         }
       ]
     },
@@ -58,6 +76,12 @@
         },
         {
           "path": "/Volumes/**"
+        },
+        {
+          "path": "/tmp/**"
+        },
+        {
+          "path": "/private/tmp/**"
         }
       ]
     },
@@ -69,6 +93,12 @@
         },
         {
           "path": "/Volumes/**"
+        },
+        {
+          "path": "/tmp/**"
+        },
+        {
+          "path": "/private/tmp/**"
         }
       ]
     },
@@ -80,6 +110,12 @@
         },
         {
           "path": "/Volumes/**"
+        },
+        {
+          "path": "/tmp/**"
+        },
+        {
+          "path": "/private/tmp/**"
         },
         {
           "path": "$DESKTOP/**"
@@ -102,6 +138,12 @@
         },
         {
           "path": "/Volumes/**"
+        },
+        {
+          "path": "/tmp/**"
+        },
+        {
+          "path": "/private/tmp/**"
         }
       ]
     },
@@ -113,6 +155,12 @@
         },
         {
           "path": "/Volumes/**"
+        },
+        {
+          "path": "/tmp/**"
+        },
+        {
+          "path": "/private/tmp/**"
         }
       ]
     },
@@ -124,6 +172,12 @@
         },
         {
           "path": "/Volumes/**"
+        },
+        {
+          "path": "/tmp/**"
+        },
+        {
+          "path": "/private/tmp/**"
         }
       ]
     },
@@ -135,6 +189,12 @@
         },
         {
           "path": "/Volumes/**"
+        },
+        {
+          "path": "/tmp/**"
+        },
+        {
+          "path": "/private/tmp/**"
         }
       ]
     },
@@ -160,6 +220,26 @@
         {
           "name": "sh",
           "cmd": "/bin/sh",
+          "args": true
+        },
+        {
+          "name": "ffmpeg",
+          "cmd": "ffmpeg",
+          "args": true
+        },
+        {
+          "name": "ffprobe",
+          "cmd": "ffprobe",
+          "args": true
+        },
+        {
+          "name": "textutil",
+          "cmd": "textutil",
+          "args": true
+        },
+        {
+          "name": "cupsfilter",
+          "cmd": "cupsfilter",
           "args": true
         }
       ]
