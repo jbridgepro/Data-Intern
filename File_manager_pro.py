@@ -4,20 +4,17 @@ import tkinter as tk
 from tkinter import ttk
 from tkinter import font as tkfont
 
-from Copy_and_Paste_tab import CopyandPaste
+# Import your tab classes here
+from file_copy_tab import FileCopyTab
 from folder_creation_tab import FolderCreationTab
-from file_creation_tab import FileCreationTab
+from empty_file_creation_tab import FileCreationTab
 from find_replace_tab import FindReplaceTab
 
-class FileManagerProApp(tk.Tk):
+class FileCopyFolderCreateApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("File Manager Pro")
-        self.geometry("900x700")
-        self.minsize(800, 600)
-
-        self.style = ttk.Style(self)
-        self.create_notebook()
+        self.geometry("1000x800")
         
         print("Initializing File Manager Pro...")
         
@@ -46,8 +43,8 @@ class FileManagerProApp(tk.Tk):
         self.tab_widget.pack(fill=tk.BOTH, expand=True)
 
         # Create tabs
-        print("Creating Copy & Paste Tab...")
-        self.Copy_and_Paste_tab = CopyandPaste(self.tab_widget, self)
+        print("Creating File Copy Tab...")
+        self.file_copy_tab = FileCopyTab(self.tab_widget, self)
         print("Creating Folder Creation Tab...")
         self.folder_creation_tab = FolderCreationTab(self.tab_widget, self)
         print("Creating File Creation Tab...")
@@ -57,10 +54,10 @@ class FileManagerProApp(tk.Tk):
 
         # Add tabs to the tab widget
         print("Adding tabs to tab widget...")
-        self.tab_widget.add(self.Copy_and_Paste_tab, text="Copy & Paste")
-        self.tab_widget.add(self.folder_creation_tab, text="Folder Creation")
-        self.tab_widget.add(self.file_creation_tab, text="File Creation")
-        self.tab_widget.add(self.find_replace_tab, text="Find & Replace")
+        self.tab_widget.add(self.file_copy_tab, text="File Copy")
+        self.tab_widget.add(self.folder_creation_tab.frame, text="Folder Creation")
+        self.tab_widget.add(self.file_creation_tab.frame, text="File Creation")
+        self.tab_widget.add(self.find_replace_tab.frame, text="Find & Replace")
 
         self.set_style()
 
@@ -71,18 +68,23 @@ class FileManagerProApp(tk.Tk):
         self.style.configure('TFrame', background=self.bg_color)
         self.style.configure('TNotebook', background=self.bg_color)
         self.style.configure('TNotebook.Tab', background=self.bg_color, foreground=self.text_color)
-        self.style.map('TNotebook.Tab', background=[('selected', self.accent_color)], 
+        self.style.map('TNotebook.Tab', background=[('selected', self.accent_color)],
                        foreground=[('selected', self.button_text_color)])
-        self.style.configure('TButton', background=self.button_color, foreground=self.button_text_color, 
+        self.style.configure('TButton', background=self.button_color, foreground=self.button_text_color,
                              font=self.button_font)
-        self.style.configure('TLabel', background=self.bg_color, foreground=self.text_color, 
+        self.style.configure('TLabel', background=self.bg_color, foreground=self.text_color,
                              font=self.label_font)
         self.style.configure('TEntry', foreground=self.text_color, font=self.label_font)
+        
+        # Configure styles for treeview (used in File Copy Tab)
+        self.style.configure("Treeview", background=self.bg_color, foreground=self.text_color, rowheight=25)
+        self.style.configure("Treeview.Heading", font=self.label_font)
+        self.style.map('Treeview', background=[('selected', self.accent_color)])
+
+        # Configure styles for file type tags
+        self.style.configure("FileTag.TButton", padding=3, font=('Helvetica', 9))
 
 if __name__ == "__main__":
-    try:
-        app = FileManagerProApp()
-        app.mainloop()
-    except Exception as e:
-        print(f"An error occurred: {e}")
-        sys.exit(1)
+    app = FileCopyFolderCreateApp()
+    print("Starting main loop...")
+    app.mainloop()

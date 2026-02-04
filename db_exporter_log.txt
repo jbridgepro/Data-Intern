@@ -1,0 +1,20 @@
+INFO:root:Using PyQt5 for GUI
+INFO:root:Using PyQt5 for GUI
+INFO:root:Using PyQt5 for GUI
+INFO:root:Using PyQt5 for GUI
+2024-07-17 17:15:02,016 - INFO - Successfully imported PyQt5
+2024-07-17 17:15:02,021 - INFO - Successfully imported pyodbc
+2024-07-17 17:15:02,177 - INFO - Successfully imported pandas
+2024-07-17 17:24:05,318 - INFO - Successfully imported PyQt5
+2024-07-17 17:24:05,327 - INFO - Successfully imported pyodbc
+2024-07-17 17:24:05,619 - INFO - Successfully imported pandas
+2024-07-17 17:24:05,619 - INFO - Starting the application
+2024-07-17 17:24:05,619 - INFO - Using PyQt5 GUI
+2024-07-17 17:24:51,564 - INFO - Successfully imported PyQt5
+2024-07-17 17:24:51,568 - INFO - Successfully imported pyodbc
+2024-07-17 17:24:51,728 - INFO - Successfully imported pandas
+2024-07-17 17:24:51,728 - INFO - Starting the application
+2024-07-17 17:24:51,728 - INFO - Using PyQt5 GUI
+2025-03-25 20:21:12,433 - WARNING - PyQt5 import failed: No module named 'PyQt5'. Falling back to tkinter
+2025-03-25 20:21:12,930 - INFO - Successfully imported tkinter
+2025-03-25 20:21:12,930 - ERROR - Failed to import pyodbc: No module named 'pyodbc'
