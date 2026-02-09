@@ -295,7 +295,7 @@ export class EntityExtractor {
     while ((isoMatch = isoDateRegex.exec(text)) !== null) {
       dates.push({
         type: 'date',
-        value: new Date(isoMatch[1], parseInt(isoMatch[2]) - 1, isoMatch[3]),
+        value: new Date(parseInt(isoMatch[1], 10), parseInt(isoMatch[2], 10) - 1, parseInt(isoMatch[3], 10)),
         confidence: 1.0,
         sourceText: isoMatch[0],
         position: {
@@ -312,7 +312,7 @@ export class EntityExtractor {
     while ((usMatch = usDateRegex.exec(text)) !== null) {
       dates.push({
         type: 'date',
-        value: new Date(usMatch[3], parseInt(usMatch[1]) - 1, usMatch[2]),
+        value: new Date(parseInt(usMatch[3], 10), parseInt(usMatch[1], 10) - 1, parseInt(usMatch[2], 10)),
         confidence: 0.9,
         sourceText: usMatch[0],
         position: {

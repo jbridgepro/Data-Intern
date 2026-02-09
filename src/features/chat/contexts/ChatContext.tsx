@@ -11,6 +11,8 @@ export interface ChatSession {
   currentDirectory: string;
   isProcessing: boolean;
   inputValue: string;
+  currentToolExecutions?: any[];
+  currentReasoningSteps?: any[];
   // Metadata for the session
   lastActive: number;
 }
@@ -103,6 +105,8 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
               currentDirectory: defaultDirectory,
               isProcessing: false,
               inputValue: '',
+              currentToolExecutions: [],
+              currentReasoningSteps: [],
               lastActive: Date.now()
             }
           };
@@ -130,6 +134,7 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
     settings,
     updateSettings
   } = useAIFileAssistant(activeSession?.currentDirectory || '');
+  const aiReasoningLive = settings.reasoningLive !== false;
 
   // Ref to track last sent message to prevent duplicates
   const lastSentMessageRef = useRef<{ text: string; timestamp: number; agentId: string } | null>(null);
@@ -276,6 +281,14 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
       ...prev,
       [agentId]: { ...prev[agentId], isProcessing: true }
     }));
+    setSessions(prev => ({
+      ...prev,
+      [agentId]: {
+        ...prev[agentId],
+        currentToolExecutions: [],
+        currentReasoningSteps: []
+      }
+    }));
 
     try {
       // 2. Process with AI
@@ -289,7 +302,35 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
         content: m.content 
       })) || [];
 
-      const response = await processUserCommand(trimmedContent, null, undefined, history);
+      const response = await processUserCommand(
+        trimmedContent,
+        null,
+        undefined,
+        history,
+        undefined,
+        {
+          onToolExecutions: (tools) => {
+            setSessions(prev => ({
+              ...prev,
+              [agentId]: {
+                ...prev[agentId],
+                currentToolExecutions: tools
+              }
+            }));
+          },
+          onReasoningSteps: aiReasoningLive
+            ? (steps) => {
+                setSessions(prev => ({
+                  ...prev,
+                  [agentId]: {
+                    ...prev[agentId],
+                    currentReasoningSteps: steps
+                  }
+                }));
+              }
+            : undefined
+        }
+      );
       
       // 3. Add Assistant Message
       const aiMsg: ChatMessageType = {
@@ -314,7 +355,12 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
     } finally {
       setSessions(prev => ({
         ...prev,
-        [agentId]: { ...prev[agentId], isProcessing: false }
+        [agentId]: {
+          ...prev[agentId],
+          isProcessing: false,
+          currentToolExecutions: prev[agentId]?.currentToolExecutions || [],
+          currentReasoningSteps: prev[agentId]?.currentReasoningSteps || []
+        }
       }));
     }
   }, [selectedAgentId, sessions, processUserCommand, addMessage, setInputValue]);

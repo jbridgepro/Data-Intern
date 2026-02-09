@@ -38,6 +38,8 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { PageHeader } from "@/components/layout/PageHeader";
+import { panelConfigurationInfo } from "@/components/layout/toolInfoContent";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 
@@ -155,21 +157,14 @@ export const PanelConfiguration = ({
     <div className="flex flex-col h-full glass rounded-2xl shadow-xl overflow-hidden relative min-h-0">
       <div className="absolute inset-0 bg-white/40 dark:bg-slate-900/40 pointer-events-none" />
 
-      {/* Header */}
-      <div className="relative z-10 p-6 border-b border-slate-200/50 dark:border-slate-700/50 bg-slate-50/50 dark:bg-slate-800/30 backdrop-blur-md shrink-0">
-        <div className="flex items-center gap-3">
-          <div className="p-2.5 bg-blue-100 dark:bg-blue-900/30 rounded-xl">
-            <Layout className="h-6 w-6 text-blue-600 dark:text-blue-400" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100">
-              Panel Configuration
-            </h1>
-            <p className="text-sm text-slate-600 dark:text-slate-400">
-              Customize your workspace layout and panel visibility
-            </p>
-          </div>
-        </div>
+      {/* Header - consistent with other pages */}
+      <div className="relative z-10 shrink-0">
+        <PageHeader
+          icon={Layout}
+          title="Panel Configuration"
+          subtitle="Customize your workspace layout and panel visibility"
+          info={panelConfigurationInfo}
+        />
       </div>
 
       {/* Content */}

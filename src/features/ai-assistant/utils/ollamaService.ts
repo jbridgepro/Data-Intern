@@ -75,6 +75,87 @@ interface OllamaTool {
   };
 }
 
+function detectFileTypeReply(command: string): string | null {
+  const raw = command.trim().toLowerCase();
+  const plain = raw.replace(/^\.+/, '');
+  const map: Record<string, string> = {
+    txt: 'txt',
+    text: 'txt',
+    docx: 'docx',
+    doc: 'docx',
+    word: 'docx',
+    md: 'md',
+    markdown: 'md',
+    pdf: 'pdf',
+    rtf: 'rtf',
+    csv: 'csv',
+    xlsx: 'xlsx',
+    xls: 'xls',
+  };
+  return map[plain] || null;
+}
+
+function parseCountFromText(text: string): number | null {
+  const lower = text.toLowerCase();
+  const wordMap: Record<string, number> = {
+    one: 1,
+    two: 2,
+    three: 3,
+    four: 4,
+    five: 5,
+    six: 6,
+    seven: 7,
+    eight: 8,
+    nine: 9,
+    ten: 10,
+  };
+  const numberMatch = lower.match(/(\d+)\s+(?:files?|documents?)/i);
+  if (numberMatch?.[1]) return Math.max(1, parseInt(numberMatch[1], 10));
+  const wordMatch = lower.match(/\b(one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:files?|documents?)\b/i);
+  if (wordMatch?.[1]) return wordMap[wordMatch[1]] || 1;
+  return null;
+}
+
+function extractPendingCompositeContext(
+  conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>
+): { folderName: string; count: number } | null {
+  if (!conversationHistory || conversationHistory.length === 0) return null;
+
+  let folderName: string | null = null;
+  let count: number | null = null;
+
+  for (let i = conversationHistory.length - 1; i >= 0; i -= 1) {
+    const msg = conversationHistory[i];
+    const content = msg.content || '';
+
+    if (msg.role === 'assistant') {
+      if (/what\s+type\s+of\s+files?/i.test(content)) {
+        const folderMatch = content.match(/folder\s+"([^"]+)"/i);
+        if (folderMatch?.[1]) folderName = folderMatch[1].trim();
+      }
+    }
+
+    if (msg.role === 'user') {
+      if (/folder|directory/i.test(content) && /document|file/i.test(content)) {
+        if (!folderName) {
+          const folderMatch =
+            content.match(/(?:folder|directory)\s+(?:called|named|titled)\s+["']?([^"']+)["']?/i) ||
+            content.match(/(?:folder|directory)\s+["']?([^"']+)["']?/i);
+          if (folderMatch?.[1]) folderName = folderMatch[1].trim();
+        }
+        if (count === null) {
+          count = parseCountFromText(content);
+        }
+      }
+    }
+
+    if (folderName && count !== null) break;
+  }
+
+  if (!folderName) return null;
+  return { folderName, count: count || 1 };
+}
+
 function convertToolsToOllamaFormat(tools: ToolDefinition[]): OllamaTool[] {
   return tools.map(tool => ({
     type: 'function' as const,
@@ -156,7 +237,11 @@ export async function processCommandWithOllama(
   skillContext?: string,
   abortSignal?: AbortSignal,
   conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>,
-  onChunk?: (chunk: string) => void
+  onChunk?: (chunk: string) => void,
+  progressCallbacks?: {
+    onToolExecutions?: (tools: ToolExecutionInfo[]) => void;
+    onReasoningSteps?: (steps: ReasoningStep[]) => void;
+  }
 ): Promise<{ content: string; operation?: any; metadata?: any }> {
 
   // 1. Determine Needs
@@ -188,6 +273,58 @@ export async function processCommandWithOllama(
     directoryAnalysis,
   };
 
+  let finalResponse = '';
+  let operation: any;
+  const toolExecutions: ToolExecutionInfo[] = [];
+  const reasoningSteps: ReasoningStep[] = [];
+
+  // Shortcut: user is replying with a file type for a pending composite request.
+  const fileTypeReply = detectFileTypeReply(command);
+  if (fileTypeReply) {
+    const pending = extractPendingCompositeContext(conversationHistory);
+    if (pending && currentDirectory) {
+      const folderPath = `${currentDirectory}/${pending.folderName}`;
+      const { result: folderResult, executionInfo: folderInfo } = await ToolExecutionService.executeToolCall(
+        'create_directory',
+        { path: folderPath },
+        context
+      );
+      toolExecutions.push(folderInfo);
+      progressCallbacks?.onToolExecutions?.([...toolExecutions]);
+
+      const createdFiles: string[] = [];
+      const errors: string[] = [];
+      for (let i = 1; i <= pending.count; i += 1) {
+        const fileName = `Document ${i}.${fileTypeReply}`;
+        const filePath = `${folderPath}/${fileName}`;
+        const { result: fileResult, executionInfo: fileInfo } = await ToolExecutionService.executeToolCall(
+          'write_file_content',
+          { path: filePath, content: '', createDirectories: true, overwrite: false },
+          context
+        );
+        toolExecutions.push(fileInfo);
+        progressCallbacks?.onToolExecutions?.([...toolExecutions]);
+        if (fileResult.success) createdFiles.push(fileName);
+        else if (fileResult.error) errors.push(fileResult.error);
+      }
+
+      let responseText = `Created ${createdFiles.length} file(s) in "${pending.folderName}": ${createdFiles.join(', ')}.`;
+      if (errors.length > 0) responseText += ` ${errors.length} failed: ${errors.join('; ')}`;
+
+      return {
+        content: responseText,
+        operation,
+        metadata: {
+          model: modelToUse,
+          provider: 'ollama',
+          toolsUsed: toolExecutions.length,
+          toolExecutions,
+          reasoningSteps,
+        },
+      };
+    }
+  }
+
   // 4. Prepare Messages
   const messages: OllamaMessage[] = [
     { role: 'system', content: effectiveSystemPrompt },
@@ -204,10 +341,6 @@ export async function processCommandWithOllama(
 
   messages.push({ role: 'user', content: userPrompt });
 
-  let finalResponse = '';
-  let operation: any;
-  const toolExecutions: ToolExecutionInfo[] = [];
-  const reasoningSteps: ReasoningStep[] = [];
   let maxIterations = 10;
   let iteration = 0;
   let stepCounter = 1;
@@ -274,11 +407,13 @@ export async function processCommandWithOllama(
           // Reasoning: Selection
           const selectionStep = ToolExecutionService.createToolSelectionStep(stepCounter++, toolName, toolArgs);
           reasoningSteps.push(selectionStep);
+          progressCallbacks?.onReasoningSteps?.([...reasoningSteps]);
 
           // Execute
           const { result, executionInfo } = await ToolExecutionService.executeToolCall(toolName, toolArgs, context);
 
           toolExecutions.push(executionInfo);
+          progressCallbacks?.onToolExecutions?.([...toolExecutions]);
           if (result.operation) operation = result.operation;
           if (toolName === 'analyze_directory' && result.success && result.data) {
             context.directoryAnalysis = result.data;
@@ -298,6 +433,7 @@ export async function processCommandWithOllama(
           // Reasoning: Analysis
           if (result.success && result.data) {
             reasoningSteps.push(ToolExecutionService.createAnalysisStep(stepCounter++, toolName));
+            progressCallbacks?.onReasoningSteps?.([...reasoningSteps]);
           }
 
           // Add result to history
@@ -330,13 +466,48 @@ export async function processCommandWithOllama(
     // BUT: Skip fallback if file type clarification is needed - let AI ask the user
     const executedToolsCountNative = toolExecutions.length;
     const requiresClarification = needsFileTypeClarification(command);
+    const isCompositeRequestNative = isCompositeCreationRequest(command);
 
-    if (requiresClarification) {
+    const hasCreatedFolderNative = (folderName?: string): boolean => {
+      const createdFolders = toolExecutions.filter(
+        (e) => e.tool === 'create_directory' || e.tool === 'folder_creation_tab'
+      );
+      if (!folderName) return createdFolders.length > 0;
+      return createdFolders.some((exec) => {
+        const params = exec.params || {};
+        if (Array.isArray(params.folderNames) && params.folderNames.includes(folderName)) {
+          return true;
+        }
+        const path = typeof params.path === 'string' ? params.path : '';
+        return path === folderName || path.endsWith(`/${folderName}`);
+      });
+    };
+
+    if (requiresClarification && isCompositeRequestNative) {
+      // For composite requests, create the folder now and ask about file types.
+      if (currentDirectory) {
+        const parsed = parseCompositeCreationRequest(command);
+        const folder = parsed.folders[0];
+        if (folder && !hasCreatedFolderNative(folder.folderName)) {
+          const folderPath = `${currentDirectory}/${folder.folderName}`;
+          const { result: folderResult, executionInfo: folderInfo } = await ToolExecutionService.executeToolCall(
+            'create_directory',
+            { path: folderPath },
+            context
+          );
+          toolExecutions.push(folderInfo);
+          if (folderResult.success) {
+            finalResponse = `Done! I created the folder: 📁 ${folder.folderName}`;
+          }
+        }
+      }
+      console.log('[Native Fallback] Clarification needed for file types - delaying file creation.');
+    } else if (requiresClarification) {
       console.log('[Native Fallback] File type clarification needed - skipping auto-execution');
       // Don't auto-execute - the AI should ask the user what file type they want
     }
     // Check for composite folder+file requests first
-    else if (isCompositeCreationRequest(command)) {
+    else if (isCompositeRequestNative) {
       const createdFolders = toolExecutions.filter((e) => e.tool === 'create_directory' || e.tool === 'folder_creation_tab');
       const createdFiles = toolExecutions.filter((e) => e.tool === 'write_file_content');
 
@@ -347,12 +518,16 @@ export async function processCommandWithOllama(
 
         for (const folder of parsed.folders) {
           const folderPath = `${currentDirectory}/${folder.folderName}`;
-          const { result: folderResult, executionInfo: folderInfo } = await ToolExecutionService.executeToolCall(
-            'create_directory',
-            { path: folderPath },
-            context
-          );
-          toolExecutions.push(folderInfo);
+          let folderResult = { success: true };
+          if (!hasCreatedFolderNative(folder.folderName)) {
+            const exec = await ToolExecutionService.executeToolCall(
+              'create_directory',
+              { path: folderPath },
+              context
+            );
+            folderResult = exec.result;
+            toolExecutions.push(exec.executionInfo);
+          }
 
           if (folderResult.success) {
             createdItems.push(`📁 ${folder.folderName}`);
@@ -477,22 +652,27 @@ export async function processCommandWithOllama(
     // If clarification was needed but the AI didn't ask (it just claimed to create files),
     // override the response with a clarification prompt.
     // Trigger when: no tools executed OR all tools failed
-    const allToolsFailed = toolExecutions.length > 0 && toolExecutions.every(t => t.status === 'error');
-    const noSuccessfulTools = toolExecutions.length === 0 || allToolsFailed;
+    const successfulFileCreations = toolExecutions.filter(
+      exec => exec.tool === 'write_file_content' && exec.status === 'success' && exec.result?.success
+    );
+    const shouldAskClarification = requiresClarification && successfulFileCreations.length === 0;
 
-    if (requiresClarification && noSuccessfulTools) {
+    if (shouldAskClarification) {
       const alreadyAsking = /what\s+(?:type|kind|format)\s+(?:of\s+)?(?:file|document)/i.test(finalResponse);
 
       if (!alreadyAsking) {
-        console.log('[Native Fallback] Clarification needed and no successful tools. Forcing clarification prompt.');
+        console.log('[Native Fallback] Clarification needed. Forcing clarification prompt.');
 
         // Parse the request to get folder and file names for the clarification message
-        if (isCompositeCreationRequest(command)) {
+        if (isCompositeRequestNative) {
           const parsed = parseCompositeCreationRequest(command);
           if (parsed.folders.length > 0) {
             const folder = parsed.folders[0];
-            const fileName = folder.filesInside[0]?.fileName?.replace(/\.[^.]+$/, '') || 'the document';
-            finalResponse = `I'll create the folder "${folder.folderName}" for you.\n\nWhat type of file would you like for "${fileName}"?\n- **.txt** - Plain text\n- **.docx** - Word document\n- **.md** - Markdown\n- Or tell me another format`;
+            const folderCreated = hasCreatedFolderNative(folder.folderName);
+            const folderLine = folderCreated
+              ? `I created the folder "${folder.folderName}".`
+              : `I can add the documents inside "${folder.folderName}".`;
+            finalResponse = `${folderLine}\n\nWhat type of files would you like for the documents inside?\n- **.txt** - Plain text\n- **.docx** - Word document\n- **.md** - Markdown\n- Or tell me another format`;
           } else {
             finalResponse = `What type of file would you like to create?\n- **.txt** - Plain text\n- **.docx** - Word document\n- **.md** - Markdown\n- Or tell me another format`;
           }
@@ -505,6 +685,7 @@ export async function processCommandWithOllama(
     // Conclusion
     if (reasoningSteps.length > 0) {
       reasoningSteps.push(ToolExecutionService.createConclusionStep(stepCounter++));
+      progressCallbacks?.onReasoningSteps?.([...reasoningSteps]);
     }
 
     return {
@@ -531,7 +712,8 @@ export async function processCommandWithOllama(
         tools,
         skillContext,
         abortSignal,
-        conversationHistory
+        conversationHistory,
+        progressCallbacks
       );
     }
 
@@ -563,7 +745,11 @@ async function processCommandWithJsonMode(
   tools: ToolDefinition[],
   skillContext?: string,
   abortSignal?: AbortSignal,
-  conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>
+  conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>,
+  progressCallbacks?: {
+    onToolExecutions?: (tools: ToolExecutionInfo[]) => void;
+    onReasoningSteps?: (steps: ReasoningStep[]) => void;
+  }
 ): Promise<{ content: string; operation?: any; metadata?: any }> {
   const modelToUse = settings.ollamaModel || settings.model || ollamaConfig.model;
   const baseUrlToUse = settings.ollamaBaseUrl || ollamaConfig.baseUrl || 'http://localhost:11434';
@@ -651,11 +837,13 @@ async function processCommandWithJsonMode(
         // Reasoning: Selection
         const selectionStep = ToolExecutionService.createToolSelectionStep(stepCounter++, toolName, toolArgs);
         reasoningSteps.push(selectionStep);
+        progressCallbacks?.onReasoningSteps?.([...reasoningSteps]);
 
         // Execute tool
         const { result, executionInfo } = await ToolExecutionService.executeToolCall(toolName, toolArgs, context);
 
         toolExecutions.push(executionInfo);
+        progressCallbacks?.onToolExecutions?.([...toolExecutions]);
         if (result.operation) operation = result.operation;
         if (toolName === 'analyze_directory' && result.success && result.data) {
           context.directoryAnalysis = result.data;
@@ -718,13 +906,47 @@ async function processCommandWithJsonMode(
     // BUT: Skip fallback if file type clarification is needed - let AI ask the user
     const executedToolsCount = toolExecutions.length;
     const requiresClarificationJson = needsFileTypeClarification(command);
+    const isCompositeRequestJson = isCompositeCreationRequest(command);
 
-    if (requiresClarificationJson) {
+    const hasCreatedFolderJson = (folderName?: string): boolean => {
+      const createdFolders = toolExecutions.filter(
+        (e) => e.tool === 'create_directory' || e.tool === 'folder_creation_tab'
+      );
+      if (!folderName) return createdFolders.length > 0;
+      return createdFolders.some((exec) => {
+        const params = exec.params || {};
+        if (Array.isArray(params.folderNames) && params.folderNames.includes(folderName)) {
+          return true;
+        }
+        const path = typeof params.path === 'string' ? params.path : '';
+        return path === folderName || path.endsWith(`/${folderName}`);
+      });
+    };
+
+    if (requiresClarificationJson && isCompositeRequestJson) {
+      if (currentDirectory) {
+        const parsed = parseCompositeCreationRequest(command);
+        const folder = parsed.folders[0];
+        if (folder && !hasCreatedFolderJson(folder.folderName)) {
+          const folderPath = `${currentDirectory}/${folder.folderName}`;
+          const { result: folderResult, executionInfo: folderInfo } = await ToolExecutionService.executeToolCall(
+            'create_directory',
+            { path: folderPath },
+            context
+          );
+          toolExecutions.push(folderInfo);
+          if (folderResult.success) {
+            finalResponse = `Done! I created the folder: 📁 ${folder.folderName}`;
+          }
+        }
+      }
+      console.log('[JSON Fallback] Clarification needed for file types - delaying file creation.');
+    } else if (requiresClarificationJson) {
       console.log('[JSON Fallback] File type clarification needed - skipping auto-execution');
       // Don't auto-execute - the AI should ask the user what file type they want
     }
     // Check for composite folder+file requests first (e.g., "make folder X and add document Y inside")
-    else if (isCompositeCreationRequest(command)) {
+    else if (isCompositeRequestJson) {
       const createdFolders = toolExecutions.filter((e) => e.tool === 'create_directory' || e.tool === 'folder_creation_tab');
       const createdFiles = toolExecutions.filter((e) => e.tool === 'write_file_content');
 
@@ -735,14 +957,18 @@ async function processCommandWithJsonMode(
         const createdItems: string[] = [];
 
         for (const folder of parsed.folders) {
-          // Create the folder first
+          // Create the folder first if needed
           const folderPath = `${currentDirectory}/${folder.folderName}`;
-          const { result: folderResult, executionInfo: folderInfo } = await ToolExecutionService.executeToolCall(
-            'create_directory',
-            { path: folderPath },
-            context
-          );
-          toolExecutions.push(folderInfo);
+          let folderResult = { success: true };
+          if (!hasCreatedFolderJson(folder.folderName)) {
+            const exec = await ToolExecutionService.executeToolCall(
+              'create_directory',
+              { path: folderPath },
+              context
+            );
+            folderResult = exec.result;
+            toolExecutions.push(exec.executionInfo);
+          }
 
           if (folderResult.success) {
             createdItems.push(`📁 ${folder.folderName}`);
@@ -859,38 +1085,38 @@ async function processCommandWithJsonMode(
         }
       }
 
-      // ========== CLARIFICATION OVERRIDE (JSON Mode) ==========
-      // If clarification was needed but the AI didn't ask (it just claimed to create files),
-      // override the response with a clarification prompt.
-      // Trigger when: no tools executed OR all tools failed
-      const allToolsFailedJson = toolExecutions.length > 0 && toolExecutions.every((t: any) => t.status === 'error');
-      const noSuccessfulToolsJson = toolExecutions.length === 0 || allToolsFailedJson;
-      const requiresClarificationOverride = context.directoryAnalysis ? needsFileTypeClarification(command) : false;
+      // Conclusion
+    } // end of while loop
 
-      if (requiresClarificationOverride && noSuccessfulToolsJson) {
-        const alreadyAskingJson = /what\s+(?:type|kind|format)\s+(?:of\s+)?(?:file|document)/i.test(finalResponse);
+    // ========== CLARIFICATION OVERRIDE (JSON Mode) ==========
+    // If clarification is needed and no files were actually created, ask for file type.
+    const successfulFileCreationsJson = toolExecutions.filter(
+      exec => exec.tool === 'write_file_content' && exec.status === 'success' && exec.result?.success
+    );
+    const shouldAskClarificationJson = requiresClarificationJson && successfulFileCreationsJson.length === 0;
 
-        if (!alreadyAskingJson) {
-          console.log('[JSON Fallback] Clarification needed and no successful tools. Forcing clarification prompt.');
+    if (shouldAskClarificationJson) {
+      const alreadyAskingJson = /what\s+(?:type|kind|format)\s+(?:of\s+)?(?:file|document)/i.test(finalResponse);
+      if (!alreadyAskingJson) {
+        console.log('[JSON Fallback] Clarification needed. Forcing clarification prompt.');
 
-          // Parse the request to get folder and file names for the clarification message
-          if (isCompositeCreationRequest(command)) {
-            const parsed = parseCompositeCreationRequest(command);
-            if (parsed.folders.length > 0) {
-              const folder = parsed.folders[0];
-              const fileName = folder.filesInside[0]?.fileName?.replace(/\.[^.]+$/, '') || 'the document';
-              finalResponse = `I'll create the folder "${folder.folderName}" for you.\n\nWhat type of file would you like for "${fileName}"?\n- **.txt** - Plain text\n- **.docx** - Word document\n- **.md** - Markdown\n- Or tell me another format`;
-            } else {
-              finalResponse = `What type of file would you like to create?\n- **.txt** - Plain text\n- **.docx** - Word document\n- **.md** - Markdown\n- Or tell me another format`;
-            }
+        if (isCompositeRequestJson) {
+          const parsed = parseCompositeCreationRequest(command);
+          if (parsed.folders.length > 0) {
+            const folder = parsed.folders[0];
+            const folderCreated = hasCreatedFolderJson(folder.folderName);
+            const folderLine = folderCreated
+              ? `I created the folder "${folder.folderName}".`
+              : `I can add the documents inside "${folder.folderName}".`;
+            finalResponse = `${folderLine}\n\nWhat type of files would you like for the documents inside?\n- **.txt** - Plain text\n- **.docx** - Word document\n- **.md** - Markdown\n- Or tell me another format`;
           } else {
             finalResponse = `What type of file would you like to create?\n- **.txt** - Plain text\n- **.docx** - Word document\n- **.md** - Markdown\n- Or tell me another format`;
           }
+        } else {
+          finalResponse = `What type of file would you like to create?\n- **.txt** - Plain text\n- **.docx** - Word document\n- **.md** - Markdown\n- Or tell me another format`;
         }
       }
-
-      // Conclusion
-    } // end of while loop
+    }
 
     // Force return if loop finishes without returning
     return {

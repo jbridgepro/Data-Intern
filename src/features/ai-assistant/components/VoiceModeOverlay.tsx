@@ -46,6 +46,32 @@ import type {
   VoiceRecognitionResult,
 } from "../voice/types";
 import { VoiceVisualizer } from "./VoiceVisualizer";
+import { voiceCommandRecognizer } from "../voice/command/voiceCommand";
+
+const AUTO_SEND_DELAY_MS = 4000;
+const SHORT_COMMAND_TOKENS = new Set([
+  "ok",
+  "okay",
+  "yes",
+  "no",
+  "confirm",
+  "approve",
+  "send",
+  "stop",
+  "edit",
+  "cancel",
+  "help",
+  "mute",
+  "pause",
+  "clear",
+  "start",
+  "resume",
+]);
+const HELP_COMMAND_PATTERN = /^(?:help|commands?|show commands|what can you do)$/i;
+const STOP_LISTENING_PATTERN =
+  /^(?:stop|stop listening|mute|pause)(?:\s+listening)?$/i;
+const MINIMIZE_PATTERN = /^(?:minimi[sz]e|collapse)$/i;
+const CLOSE_PATTERN = /^(?:close|exit|dismiss)$/i;
 
 interface VoiceModeOverlayProps {
   settings: VoiceSettings;
@@ -94,15 +120,21 @@ export const VoiceModeOverlay = ({
 
   // Voice commands list for help
   const voiceCommands = [
-    { command: "Send", description: "Send the current message" },
+    { command: "Send / Yes", description: "Send the current message" },
     { command: "Edit", description: "Edit the transcribed text" },
-    { command: "Cancel", description: "Clear and start over" },
+    { command: "Cancel / No", description: "Clear and start over" },
+    { command: "Help", description: "Show voice commands" },
     { command: "Stop", description: "Stop listening" },
+    { command: "Minimize", description: "Collapse the voice overlay" },
+    { command: "Close", description: "Exit voice mode" },
   ];
 
   // Check if text looks like noise/gibberish rather than real speech
   const isLikelyNoise = useCallback((text: string): boolean => {
     const trimmed = text.trim().toLowerCase();
+
+    // Allow short command words like "ok", "no", "send"
+    if (SHORT_COMMAND_TOKENS.has(trimmed)) return false;
 
     // Relaxed: Only filter out very short single words (< 3 chars)
     if (trimmed.length < 3) return true;
@@ -145,6 +177,7 @@ export const VoiceModeOverlay = ({
       }
 
       const trimmedText = result.text.trim();
+      const lowerText = trimmedText.toLowerCase();
 
       // Filter out noise - don't even show as pending
       if (isLikelyNoise(trimmedText)) {
@@ -153,13 +186,60 @@ export const VoiceModeOverlay = ({
       }
 
       // Check for voice commands in the transcript
-      const lowerText = trimmedText.toLowerCase();
+      const isApproval = voiceCommandRecognizer.isApproval(lowerText);
+      const isCancellation = voiceCommandRecognizer.isCancellation(lowerText);
+      const isHelp = HELP_COMMAND_PATTERN.test(lowerText);
+      const isStopListening = STOP_LISTENING_PATTERN.test(lowerText);
+      const isMinimize = MINIMIZE_PATTERN.test(lowerText);
+      const isClose = CLOSE_PATTERN.test(lowerText);
 
-      // Voice command detection
+      if (isHelp) {
+        setShowHelp((prev) => !prev);
+        setLastVoiceCommand("Help");
+        setTimeout(() => setLastVoiceCommand(null), 2000);
+        return;
+      }
+
+      if (isMinimize) {
+        setIsMinimized(true);
+        setLastVoiceCommand("Minimize");
+        setTimeout(() => setLastVoiceCommand(null), 2000);
+        return;
+      }
+
+      if (isClose) {
+        setLastVoiceCommand("Close");
+        setTimeout(() => setLastVoiceCommand(null), 2000);
+        onClose();
+        return;
+      }
+
+      if (isStopListening) {
+        setLastVoiceCommand("Stop");
+        voiceServiceRef.current?.stopListening();
+        setConnectionStatus("disconnected");
+        setPendingTranscript(null);
+        setTranscript("");
+        setInterimTranscript("");
+        setIsEditing(false);
+        setEditedText("");
+        setTimeout(() => setLastVoiceCommand(null), 2000);
+        return;
+      }
+
+      if ((isApproval || isCancellation) && !pendingTranscript) {
+        setLastVoiceCommand(isApproval ? "Confirm" : "Cancel");
+        onTranscript(trimmedText);
+        setTimeout(() => setLastVoiceCommand(null), 2000);
+        return;
+      }
+
+      // Voice command detection (send/edit/cancel)
       if (
         lowerText === "send" ||
         lowerText === "send it" ||
-        lowerText === "send message"
+        lowerText === "send message" ||
+        isApproval
       ) {
         if (pendingTranscript) {
           setLastVoiceCommand("Send");
@@ -174,7 +254,8 @@ export const VoiceModeOverlay = ({
       if (
         lowerText === "cancel" ||
         lowerText === "clear" ||
-        lowerText === "start over"
+        lowerText === "start over" ||
+        isCancellation
       ) {
         setLastVoiceCommand("Cancel");
         setPendingTranscript(null);
@@ -232,7 +313,7 @@ export const VoiceModeOverlay = ({
       }
 
       // Auto-send after delay (only for high-quality transcripts)
-      const autoSendDelay = 4000; // 4 seconds to review
+      const autoSendDelay = AUTO_SEND_DELAY_MS; // 4 seconds to review
 
       autoSendTimeoutRef.current = setTimeout(() => {
         // Double-check the transcript is still valid before sending
@@ -382,9 +463,12 @@ export const VoiceModeOverlay = ({
     if (pendingTranscript) {
       const timeLeft = Math.max(
         0,
-        Math.ceil((3000 - (Date.now() - pendingTranscript.timestamp)) / 1000),
+        Math.ceil(
+          (AUTO_SEND_DELAY_MS - (Date.now() - pendingTranscript.timestamp)) /
+            1000,
+        ),
       );
-      return `Auto-sending in ${timeLeft}s • Say "Send", "Edit", or "Cancel"`;
+      return `Auto-sending in ${timeLeft}s • Say "Send" (or "Yes"), "Edit", or "Cancel" (or "No")`;
     }
     switch (voiceState) {
       case "listening":

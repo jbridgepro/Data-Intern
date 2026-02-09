@@ -6,7 +6,7 @@
  */
 
 import { X, Volume2, Mic, Settings2, Play, Loader2, Sparkles, Home, Building2, Headphones, Zap } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useToast } from "@/components/ui/use-toast";
 import {
@@ -33,6 +33,10 @@ import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import type { VoiceSettings } from "../types";
 import { VoiceServiceStatus } from "./VoiceServiceStatus";
+import {
+  voiceCommandAnalytics,
+  type VoiceCommandAnalyticsSnapshot,
+} from "../command/voiceCommandAnalytics";
 
 // Environment preset definitions
 interface EnvironmentPreset {
@@ -135,6 +139,27 @@ export const VoiceSettingsPanel = ({
 }: VoiceSettingsPanelProps) => {
   const [isTestingVoice, setIsTestingVoice] = useState(false);
   const { toast } = useToast();
+  const [voiceAnalytics, setVoiceAnalytics] =
+    useState<VoiceCommandAnalyticsSnapshot>(() =>
+      voiceCommandAnalytics.getSnapshot(),
+    );
+
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      setVoiceAnalytics(voiceCommandAnalytics.getSnapshot());
+    }, 2000);
+
+    return () => window.clearInterval(interval);
+  }, []);
+
+  const handleResetAnalytics = () => {
+    voiceCommandAnalytics.reset();
+    setVoiceAnalytics(voiceCommandAnalytics.getSnapshot());
+    toast({
+      title: "Voice analytics reset",
+      description: "Cleared voice command counts and recent misses.",
+    });
+  };
 
   /**
    * Tests the selected voice by playing a sample phrase.
@@ -1291,6 +1316,83 @@ export const VoiceSettingsPanel = ({
                     <SelectItem value="auto">Auto-detect</SelectItem>
                   </SelectContent>
                 </Select>
+              </div>
+
+              <Separator />
+
+              {/* Voice Command Analytics */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <Label>Voice Command Analytics</Label>
+                    <p className="text-xs text-muted-foreground">
+                      Track command accuracy and misses.
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleResetAnalytics}
+                  >
+                    Reset
+                  </Button>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="rounded-lg border border-slate-200/60 dark:border-slate-800/60 p-3">
+                    <div className="text-[10px] uppercase text-muted-foreground font-semibold">
+                      Commands
+                    </div>
+                    <div className="text-sm font-semibold text-slate-800 dark:text-slate-200">
+                      {voiceAnalytics.totalCommands}
+                    </div>
+                  </div>
+                  <div className="rounded-lg border border-slate-200/60 dark:border-slate-800/60 p-3">
+                    <div className="text-[10px] uppercase text-muted-foreground font-semibold">
+                      Misses
+                    </div>
+                    <div className="text-sm font-semibold text-slate-800 dark:text-slate-200">
+                      {voiceAnalytics.totalMisses}
+                      <span className="ml-1 text-xs text-muted-foreground">
+                        {voiceAnalytics.totalCommands > 0
+                          ? `(${Math.round(voiceAnalytics.missRate * 100)}%)`
+                          : "(0%)"}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="rounded-lg border border-slate-200/60 dark:border-slate-800/60 p-3">
+                    <div className="text-[10px] uppercase text-muted-foreground font-semibold">
+                      Avg Confidence
+                    </div>
+                    <div className="text-sm font-semibold text-slate-800 dark:text-slate-200">
+                      {Math.round(voiceAnalytics.avgConfidence * 100)}%
+                    </div>
+                  </div>
+                  <div className="rounded-lg border border-slate-200/60 dark:border-slate-800/60 p-3">
+                    <div className="text-[10px] uppercase text-muted-foreground font-semibold">
+                      Avg Latency
+                    </div>
+                    <div className="text-sm font-semibold text-slate-800 dark:text-slate-200">
+                      {Math.round(voiceAnalytics.avgLatencyMs)} ms
+                    </div>
+                  </div>
+                </div>
+
+                {voiceAnalytics.recentMisses.length > 0 && (
+                  <div className="rounded-lg border border-amber-200/60 dark:border-amber-800/60 bg-amber-50/40 dark:bg-amber-900/10 p-3">
+                    <div className="text-[10px] uppercase text-amber-700/80 dark:text-amber-300/80 font-semibold">
+                      Recent Misses
+                    </div>
+                    <div className="mt-2 space-y-1 text-xs text-amber-900/80 dark:text-amber-100/80">
+                      {voiceAnalytics.recentMisses.slice(0, 3).map((miss) => (
+                        <div key={`${miss.timestamp}-${miss.text}`}>
+                          "{miss.text}" ({miss.reason.replace("-", " ")})
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Voice Service Status */}

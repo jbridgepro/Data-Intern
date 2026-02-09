@@ -74,9 +74,7 @@ export const useAgentManager = () => {
    * Clears agent state (removes completed/stopped agent state).
    */
   const clearAgentState = useCallback((id: string) => {
-    // Note: This would need to be added to agentService if needed
-    // For now, we'll just update local state
-    setAgentStates(prev => prev.filter(state => state.id !== id));
+    agentService.clearAgentState(id);
   }, []);
 
   /**

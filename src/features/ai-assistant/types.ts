@@ -508,6 +508,8 @@ export interface AISettings {
   cacheSettings?: CacheSettings;
   // Tool permissions settings
   toolPermissions?: ToolPermissionsSettings;
+  // Live reasoning display (UI)
+  reasoningLive?: boolean;
   // Operation history settings
   operationHistory?: OperationHistorySettings;
   // Audit logging settings

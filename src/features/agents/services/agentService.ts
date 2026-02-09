@@ -426,6 +426,18 @@ class AgentService {
   }
 
   /**
+   * Clears an agent's execution state.
+   * Removes stored state/logs and resets stop/pause flags.
+   */
+  clearAgentState(id: string) {
+    this.agentStates.delete(id);
+    this.agentStopFlags.delete(id);
+    this.agentPauseFlags.delete(id);
+    this.agentExecutions.delete(id);
+    this.notifyListeners();
+  }
+
+  /**
    * Toggles an agent's enabled state.
    */
   toggleAgent(id: string) {

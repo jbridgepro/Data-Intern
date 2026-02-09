@@ -47,6 +47,9 @@ function App() {
     "mapper",
   );
 
+  // When navigating to Settings with a section (e.g. from "Open AI Settings" link), scroll to that section
+  const [pendingSettingsSection, setPendingSettingsSection] = useState<string | null>(null);
+
   // Panel configuration hook - manages UI visibility, layout, and panel sizes
   const {
     configuration,
@@ -149,11 +152,16 @@ function App() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [togglePanelVisibility]);
 
-  // Handle custom navigation events
+  // Handle custom navigation events (e.g. from Tool Info "Open AI Settings" link)
   useEffect(() => {
-    const handleNavigation = (e: CustomEvent) => {
+    const handleNavigation = (e: CustomEvent<{ tab?: string; section?: string }>) => {
       if (e.detail?.tab) {
         setActiveTab(e.detail.tab);
+        if (e.detail.tab === "settings" && e.detail.section) {
+          setPendingSettingsSection(e.detail.section);
+        } else {
+          setPendingSettingsSection(null);
+        }
       }
     };
 
@@ -201,6 +209,8 @@ function App() {
             themeMode={themeMode}
             toggleTheme={toggleTheme}
             onNavigateToPanelConfig={() => setActiveTab("panel-config")}
+            initialSection={pendingSettingsSection ?? undefined}
+            onInitialSectionHandled={() => setPendingSettingsSection(null)}
           />
         );
       case "panel-config":

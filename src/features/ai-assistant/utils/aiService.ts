@@ -213,6 +213,95 @@ function formatToolResultForUser(toolName: string, toolResult: ToolResult): stri
   return 'Operation completed successfully.';
 }
 
+type PendingCompositeContext = {
+  folderName: string;
+  count: number;
+};
+
+function detectFileTypeReply(command: string): string | null {
+  const raw = command.trim().toLowerCase();
+  const plain = raw.replace(/^\.+/, '');
+  const map: Record<string, string> = {
+    txt: 'txt',
+    text: 'txt',
+    docx: 'docx',
+    doc: 'docx',
+    word: 'docx',
+    md: 'md',
+    markdown: 'md',
+    pdf: 'pdf',
+    rtf: 'rtf',
+    csv: 'csv',
+    xlsx: 'xlsx',
+    xls: 'xls',
+  };
+  return map[plain] || null;
+}
+
+function parseCountFromText(text: string): number | null {
+  const lower = text.toLowerCase();
+  const wordMap: Record<string, number> = {
+    one: 1,
+    two: 2,
+    three: 3,
+    four: 4,
+    five: 5,
+    six: 6,
+    seven: 7,
+    eight: 8,
+    nine: 9,
+    ten: 10,
+  };
+  const numberMatch = lower.match(/(\d+)\s+(?:files?|documents?)/i);
+  if (numberMatch?.[1]) return Math.max(1, parseInt(numberMatch[1], 10));
+  const wordMatch = lower.match(/\b(one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:files?|documents?)\b/i);
+  if (wordMatch?.[1]) return wordMap[wordMatch[1]] || 1;
+  return null;
+}
+
+function extractPendingCompositeContext(
+  conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>
+): PendingCompositeContext | null {
+  if (!conversationHistory || conversationHistory.length === 0) return null;
+
+  let folderName: string | null = null;
+  let count: number | null = null;
+
+  for (let i = conversationHistory.length - 1; i >= 0; i -= 1) {
+    const msg = conversationHistory[i];
+    const content = msg.content || '';
+
+    if (msg.role === 'assistant') {
+      if (/what\s+type\s+of\s+files?/i.test(content)) {
+        const folderMatch = content.match(/folder\s+"([^"]+)"/i);
+        if (folderMatch?.[1]) folderName = folderMatch[1].trim();
+      }
+    }
+
+    if (msg.role === 'user') {
+      if (/folder|directory/i.test(content) && /document|file/i.test(content)) {
+        if (!folderName) {
+          const folderMatch =
+            content.match(/(?:folder|directory)\s+(?:called|named|titled)\s+["']?([^"']+)["']?/i) ||
+            content.match(/(?:folder|directory)\s+["']?([^"']+)["']?/i);
+          if (folderMatch?.[1]) folderName = folderMatch[1].trim();
+        }
+        if (count === null) {
+          count = parseCountFromText(content);
+        }
+      }
+    }
+
+    if (folderName && count !== null) break;
+  }
+
+  if (!folderName) return null;
+  return {
+    folderName,
+    count: count || 1,
+  };
+}
+
 /**
  * Processes a user command using AI with tool use support.
  * The AI can call custom file operation tools and MCP tools.
@@ -225,7 +314,11 @@ export async function processCommandWithAI(
   settings: AISettings,
   abortSignal?: AbortSignal,
   conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>,
-  voiceContext?: { enabled: boolean; persona?: string }
+  voiceContext?: { enabled: boolean; persona?: string },
+  progressCallbacks?: {
+    onToolExecutions?: (tools: ToolExecutionInfo[]) => void;
+    onReasoningSteps?: (steps: ReasoningStep[]) => void;
+  }
 ): Promise<{ content: string; operation?: FileOperation; metadata?: any }> {
   // Route to appropriate provider
   if (settings.provider === 'ollama') {
@@ -236,7 +329,8 @@ export async function processCommandWithAI(
       settings,
       abortSignal,
       conversationHistory,
-      voiceContext
+      voiceContext,
+      progressCallbacks
     );
   } else if (settings.provider === 'openrouter') {
     return processCommandWithOpenRouterProvider(
@@ -246,7 +340,8 @@ export async function processCommandWithAI(
       settings,
       abortSignal,
       conversationHistory,
-      voiceContext
+      voiceContext,
+      progressCallbacks
     );
   } else {
     // Default to Anthropic
@@ -257,7 +352,8 @@ export async function processCommandWithAI(
       settings,
       abortSignal,
       conversationHistory,
-      voiceContext
+      voiceContext,
+      progressCallbacks
     );
   }
 }
@@ -272,7 +368,11 @@ async function processCommandWithAnthropicProvider(
   settings: AISettings,
   abortSignal?: AbortSignal,
   conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>,
-  voiceContext?: { enabled: boolean; persona?: string }
+  voiceContext?: { enabled: boolean; persona?: string },
+  progressCallbacks?: {
+    onToolExecutions?: (tools: ToolExecutionInfo[]) => void;
+    onReasoningSteps?: (steps: ReasoningStep[]) => void;
+  }
 ): Promise<{ content: string; operation?: FileOperation; metadata?: any }> {
   if (!anthropicClient || !settings.apiKey) {
     return {
@@ -280,8 +380,9 @@ async function processCommandWithAnthropicProvider(
     };
   }
 
-  const toolExecutions: ToolExecutionInfo[] = [];
-  const reasoningSteps: ReasoningStep[] = [];
+    const toolExecutions: ToolExecutionInfo[] = [];
+    const reasoningSteps: ReasoningStep[] = [];
+    let operation: FileOperation | undefined;
 
   try {
     // Get all available tools (custom + MCP), filtered by settings
@@ -317,6 +418,59 @@ async function processCommandWithAnthropicProvider(
       settings,
       directoryAnalysis,
     };
+
+    // Shortcut: user is replying with a file type for a pending composite request.
+    const fileTypeReply = detectFileTypeReply(command);
+    if (fileTypeReply) {
+      const pending = extractPendingCompositeContext(conversationHistory);
+      if (pending && context.currentDirectory) {
+        const folderPath = `${context.currentDirectory}/${pending.folderName}`;
+        const folderRes = await executeTool('create_directory', { path: folderPath }, context);
+        toolExecutions.push({
+          tool: 'create_directory',
+          description: `Create folder: ${pending.folderName}`,
+          params: { path: folderPath },
+          status: folderRes.success ? 'success' : 'error',
+          result: folderRes,
+        });
+
+        const createdFiles: string[] = [];
+        const errors: string[] = [];
+        for (let i = 1; i <= pending.count; i += 1) {
+          const fileName = `Document ${i}.${fileTypeReply}`;
+          const filePath = `${folderPath}/${fileName}`;
+          const fileRes = await executeTool(
+            'write_file_content',
+            { path: filePath, content: '', createDirectories: true, overwrite: false },
+            context
+          );
+          toolExecutions.push({
+            tool: 'write_file_content',
+            description: `Create file: ${fileName}`,
+            params: { path: filePath, content: '', createDirectories: true, overwrite: false },
+            status: fileRes.success ? 'success' : 'error',
+            result: fileRes,
+          });
+          if (fileRes.success) createdFiles.push(fileName);
+          else if (fileRes.error) errors.push(fileRes.error);
+        }
+        progressCallbacks?.onToolExecutions?.([...toolExecutions]);
+
+        let responseText = `Created ${createdFiles.length} file(s) in "${pending.folderName}": ${createdFiles.join(', ')}.`;
+        if (errors.length > 0) responseText += ` ${errors.length} failed: ${errors.join('; ')}`;
+
+        return {
+          content: responseText,
+          operation,
+          metadata: {
+            model: settings.model,
+            toolsUsed: toolExecutions.length,
+            toolExecutions,
+            reasoningSteps,
+          },
+        };
+      }
+    }
 
     // Build conversation history - use intelligent context selection
     const messages: Anthropic.MessageParam[] = [];
@@ -366,7 +520,6 @@ async function processCommandWithAnthropicProvider(
     });
 
     let finalResponse = '';
-    let operation: FileOperation | undefined;
     // Definitions moved to outer scope
     let maxIterations = 10; // Prevent infinite loops
     let iteration = 0;
@@ -379,6 +532,7 @@ async function processCommandWithAnthropicProvider(
       if (execution) {
         execution.progress = progress;
         execution.status = 'running';
+        progressCallbacks?.onToolExecutions?.([...toolExecutions]);
       }
     });
 
@@ -387,6 +541,7 @@ async function processCommandWithAnthropicProvider(
       if (execution) {
         execution.status = result.success ? 'success' : 'error';
         execution.result = result;
+        progressCallbacks?.onToolExecutions?.([...toolExecutions]);
       }
     });
 
@@ -444,6 +599,7 @@ async function processCommandWithAnthropicProvider(
                 content: text,
                 timestamp: Date.now(),
               });
+              progressCallbacks?.onReasoningSteps?.([...reasoningSteps]);
             }
           }
 
@@ -524,6 +680,7 @@ async function processCommandWithAnthropicProvider(
             toolUsed: toolName,
             result: 'pending',
           });
+          progressCallbacks?.onReasoningSteps?.([...reasoningSteps]);
 
           // Create tool execution info
           const execution: ToolExecutionInfo = {
@@ -533,6 +690,7 @@ async function processCommandWithAnthropicProvider(
             status: 'running',
           };
           toolExecutions.push(execution);
+          progressCallbacks?.onToolExecutions?.([...toolExecutions]);
 
           // For tool_use blocks, the Anthropic client expects an array of content blocks
           messages.push({
@@ -562,6 +720,7 @@ async function processCommandWithAnthropicProvider(
           // Update execution status
           execution.status = toolResult.success ? 'success' : 'error';
           execution.result = toolResult;
+          progressCallbacks?.onToolExecutions?.([...toolExecutions]);
 
           // Update reasoning step with result
           const lastReasoningStep = reasoningSteps[reasoningSteps.length - 1];
@@ -595,6 +754,7 @@ async function processCommandWithAnthropicProvider(
             } else if (!toolResult.success) {
               lastReasoningStep.content += ` Error: ${toolResult.error}`;
             }
+            progressCallbacks?.onReasoningSteps?.([...reasoningSteps]);
           }
 
           // Add reasoning step for analysis of results (only if we need to process further)
@@ -607,15 +767,16 @@ async function processCommandWithAnthropicProvider(
               );
               if (imageTypes.length > 0) {
                 const totalImages = imageTypes.reduce((sum: number, ft: any) => sum + (ft.count || 0), 0);
-                reasoningSteps.push({
-                  id: `reasoning-${stepCounter}`,
-                  step: stepCounter++,
-                  type: 'analysis',
-                  content: `Identified ${totalImages} image file(s) from the analysis results.`,
-                  timestamp: Date.now(),
-                });
-              }
-            }
+            reasoningSteps.push({
+              id: `reasoning-${stepCounter}`,
+              step: stepCounter++,
+              type: 'analysis',
+              content: `Identified ${totalImages} image file(s) from the analysis results.`,
+              timestamp: Date.now(),
+            });
+            progressCallbacks?.onReasoningSteps?.([...reasoningSteps]);
+          }
+        }
           }
 
           // Add tool result to conversation
@@ -679,13 +840,47 @@ async function processCommandWithAnthropicProvider(
     // BUT: Skip fallback if file type clarification is needed - let AI ask the user
     const executedToolsCountAnthropic = toolExecutions.length;
     const requiresClarificationAnthropic = needsFileTypeClarification(command);
+    const isCompositeRequestAnthropic = isCompositeCreationRequest(command);
 
-    if (requiresClarificationAnthropic) {
+    const hasCreatedFolderAnthropic = (folderName?: string): boolean => {
+      const createdFolders = toolExecutions.filter(
+        (e) => e.tool === 'create_directory' || e.tool === 'folder_creation_tab'
+      );
+      if (!folderName) return createdFolders.length > 0;
+      return createdFolders.some((exec) => {
+        const params = exec.params || {};
+        if (Array.isArray(params.folderNames) && params.folderNames.includes(folderName)) {
+          return true;
+        }
+        const path = typeof params.path === 'string' ? params.path : '';
+        return path === folderName || path.endsWith(`/${folderName}`);
+      });
+    };
+
+    if (requiresClarificationAnthropic && isCompositeRequestAnthropic) {
+      // For composite requests, it's safe to create the folder now and ask about file types.
+      if (context.currentDirectory) {
+        const parsed = parseCompositeCreationRequest(command);
+        const folder = parsed.folders[0];
+        if (folder && !hasCreatedFolderAnthropic(folder.folderName)) {
+          const folderPath = `${context.currentDirectory}/${folder.folderName}`;
+          const folderRes = await executeTool('create_directory', { path: folderPath }, context);
+          toolExecutions.push({
+            tool: 'create_directory',
+            description: `Create folder: ${folder.folderName}`,
+            params: { path: folderPath },
+            status: folderRes.success ? 'success' : 'error',
+            result: folderRes,
+          });
+        }
+      }
+      console.log('[Anthropic Fallback] Clarification needed for file types - delaying file creation.');
+    } else if (requiresClarificationAnthropic) {
       console.log('[Anthropic Fallback] File type clarification needed - skipping auto-execution');
-      // Don't auto-execute - the AI should ask the user what file type they want
+      // Don't auto-execute files - the AI should ask the user what file type they want
     }
     // Check for composite folder+file requests first (e.g., "make folder X and add document Y inside")
-    else if (isCompositeCreationRequest(command)) {
+    else if (isCompositeRequestAnthropic) {
       const createdFolders = toolExecutions.filter((e) => e.tool === 'create_directory' || e.tool === 'folder_creation_tab');
       const createdFiles = toolExecutions.filter((e) => e.tool === 'write_file_content');
 
@@ -697,33 +892,35 @@ async function processCommandWithAnthropicProvider(
 
         for (const folder of parsed.folders) {
           const folderPath = `${context.currentDirectory}/${folder.folderName}`;
-          const folderRes = await executeTool('create_directory', { path: folderPath }, context);
-          const folderExec: ToolExecutionInfo = {
-            tool: 'create_directory',
-            description: `Create folder: ${folder.folderName}`,
-            params: { path: folderPath },
-            status: folderRes.success ? 'success' : 'error',
-            result: folderRes,
-          };
-          toolExecutions.push(folderExec);
+          let folderRes: ToolResult = { success: true };
+          if (!hasCreatedFolderAnthropic(folder.folderName)) {
+            folderRes = await executeTool('create_directory', { path: folderPath }, context);
+            toolExecutions.push({
+              tool: 'create_directory',
+              description: `Create folder: ${folder.folderName}`,
+              params: { path: folderPath },
+              status: folderRes.success ? 'success' : 'error',
+              result: folderRes,
+            });
+          }
 
           if (folderRes.success) {
             createdItems.push(`📁 ${folder.folderName}`);
 
             for (const file of folder.filesInside) {
               const filePath = `${folderPath}/${file.fileName}`;
-              const fileRes = await executeTool('write_file_content',
+              const fileRes = await executeTool(
+                'write_file_content',
                 { path: filePath, content: file.content || '', createDirectories: true },
                 context
               );
-              const fileExec: ToolExecutionInfo = {
+              toolExecutions.push({
                 tool: 'write_file_content',
                 description: `Create file: ${file.fileName}`,
                 params: { path: filePath },
                 status: fileRes.success ? 'success' : 'error',
                 result: fileRes,
-              };
-              toolExecutions.push(fileExec);
+              });
 
               if (fileRes.success) {
                 createdItems.push(`  📄 ${file.fileName}`);
@@ -817,22 +1014,27 @@ async function processCommandWithAnthropicProvider(
     // If clarification was needed but the AI didn't ask (it just claimed to create files),
     // override the response with a clarification prompt.
     // Trigger when: no tools executed OR all tools failed
-    const allToolsFailedAnthropic = toolExecutions.length > 0 && toolExecutions.every(t => t.status === 'error');
-    const noSuccessfulToolsAnthropic = toolExecutions.length === 0 || allToolsFailedAnthropic;
+    const successfulFileCreationsAnthropic = toolExecutions.filter(
+      exec => exec.tool === 'write_file_content' && exec.status === 'success' && exec.result?.success
+    );
+    const shouldAskClarificationAnthropic = requiresClarificationAnthropic && successfulFileCreationsAnthropic.length === 0;
 
-    if (requiresClarificationAnthropic && noSuccessfulToolsAnthropic) {
+    if (shouldAskClarificationAnthropic) {
       const alreadyAskingAnthropic = /what\s+(?:type|kind|format)\s+(?:of\s+)?(?:file|document)/i.test(finalResponse);
 
       if (!alreadyAskingAnthropic) {
-        console.log('[Anthropic Fallback] Clarification needed and no successful tools. Forcing clarification prompt.');
+        console.log('[Anthropic Fallback] Clarification needed. Forcing clarification prompt.');
 
         // Parse the request to get folder and file names for the clarification message
-        if (isCompositeCreationRequest(command)) {
+        if (isCompositeRequestAnthropic) {
           const parsed = parseCompositeCreationRequest(command);
           if (parsed.folders.length > 0) {
             const folder = parsed.folders[0];
-            const fileName = folder.filesInside[0]?.fileName?.replace(/\.[^.]+$/, '') || 'the document';
-            finalResponse = `I'll create the folder "${folder.folderName}" for you.\n\nWhat type of file would you like for "${fileName}"?\n- **.txt** - Plain text\n- **.docx** - Word document\n- **.md** - Markdown\n- Or tell me another format`;
+            const folderCreated = hasCreatedFolderAnthropic(folder.folderName);
+            const folderLine = folderCreated
+              ? `I created the folder "${folder.folderName}".`
+              : `I can add the documents inside "${folder.folderName}".`;
+            finalResponse = `${folderLine}\n\nWhat type of files would you like for the documents inside?\n- **.txt** - Plain text\n- **.docx** - Word document\n- **.md** - Markdown\n- Or tell me another format`;
           } else {
             finalResponse = `What type of file would you like to create?\n- **.txt** - Plain text\n- **.docx** - Word document\n- **.md** - Markdown\n- Or tell me another format`;
           }
@@ -858,6 +1060,7 @@ async function processCommandWithAnthropicProvider(
         content: 'Completed processing. Preparing final response for the user.',
         timestamp: Date.now(),
       });
+      progressCallbacks?.onReasoningSteps?.([...reasoningSteps]);
     }
 
     // Final cleanup of response - remove any remaining JSON blocks or technical details
@@ -1031,7 +1234,11 @@ async function processCommandWithOllamaProvider(
   settings: AISettings,
   abortSignal?: AbortSignal,
   conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>,
-  voiceContext?: { enabled: boolean; persona?: string }
+  voiceContext?: { enabled: boolean; persona?: string },
+  progressCallbacks?: {
+    onToolExecutions?: (tools: ToolExecutionInfo[]) => void;
+    onReasoningSteps?: (steps: ReasoningStep[]) => void;
+  }
 ): Promise<{ content: string; operation?: FileOperation; metadata?: any }> {
   try {
     // Get all available tools (custom + MCP), filtered by settings
@@ -1065,7 +1272,9 @@ async function processCommandWithOllamaProvider(
       systemPrompt,
       skillContext,
       abortSignal,
-      conversationHistory
+      conversationHistory,
+      undefined,
+      progressCallbacks
     );
   } catch (error: any) {
     console.error('Ollama processing error:', error);
@@ -1086,7 +1295,11 @@ async function processCommandWithOpenRouterProvider(
   settings: AISettings,
   abortSignal?: AbortSignal,
   conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>,
-  voiceContext?: { enabled: boolean; persona?: string }
+  voiceContext?: { enabled: boolean; persona?: string },
+  progressCallbacks?: {
+    onToolExecutions?: (tools: ToolExecutionInfo[]) => void;
+    onReasoningSteps?: (steps: ReasoningStep[]) => void;
+  }
 ): Promise<{ content: string; operation?: FileOperation; metadata?: any }> {
   // Ensure OpenRouter is configured
   const openRouterSettings = settings.openRouter || DEFAULT_OPENROUTER_SETTINGS;
@@ -1163,6 +1376,62 @@ async function processCommandWithOpenRouterProvider(
       directoryAnalysis,
     };
 
+    let operation: FileOperation | undefined;
+
+    // Shortcut: user is replying with a file type for a pending composite request.
+    const fileTypeReply = detectFileTypeReply(command);
+    if (fileTypeReply) {
+      const pending = extractPendingCompositeContext(conversationHistory);
+      if (pending && toolContext.currentDirectory) {
+        const folderPath = `${toolContext.currentDirectory}/${pending.folderName}`;
+        const folderRes = await executeTool('create_directory', { path: folderPath }, toolContext);
+        toolExecutions.push({
+          tool: 'create_directory',
+          description: `Create folder: ${pending.folderName}`,
+          params: { path: folderPath },
+          status: folderRes.success ? 'success' : 'error',
+          result: folderRes,
+        });
+
+        const createdFiles: string[] = [];
+        const errors: string[] = [];
+        for (let i = 1; i <= pending.count; i += 1) {
+          const fileName = `Document ${i}.${fileTypeReply}`;
+          const filePath = `${folderPath}/${fileName}`;
+          const fileRes = await executeTool(
+            'write_file_content',
+            { path: filePath, content: '', createDirectories: true, overwrite: false },
+            toolContext
+          );
+          toolExecutions.push({
+            tool: 'write_file_content',
+            description: `Create file: ${fileName}`,
+            params: { path: filePath, content: '', createDirectories: true, overwrite: false },
+            status: fileRes.success ? 'success' : 'error',
+            result: fileRes,
+          });
+          if (fileRes.success) createdFiles.push(fileName);
+          else if (fileRes.error) errors.push(fileRes.error);
+        }
+
+        let responseText = `Created ${createdFiles.length} file(s) in "${pending.folderName}": ${createdFiles.join(', ')}.`;
+        if (errors.length > 0) responseText += ` ${errors.length} failed: ${errors.join('; ')}`;
+
+        progressCallbacks?.onToolExecutions?.([...toolExecutions]);
+        return {
+          content: responseText,
+          operation,
+          metadata: {
+            provider: 'openrouter',
+            model: openRouterSettings.model,
+            toolsUsed: toolExecutions.map(exec => exec.tool),
+            toolsUsedCount: toolExecutions.length,
+            toolExecutions,
+          },
+        };
+      }
+    }
+
     // Create tool executor function
     const toolExecutor = async (toolName: string, args: Record<string, any>): Promise<any> => {
       // Check if this is an MCP tool
@@ -1213,7 +1482,6 @@ async function processCommandWithOpenRouterProvider(
     };
 
     // Check for operation in tool results
-    let operation: FileOperation | undefined;
     for (const toolResult of toolResults) {
       if (toolResult.result?.operation) {
         operation = toolResult.result.operation;
@@ -1242,6 +1510,7 @@ async function processCommandWithOpenRouterProvider(
           : toolResult.result,
       });
     }
+    progressCallbacks?.onToolExecutions?.([...toolExecutions]);
 
     // ===== JSON COMMAND FALLBACK =====
     // Some OpenRouter models respond with JSON blocks instead of tool_calls.
@@ -1293,9 +1562,41 @@ async function processCommandWithOpenRouterProvider(
     // If no tools executed, ensure folder/file creation requests are fulfilled.
     const executedToolsCount = toolExecutions.length;
     const requiresClarification = needsFileTypeClarification(command);
+    const isCompositeRequestOpenRouter = isCompositeCreationRequest(command);
 
-    if (!requiresClarification) {
-      if (isCompositeCreationRequest(command)) {
+    const hasCreatedFolderOpenRouter = (folderName?: string): boolean => {
+      const createdFolders = toolExecutions.filter(
+        (e) => e.tool === 'create_directory' || e.tool === 'folder_creation_tab'
+      );
+      if (!folderName) return createdFolders.length > 0;
+      return createdFolders.some((exec) => {
+        const params = exec.params || {};
+        if (Array.isArray(params.folderNames) && params.folderNames.includes(folderName)) {
+          return true;
+        }
+        const path = typeof params.path === 'string' ? params.path : '';
+        return path === folderName || path.endsWith(`/${folderName}`);
+      });
+    };
+
+    if (requiresClarification && isCompositeRequestOpenRouter) {
+      if (toolContext.currentDirectory) {
+        const parsed = parseCompositeCreationRequest(command);
+        const folder = parsed.folders[0];
+        if (folder && !hasCreatedFolderOpenRouter(folder.folderName)) {
+          const folderPath = `${toolContext.currentDirectory}/${folder.folderName}`;
+          const folderRes = await executeTool('create_directory', { path: folderPath }, toolContext);
+          toolExecutions.push({
+            tool: 'create_directory',
+            description: `Create folder: ${folder.folderName}`,
+            params: { path: folderPath },
+            status: folderRes.success ? 'success' : 'error',
+            result: folderRes,
+          });
+        }
+      }
+    } else if (!requiresClarification) {
+      if (isCompositeRequestOpenRouter) {
         const createdFolders = toolExecutions.filter((e) =>
           e.tool === 'create_directory' || e.tool === 'folder_creation_tab'
         );
@@ -1308,14 +1609,17 @@ async function processCommandWithOpenRouterProvider(
 
           for (const folder of parsed.folders) {
             const folderPath = `${toolContext.currentDirectory}/${folder.folderName}`;
-            const folderRes = await executeTool('create_directory', { path: folderPath }, toolContext);
-            toolExecutions.push({
-              tool: 'create_directory',
-              description: `Create folder: ${folder.folderName}`,
-              params: { path: folderPath },
-              status: folderRes.success ? 'success' : 'error',
-              result: folderRes,
-            });
+            let folderRes: ToolResult = { success: true };
+            if (!hasCreatedFolderOpenRouter(folder.folderName)) {
+              folderRes = await executeTool('create_directory', { path: folderPath }, toolContext);
+              toolExecutions.push({
+                tool: 'create_directory',
+                description: `Create folder: ${folder.folderName}`,
+                params: { path: folderPath },
+                status: folderRes.success ? 'success' : 'error',
+                result: folderRes,
+              });
+            }
 
             if (folderRes.success) {
               createdItems.push(`📁 ${folder.folderName}`);
@@ -1418,18 +1722,23 @@ async function processCommandWithOpenRouterProvider(
     }
 
     // ===== CLARIFICATION OVERRIDE =====
-    const allToolsFailed = toolExecutions.length > 0 && toolExecutions.every(t => t.status === 'error');
-    const noSuccessfulTools = toolExecutions.length === 0 || allToolsFailed;
+    const successfulFileCreationsOpenRouter = toolExecutions.filter(
+      exec => exec.tool === 'write_file_content' && exec.status === 'success' && exec.result?.success
+    );
+    const shouldAskClarification = requiresClarification && successfulFileCreationsOpenRouter.length === 0;
 
-    if (requiresClarification && noSuccessfulTools) {
+    if (shouldAskClarification) {
       const alreadyAsking = /what\s+(?:type|kind|format)\s+(?:of\s+)?(?:file|document)/i.test(finalResponse);
       if (!alreadyAsking) {
-        if (isCompositeCreationRequest(command)) {
+        if (isCompositeRequestOpenRouter) {
           const parsed = parseCompositeCreationRequest(command);
           if (parsed.folders.length > 0) {
             const folder = parsed.folders[0];
-            const fileName = folder.filesInside[0]?.fileName?.replace(/\.[^.]+$/, '') || 'the document';
-            finalResponse = `I'll create the folder "${folder.folderName}" for you.\n\nWhat type of file would you like for "${fileName}"?\n- **.txt** - Plain text\n- **.docx** - Word document\n- **.md** - Markdown\n- Or tell me another format`;
+            const folderCreated = hasCreatedFolderOpenRouter(folder.folderName);
+            const folderLine = folderCreated
+              ? `I created the folder "${folder.folderName}".`
+              : `I can add the documents inside "${folder.folderName}".`;
+            finalResponse = `${folderLine}\n\nWhat type of files would you like for the documents inside?\n- **.txt** - Plain text\n- **.docx** - Word document\n- **.md** - Markdown\n- Or tell me another format`;
           } else {
             finalResponse = `What type of file would you like to create?\n- **.txt** - Plain text\n- **.docx** - Word document\n- **.md** - Markdown\n- Or tell me another format`;
           }

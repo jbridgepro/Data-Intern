@@ -79,6 +79,8 @@ import { Slider } from "@/components/ui/slider";
 import { cn } from "@/lib/utils";
 import { usePersistentState } from "../../hooks/usePersistentState";
 import { EmptyState } from "@/components/common/EmptyState";
+import { PageHeader } from "@/components/layout/PageHeader";
+import { fileMapperInfo } from "@/components/layout/toolInfoContent";
 
 export const FileMapper = () => {
   // State management
@@ -390,23 +392,37 @@ export const FileMapper = () => {
   }, []);
 
   return (
-    <div className="flex flex-col h-full bg-slate-50/50 dark:bg-slate-950/50 backdrop-blur-sm rounded-2xl border border-slate-200/60 dark:border-slate-800/60 overflow-hidden shadow-sm">
-      
-      {/* HEADER: CopyToolbar Style Match */}
-      <div className="flex flex-col border-b border-slate-200/60 dark:border-slate-800/60 bg-white/60 dark:bg-slate-900/60 backdrop-blur-lg z-20">
-        
-        {/* Top Bar: Path & Main Actions */}
-        <div className="flex items-center justify-between px-4 py-3 gap-4">
-             <div className="flex items-center gap-3">
-               <div className="p-2 bg-blue-500/10 rounded-lg">
-                 <LayoutGrid className="h-5 w-5 text-blue-600 dark:text-blue-400" />
-               </div>
-               <h1 className="text-xl font-bold bg-gradient-to-r from-slate-800 to-slate-600 dark:from-slate-100 dark:to-slate-400 bg-clip-text text-transparent hidden sm:block">
-                 File Mapper
-               </h1>
-             </div>
+    <div className="flex flex-col h-full bg-background text-foreground">
+      <PageHeader
+        icon={LayoutGrid}
+        title="File Mapper"
+        subtitle="Visualize directory structure and export maps"
+        info={fileMapperInfo}
+        right={
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 text-muted-foreground hover:text-foreground"
+            onClick={() => {
+              resetSourcePath();
+              resetVisualizationStyle();
+              resetConfig();
+              resetFilters();
+              setTreeData(null);
+              setError(null);
+              setSearchTerm("");
+            }}
+            title="Reset"
+          >
+            <RotateCcw className="h-4 w-4" />
+          </Button>
+        }
+      />
 
-             <div className="flex items-center gap-3 flex-1 max-w-3xl">
+      {/* Toolbar: Path & Main Actions */}
+      <div className="flex flex-col border-b border-slate-200/60 dark:border-slate-800/60 bg-card/30 backdrop-blur-lg z-20">
+        <div className="flex items-center justify-between px-4 py-3 gap-4">
+             <div className="flex items-center gap-3 flex-1 max-w-3xl min-w-0">
                <div className="relative flex-1">
                  <div className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground">
                    <FolderSearch className="h-4 w-4" />
@@ -467,32 +483,12 @@ export const FileMapper = () => {
                  </Select>
                )}
                
-               <Button 
-                   onClick={handleGenerateMap}
-                   disabled={loading || !sourcePath}
-                   className="h-9 shadow-sm bg-gradient-to-r from-blue-600 to-indigo-600 text-white border-0"
-                >
-                   {loading ? "Scanning..." : "Generate"}
-               </Button>
-               
                <Button
-                 variant="outline"
-                 size="icon"
-                 className="h-9 w-9 shrink-0"
-                 onClick={() => {
-                     // Reset all Persistent States
-                     resetSourcePath();
-                     resetVisualizationStyle();
-                     resetConfig();
-                     resetFilters();
-                     setTreeData(null);
-                     setError(null);
-                     // Also reset local UI states if we want full flash
-                     setSearchTerm("");
-                 }}
-                 title="Reset Tool"
+                 onClick={handleGenerateMap}
+                 disabled={loading || !sourcePath}
+                 className="h-9 shadow-sm bg-gradient-to-r from-blue-600 to-indigo-600 text-white border-0"
                >
-                  <RotateCcw className="h-4 w-4" />
+                 {loading ? "Scanning..." : "Generate"}
                </Button>
              </div>
         </div>

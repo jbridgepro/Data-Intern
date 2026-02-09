@@ -849,7 +849,7 @@ export function QueryPanel({ connection, selectedDatabase }: QueryPanelProps) {
     order: "ORDER BY & LIMIT",
   };
 
-  const blockRenderers: Record<BlockId, JSX.Element> = {
+  const blockRenderers: Record<BlockId, React.ReactElement> = {
     select: (
       <div className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 space-y-3 shadow-sm">
         <div className="flex items-center justify-between">

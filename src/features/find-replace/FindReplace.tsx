@@ -11,7 +11,9 @@ import { FindActions } from "./components/FindActions";
 import { ResultsPreview } from "./components/ResultsPreview";
 import { searchFiles, SearchOptions, FileResult } from "./utils/searchLogic";
 import { replaceInFile } from "./utils/replaceLogic";
-import { AlertCircle, X, CheckCircle, RotateCcw } from "lucide-react";
+import { AlertCircle, Search, X, CheckCircle, RotateCcw } from "lucide-react";
+import { PageHeader } from "@/components/layout/PageHeader";
+import { findReplaceInfo } from "@/components/layout/toolInfoContent";
 import { Button } from "@/components/ui/button";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useFileSystem } from "../file-copy/hooks/useFileSystem";
@@ -264,27 +266,33 @@ export const FindReplace = () => {
 
   return (
     <div className="flex flex-col h-full bg-background text-foreground animate-in fade-in duration-300">
-      <div className="flex justify-end p-2 bg-slate-50 border-b dark:bg-slate-900 border-slate-200 dark:border-slate-800">
-          <Button 
-            variant="ghost" 
-            size="sm" 
+      <PageHeader
+        icon={Search}
+        title="Find & Replace"
+        subtitle="Search and replace text across files"
+        info={findReplaceInfo}
+        right={
+          <Button
+            variant="ghost"
+            size="sm"
             onClick={() => {
-                resetSelectedPath();
-                resetSearchQuery();
-                resetReplaceQuery();
-                resetOptions();
-                setResults([]);
-                setSearchStats({ scanned: 0, found: 0 });
-                setStatusMessage(null);
-                setSelectedMatches(new Set());
+              resetSelectedPath();
+              resetSearchQuery();
+              resetReplaceQuery();
+              resetOptions();
+              setResults([]);
+              setSearchStats({ scanned: 0, found: 0 });
+              setStatusMessage(null);
+              setSelectedMatches(new Set());
             }}
             className="text-xs gap-2 text-muted-foreground hover:text-foreground"
           >
-              <RotateCcw className="h-3 w-3" />
-              Reset Tool
+            <RotateCcw className="h-3 w-3" />
+            Reset
           </Button>
-      </div>
-      <FindToolbar 
+        }
+      />
+      <FindToolbar
         currentPath={selectedPath}
         onPathChange={setSelectedPath}
         onBrowse={handleBrowse}

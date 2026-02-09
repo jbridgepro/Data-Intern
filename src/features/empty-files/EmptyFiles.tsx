@@ -38,6 +38,8 @@ import { PreviewList } from "./components/PreviewList";
 import { ExtensionSelector } from "./components/ExtensionSelector";
 import { SettingsAccordion } from "./components/SettingsAccordion";
 import { CsvConfigForm } from "@/components/common/CsvConfigForm";
+import { PageHeader } from "@/components/layout/PageHeader";
+import { fileCreationInfo } from "@/components/layout/toolInfoContent";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -331,20 +333,12 @@ export const EmptyFiles = () => {
 
   return (
     <div className="h-full flex flex-col bg-background text-foreground">
-      {/* Header */}
-      <div className="p-4 border-b flex items-center justify-between bg-card/50">
-        <div className="flex items-center gap-3">
-          <div className="p-2 bg-primary/10 rounded-lg text-primary">
-            <FilePlus className="h-5 w-5" />
-          </div>
-          <div>
-            <h2 className="font-semibold text-lg">File Creation</h2>
-            <p className="text-xs text-muted-foreground">
-              Bulk create files with patterns or custom lists
-            </p>
-          </div>
-        </div>
-      </div>
+      <PageHeader
+        icon={FilePlus}
+        title="File Creation"
+        subtitle="Bulk create files with patterns or custom lists"
+        info={fileCreationInfo}
+      />
 
       <div className="flex-1 flex overflow-hidden">
         {/* Config Panel - Left */}

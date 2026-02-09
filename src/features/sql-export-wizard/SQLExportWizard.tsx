@@ -3,6 +3,7 @@
  *
  * Frontend main component for SQL Export Wizard feature
  * Comprehensive database import/export tool with query capabilities
+ * Layout: step-based flow, collapsible sections, compact context bar for reactive desktop.
  */
 
 import { useEffect, useMemo, useState } from "react";
@@ -14,10 +15,11 @@ import {
   Server,
   Table2,
   Activity,
-  Sparkles,
   ArrowUpRight,
   CheckCircle2,
   AlertTriangle,
+  ChevronDown,
+  ChevronRight,
 } from "lucide-react";
 import { DatabaseConnection } from "./types";
 import { ActivityEntry, ActivityType } from "./types";
@@ -26,8 +28,15 @@ import { DatabaseExplorer } from "./components/DatabaseExplorer";
 import { ExportPanel } from "./components/ExportPanel";
 import { ImportPanel } from "./components/ImportPanel";
 import { QueryPanel } from "./components/QueryPanel";
+import { PageHeader } from "@/components/layout/PageHeader";
+import { sqlExportWizardInfo } from "@/components/layout/toolInfoContent";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import { clearActivityEntries, getActivityEntries } from "./utils/storage";
 import { cn } from "@/lib/utils";
 
@@ -49,6 +58,10 @@ export function SQLExportWizard() {
   const [activityFilter, setActivityFilter] = useState<ActivityType | "all">(
     "all",
   );
+  const [connectionOpen, setConnectionOpen] = useState(true);
+  const [activityOpen, setActivityOpen] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(true);
+  const [explorerCollapsed, setExplorerCollapsed] = useState(false);
 
   useEffect(() => {
     setActivityEntries(getActivityEntries());
@@ -84,6 +97,27 @@ export function SQLExportWizard() {
   const tableLabel = selectedTable
     ? `${selectedTable.schema}.${selectedTable.name}`
     : "No table selected";
+
+  // Wizard steps for progress and guidance: Connect → Select target → Workflow → Configure
+  const wizardSteps = useMemo(
+    () => [
+      { id: 1, label: "Connect", short: "1. Connect", done: !!activeConnection },
+      {
+        id: 2,
+        label: "Select target",
+        short: "2. Target",
+        done: !!(selectedDatabase && (operationMode === "query" || selectedTable)),
+      },
+      { id: 3, label: "Workflow", short: "3. Workflow", done: true },
+      { id: 4, label: "Configure", short: "4. Configure", done: false },
+    ],
+    [activeConnection, selectedDatabase, selectedTable, operationMode],
+  );
+  const currentWizardStep = activeConnection
+    ? selectedDatabase
+      ? 3
+      : 2
+    : 1;
 
   const formatFileSize = (bytes?: number): string => {
     if (!bytes && bytes !== 0) return "—";
@@ -152,263 +186,357 @@ export function SQLExportWizard() {
 
   return (
     <div className="h-full min-h-0 flex flex-col gap-4 animate-in fade-in duration-300 overflow-y-auto pr-1">
-      {/* Hero Header */}
-      <div className="relative overflow-hidden rounded-2xl border border-slate-200/70 dark:border-slate-800/70 bg-gradient-to-br from-white via-slate-50 to-slate-100 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950 p-6 shadow-sm">
-        <div className="absolute -top-32 right-0 h-72 w-72 rounded-full bg-gradient-to-br from-sky-400/20 via-blue-400/10 to-transparent blur-3xl" />
-        <div className="absolute -bottom-24 left-12 h-64 w-64 rounded-full bg-gradient-to-br from-emerald-400/10 via-cyan-400/10 to-transparent blur-3xl" />
-        <div className="relative flex flex-col gap-5">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div className="space-y-2">
-              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
-                <Sparkles className="h-4 w-4" />
-                Workflow Studio
-              </div>
-              <h1 className="text-3xl font-semibold tracking-tight text-slate-900 dark:text-slate-100 flex items-center gap-3">
-                <Database className="h-6 w-6 text-slate-600 dark:text-slate-300" />
-                SQL Export Wizard
-              </h1>
-              <p className="max-w-2xl text-sm text-slate-600 dark:text-slate-400">
-                Orchestrate exports, imports, and SQL investigations with a guided,
-                production-grade flow built for fast iteration and confident delivery.
-              </p>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge
-                variant="outline"
-                className={cn(
-                  "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/40 dark:bg-emerald-900/20 dark:text-emerald-200",
-                  !activeConnection &&
-                    "border-slate-200 bg-white text-slate-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400",
-                )}
-              >
-                {activeConnection ? "Connected" : "Not connected"}
-              </Badge>
-              <Badge variant="secondary" className="bg-slate-900/5 text-slate-600 dark:bg-white/10 dark:text-slate-300">
-                {modeMeta[operationMode].label} Mode
-              </Badge>
-            </div>
+      <PageHeader
+        icon={Database}
+        title="SQL Export Wizard"
+        subtitle="Export, import, and query databases with a guided workflow"
+        info={sqlExportWizardInfo}
+        right={
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge
+              variant="outline"
+              className={cn(
+                "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/40 dark:bg-emerald-900/20 dark:text-emerald-200",
+                !activeConnection &&
+                  "border-slate-200 bg-white text-slate-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400",
+              )}
+            >
+              {activeConnection ? "Connected" : "Not connected"}
+            </Badge>
+            <Badge variant="secondary" className="bg-slate-900/5 text-slate-600 dark:bg-white/10 dark:text-slate-300">
+              {modeMeta[operationMode].label} Mode
+            </Badge>
           </div>
-
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
-            <div className="rounded-xl border border-slate-200/70 bg-white/80 p-3 shadow-sm dark:border-slate-800/70 dark:bg-slate-900/70">
-              <div className="flex items-center gap-2 text-xs uppercase tracking-[0.14em] text-slate-400">
-                <Server className="h-3 w-3" />
-                Connection
-              </div>
-              <div className="mt-2 text-sm font-semibold text-slate-800 dark:text-slate-100">
-                {connectionLabel}
-              </div>
-              <div className="text-xs text-slate-500 dark:text-slate-400">
-                {connectionSubtitle}
-              </div>
-            </div>
-            <div className="rounded-xl border border-slate-200/70 bg-white/80 p-3 shadow-sm dark:border-slate-800/70 dark:bg-slate-900/70">
-              <div className="flex items-center gap-2 text-xs uppercase tracking-[0.14em] text-slate-400">
-                <Database className="h-3 w-3" />
-                Database
-              </div>
-              <div className="mt-2 text-sm font-semibold text-slate-800 dark:text-slate-100">
-                {selectedDatabase || "Select a database"}
-              </div>
-              <div className="text-xs text-slate-500 dark:text-slate-400">
-                Active schema: dbo
-              </div>
-            </div>
-            <div className="rounded-xl border border-slate-200/70 bg-white/80 p-3 shadow-sm dark:border-slate-800/70 dark:bg-slate-900/70">
-              <div className="flex items-center gap-2 text-xs uppercase tracking-[0.14em] text-slate-400">
-                <Table2 className="h-3 w-3" />
-                Target
-              </div>
-              <div className="mt-2 text-sm font-semibold text-slate-800 dark:text-slate-100">
-                {tableLabel}
-              </div>
-              <div className="text-xs text-slate-500 dark:text-slate-400">
-                {selectedTable ? "Table selected from explorer" : "Choose a table or view"}
-              </div>
-            </div>
-            <div className="rounded-xl border border-slate-200/70 bg-white/80 p-3 shadow-sm dark:border-slate-800/70 dark:bg-slate-900/70">
-              <div className="flex items-center gap-2 text-xs uppercase tracking-[0.14em] text-slate-400">
-                <Activity className="h-3 w-3" />
-                Current Mode
-              </div>
-              <div className="mt-2 text-sm font-semibold text-slate-800 dark:text-slate-100">
-                {modeMeta[operationMode].label}
-              </div>
-              <div className="text-xs text-slate-500 dark:text-slate-400">
-                {modeMeta[operationMode].description}
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Connection Manager */}
-      <ConnectionManager
-        activeConnection={activeConnection}
-        onConnectionChange={handleConnectionChange}
-        onDatabaseChange={setSelectedDatabase}
+        }
       />
 
-      {/* Activity Timeline */}
-      <div className="rounded-2xl border border-slate-200/70 dark:border-slate-800/70 bg-white/80 dark:bg-slate-900/70 p-4 shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-              Activity Timeline
-            </h3>
-            <p className="text-xs text-slate-500 dark:text-slate-400">
-              Recent exports and imports across your workspace.
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="flex items-center gap-1 rounded-full border border-slate-200/70 bg-white/80 p-1 text-xs dark:border-slate-800/70 dark:bg-slate-900/60">
-              {(["all", "export", "import"] as const).map((filter) => (
-                <button
-                  key={filter}
-                  type="button"
-                  onClick={() => setActivityFilter(filter)}
-                  className={cn(
-                    "rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] transition",
-                    activityFilter === filter
+      {/* Compact context bar: wizard progress + current context at a glance */}
+      <div className="flex flex-col gap-2">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-xl border border-slate-200/70 bg-card/50 px-4 py-2.5 shadow-sm dark:border-slate-800/70">
+          {wizardSteps.map((step, index) => (
+            <div
+              key={step.id}
+              className={cn(
+                "flex items-center gap-1.5 text-xs",
+                index < wizardSteps.length - 1 && "pr-2 border-r border-slate-200/70 dark:border-slate-700/70",
+              )}
+            >
+              <span
+                className={cn(
+                  "flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold",
+                  step.done
+                    ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
+                    : currentWizardStep === step.id
                       ? "bg-slate-900 text-white dark:bg-white dark:text-slate-900"
-                      : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200",
-                  )}
-                >
-                  {filter}
-                </button>
-              ))}
-            </div>
-            <Button variant="outline" size="sm" onClick={handleClearTimeline}>
-              Clear Timeline
-            </Button>
-          </div>
-        </div>
-        <div className="mt-4 space-y-3">
-          {filteredActivityEntries.length === 0 && (
-            <div className="rounded-xl border border-dashed border-slate-200/70 p-4 text-xs text-slate-500 dark:border-slate-800/70 dark:text-slate-400">
-              No activity yet. Run an export or import to populate the timeline.
-            </div>
-          )}
-          {filteredActivityEntries.map((item) => {
-            const isExport = item.type === "export";
-            const statusStyles =
-              item.status === "success"
-                ? "bg-emerald-500/10 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-200"
-                : item.status === "error"
-                  ? "bg-red-500/10 text-red-700 dark:bg-red-500/20 dark:text-red-200"
-                  : "bg-amber-500/10 text-amber-700 dark:bg-amber-500/20 dark:text-amber-200";
-            return (
-              <div
-                key={item.id}
-                className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-200/70 bg-white/70 px-3 py-2 text-sm shadow-sm dark:border-slate-800/70 dark:bg-slate-950/40"
+                      : "bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400",
+                )}
               >
-                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-900 text-white dark:bg-white dark:text-slate-900">
-                  {isExport ? (
-                    <Download className="h-4 w-4" />
-                  ) : (
-                    <Upload className="h-4 w-4" />
-                  )}
-                </div>
-                <div className="flex-1 min-w-[200px]">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-semibold text-slate-800 dark:text-slate-100">
-                      {item.title}
-                    </span>
-                    <Badge className={cn("text-xs", statusStyles)}>
-                      {item.status === "success"
-                        ? "Success"
-                        : item.status === "error"
-                          ? "Failed"
-                          : "Needs Review"}
-                    </Badge>
-                  </div>
-                  <div className="text-xs text-slate-500 dark:text-slate-400">
-                    {item.detail}
-                  </div>
-                </div>
-                <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
-                  {item.status === "success" ? (
-                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
-                  ) : item.status === "error" ? (
-                    <AlertTriangle className="h-3.5 w-3.5 text-red-500" />
-                  ) : (
-                    <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
-                  )}
-                  <span>{formatActivityTime(item.timestamp)}</span>
-                  <ArrowUpRight className="h-3.5 w-3.5" />
-                </div>
-              </div>
-            );
-          })}
+                {step.done ? "✓" : step.id}
+              </span>
+              <span
+                className={cn(
+                  "font-medium",
+                  currentWizardStep === step.id
+                    ? "text-foreground"
+                    : "text-muted-foreground",
+                )}
+              >
+                {step.label}
+              </span>
+            </div>
+          ))}
+        </div>
+        <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+          <span className="flex items-center gap-1.5">
+            <Server className="h-3.5 w-3.5" />
+            <strong className="text-foreground">{connectionLabel}</strong>
+            {activeConnection && (
+              <span className="truncate max-w-[180px]">{connectionSubtitle}</span>
+            )}
+          </span>
+          <span className="flex items-center gap-1.5">
+            <Database className="h-3.5 w-3.5" />
+            <strong className="text-foreground">{selectedDatabase || "—"}</strong>
+          </span>
+          <span className="flex items-center gap-1.5">
+            <Table2 className="h-3.5 w-3.5" />
+            <strong className="text-foreground">{tableLabel}</strong>
+          </span>
+          <Badge variant="secondary" className="text-[10px]">
+            {modeMeta[operationMode].label}
+          </Badge>
         </div>
       </div>
 
-      {/* Main Content Area */}
-      <div className="flex-1 grid grid-cols-12 gap-4 min-h-0">
-        {/* Database Explorer - Left Sidebar */}
-        <div className="col-span-3 flex flex-col min-h-0 gap-4">
-          <div className="flex-1 min-h-0">
-            <DatabaseExplorer
-              connection={activeConnection}
-              selectedDatabase={selectedDatabase}
-              selectedTable={selectedTable}
-              onTableSelect={handleTableSelect}
-            />
-          </div>
-          <div className="rounded-2xl border border-slate-200/70 dark:border-slate-800/70 bg-white/80 dark:bg-slate-900/70 p-4 shadow-sm">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                  Table Quick Preview
-                </h3>
-                <p className="text-xs text-slate-500 dark:text-slate-400">
-                  Row count, size, and freshness at a glance.
-                </p>
+      {/* Connection Manager: collapsible; open when not connected, collapsed when connected */}
+      <Collapsible
+        open={connectionOpen}
+        onOpenChange={setConnectionOpen}
+        defaultOpen={!activeConnection}
+      >
+        <div className="rounded-2xl border border-slate-200/70 dark:border-slate-800/70 bg-white/80 dark:bg-slate-900/70 shadow-sm overflow-hidden">
+          <CollapsibleTrigger asChild>
+            <button
+              type="button"
+              className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-slate-50/80 dark:hover:bg-slate-800/50 transition-colors"
+              aria-expanded={connectionOpen ? "true" : "false"}
+            >
+              <div className="flex items-center gap-2">
+                {connectionOpen ? (
+                  <ChevronDown className="h-4 w-4 text-slate-500" />
+                ) : (
+                  <ChevronRight className="h-4 w-4 text-slate-500" />
+                )}
+                <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                  Connection
+                </span>
+                <Badge
+                  variant="outline"
+                  className={cn(
+                    "text-[10px]",
+                    activeConnection
+                      ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/40 dark:bg-emerald-900/20 dark:text-emerald-200"
+                      : "border-slate-200 text-slate-500 dark:border-slate-700 dark:text-slate-400",
+                  )}
+                >
+                  {activeConnection ? connectionLabel : "Not connected"}
+                </Badge>
               </div>
-              <Badge
-                variant="outline"
-                className="border-slate-200 text-slate-500 dark:border-slate-800 dark:text-slate-400"
-              >
-                {selectedTable ? `${selectedTable.schema}.${selectedTable.name}` : "No table"}
-              </Badge>
+              {!connectionOpen && activeConnection && (
+                <span className="text-xs text-slate-500 dark:text-slate-400 truncate max-w-[240px]">
+                  {connectionSubtitle}
+                </span>
+              )}
+            </button>
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <div className="border-t border-slate-200/70 dark:border-slate-800/70 px-4 pb-4 pt-2">
+              <ConnectionManager
+                activeConnection={activeConnection}
+                onConnectionChange={handleConnectionChange}
+                onDatabaseChange={setSelectedDatabase}
+              />
             </div>
-            {selectedTable ? (
-              <div className="mt-4 grid grid-cols-2 gap-3">
-                <div className="rounded-lg border border-slate-200/70 bg-slate-50/80 p-3 dark:border-slate-800/70 dark:bg-slate-950/40">
-                  <div className="text-xs text-slate-500 dark:text-slate-400">
-                    Row Count
-                  </div>
-                  <div className="mt-1 text-lg font-semibold text-slate-800 dark:text-slate-100">
-                    {selectedTable.rowCount?.toLocaleString() ?? "—"}
-                  </div>
-                </div>
-                <div className="rounded-lg border border-slate-200/70 bg-slate-50/80 p-3 dark:border-slate-800/70 dark:bg-slate-950/40">
-                  <div className="text-xs text-slate-500 dark:text-slate-400">
-                    Table Size
-                  </div>
-                  <div className="mt-1 text-lg font-semibold text-slate-800 dark:text-slate-100">
-                    {formatFileSize(selectedTable.size)}
-                  </div>
-                </div>
-                <div className="col-span-2 rounded-lg border border-slate-200/70 bg-slate-50/80 p-3 dark:border-slate-800/70 dark:bg-slate-950/40">
-                  <div className="text-xs text-slate-500 dark:text-slate-400">
-                    Last Updated
-                  </div>
-                  <div className="mt-1 text-sm font-semibold text-slate-800 dark:text-slate-100">
-                    {formatLastUpdated(selectedTable.lastUpdated)}
-                  </div>
-                </div>
+          </CollapsibleContent>
+        </div>
+      </Collapsible>
+
+      {/* Activity Timeline: collapsible to save space; progressive disclosure */}
+      <Collapsible open={activityOpen} onOpenChange={setActivityOpen}>
+        <div className="rounded-2xl border border-slate-200/70 dark:border-slate-800/70 bg-white/80 dark:bg-slate-900/70 shadow-sm overflow-hidden">
+          <CollapsibleTrigger asChild>
+            <button
+              type="button"
+              className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-slate-50/80 dark:hover:bg-slate-800/50 transition-colors"
+              aria-expanded={activityOpen ? "true" : "false"}
+            >
+              <div className="flex items-center gap-2">
+                {activityOpen ? (
+                  <ChevronDown className="h-4 w-4 text-slate-500" />
+                ) : (
+                  <ChevronRight className="h-4 w-4 text-slate-500" />
+                )}
+                <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                  Activity Timeline
+                </span>
+                <span className="text-xs text-slate-500 dark:text-slate-400">
+                  {filteredActivityEntries.length} recent
+                </span>
               </div>
-            ) : (
-              <div className="mt-4 rounded-lg border border-dashed border-slate-200/70 p-4 text-xs text-slate-500 dark:border-slate-800/70 dark:text-slate-400">
-                Select a table from the explorer to populate real metrics.
+              {!activityOpen && filteredActivityEntries.length > 0 && (
+                <span className="text-xs text-slate-500 dark:text-slate-400 truncate max-w-[200px]">
+                  {filteredActivityEntries[0]?.title}
+                </span>
+              )}
+            </button>
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <div className="border-t border-slate-200/70 dark:border-slate-800/70 p-4 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-1 rounded-full border border-slate-200/70 bg-white/80 p-1 text-xs dark:border-slate-800/70 dark:bg-slate-900/60">
+                  {(["all", "export", "import"] as const).map((filter) => (
+                    <button
+                      key={filter}
+                      type="button"
+                      onClick={() => setActivityFilter(filter)}
+                      className={cn(
+                        "rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] transition",
+                        activityFilter === filter
+                          ? "bg-slate-900 text-white dark:bg-white dark:text-slate-900"
+                          : "text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200",
+                      )}
+                    >
+                      {filter}
+                    </button>
+                  ))}
+                </div>
+                <Button variant="outline" size="sm" onClick={handleClearTimeline}>
+                  Clear Timeline
+                </Button>
               </div>
-            )}
+              <div className="space-y-3">
+                {filteredActivityEntries.length === 0 && (
+                  <div className="rounded-xl border border-dashed border-slate-200/70 p-4 text-xs text-slate-500 dark:border-slate-800/70 dark:text-slate-400">
+                    No activity yet. Run an export or import to populate the timeline.
+                  </div>
+                )}
+                {filteredActivityEntries.map((item) => {
+                  const isExport = item.type === "export";
+                  const statusStyles =
+                    item.status === "success"
+                      ? "bg-emerald-500/10 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-200"
+                      : item.status === "error"
+                        ? "bg-red-500/10 text-red-700 dark:bg-red-500/20 dark:text-red-200"
+                        : "bg-amber-500/10 text-amber-700 dark:bg-amber-500/20 dark:text-amber-200";
+                  return (
+                    <div
+                      key={item.id}
+                      className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-200/70 bg-white/70 px-3 py-2 text-sm shadow-sm dark:border-slate-800/70 dark:bg-slate-950/40"
+                    >
+                      <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-900 text-white dark:bg-white dark:text-slate-900">
+                        {isExport ? (
+                          <Download className="h-4 w-4" />
+                        ) : (
+                          <Upload className="h-4 w-4" />
+                        )}
+                      </div>
+                      <div className="flex-1 min-w-[200px]">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-semibold text-slate-800 dark:text-slate-100">
+                            {item.title}
+                          </span>
+                          <Badge className={cn("text-xs", statusStyles)}>
+                            {item.status === "success"
+                              ? "Success"
+                              : item.status === "error"
+                                ? "Failed"
+                                : "Needs Review"}
+                          </Badge>
+                        </div>
+                        <div className="text-xs text-slate-500 dark:text-slate-400">
+                          {item.detail}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+                        {item.status === "success" ? (
+                          <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+                        ) : item.status === "error" ? (
+                          <AlertTriangle className="h-3.5 w-3.5 text-red-500" />
+                        ) : (
+                          <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
+                        )}
+                        <span>{formatActivityTime(item.timestamp)}</span>
+                        <ArrowUpRight className="h-3.5 w-3.5" />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </CollapsibleContent>
+        </div>
+      </Collapsible>
+
+      {/* Main Content Area: responsive grid; left = explorer + collapsible preview */}
+      <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-4 min-h-0 min-w-0">
+        {/* Database Explorer - Left sidebar; collapsible to maximize space for operation panel */}
+        <div
+          className={cn(
+            "flex flex-col min-h-0 gap-3 transition-all duration-200",
+            explorerCollapsed ? "lg:col-span-1" : "lg:col-span-3",
+          )}
+        >
+          <div className="flex items-center justify-between gap-2 lg:justify-end">
+            <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 lg:sr-only">
+              Explorer
+            </span>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-xs text-slate-500 shrink-0"
+              onClick={() => setExplorerCollapsed(!explorerCollapsed)}
+              aria-label={explorerCollapsed ? "Expand explorer" : "Collapse explorer"}
+            >
+              {explorerCollapsed ? "Show explorer" : "Hide explorer"}
+            </Button>
           </div>
+          {!explorerCollapsed && (
+            <>
+              <div className="flex-1 min-h-0 min-w-0 flex flex-col">
+                <DatabaseExplorer
+                  connection={activeConnection}
+                  selectedDatabase={selectedDatabase}
+                  selectedTable={selectedTable}
+                  onTableSelect={handleTableSelect}
+                />
+              </div>
+              <Collapsible open={previewOpen} onOpenChange={setPreviewOpen}>
+                <div className="rounded-xl border border-slate-200/70 dark:border-slate-800/70 bg-white/80 dark:bg-slate-900/70 shadow-sm overflow-hidden">
+                  <CollapsibleTrigger asChild>
+                    <button
+                      type="button"
+                      className="flex w-full items-center justify-between gap-2 px-3 py-2.5 text-left hover:bg-slate-50/80 dark:hover:bg-slate-800/50 transition-colors"
+                      aria-expanded={previewOpen ? "true" : "false"}
+                    >
+                      <span className="text-xs font-semibold text-slate-800 dark:text-slate-100">
+                        Table Quick Preview
+                      </span>
+                      {previewOpen ? (
+                        <ChevronDown className="h-3.5 w-3.5 text-slate-500" />
+                      ) : (
+                        <ChevronRight className="h-3.5 w-3.5 text-slate-500" />
+                      )}
+                    </button>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent>
+                    <div className="border-t border-slate-200/70 dark:border-slate-800/70 px-3 pb-3 pt-2">
+                      {selectedTable ? (
+                        <div className="grid grid-cols-2 gap-2">
+                          <div className="rounded-lg border border-slate-200/70 bg-slate-50/80 p-2 dark:border-slate-800/70 dark:bg-slate-950/40">
+                            <div className="text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                              Rows
+                            </div>
+                            <div className="mt-0.5 text-sm font-semibold text-slate-800 dark:text-slate-100">
+                              {selectedTable.rowCount?.toLocaleString() ?? "—"}
+                            </div>
+                          </div>
+                          <div className="rounded-lg border border-slate-200/70 bg-slate-50/80 p-2 dark:border-slate-800/70 dark:bg-slate-950/40">
+                            <div className="text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                              Size
+                            </div>
+                            <div className="mt-0.5 text-sm font-semibold text-slate-800 dark:text-slate-100">
+                              {formatFileSize(selectedTable.size)}
+                            </div>
+                          </div>
+                          <div className="col-span-2 rounded-lg border border-slate-200/70 bg-slate-50/80 p-2 dark:border-slate-800/70 dark:bg-slate-950/40">
+                            <div className="text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                              Last updated
+                            </div>
+                            <div className="mt-0.5 text-xs font-semibold text-slate-800 dark:text-slate-100">
+                              {formatLastUpdated(selectedTable.lastUpdated)}
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        <p className="text-xs text-slate-500 dark:text-slate-400 py-2">
+                          Select a table from the explorer.
+                        </p>
+                      )}
+                    </div>
+                  </CollapsibleContent>
+                </div>
+              </Collapsible>
+            </>
+          )}
         </div>
 
-        {/* Operation Panel - Right Side */}
-        <div className="col-span-9 flex flex-col min-h-0 space-y-4">
+        {/* Operation Panel - Right side; expands when explorer collapsed */}
+        <div
+          className={cn(
+            "flex flex-col min-h-0 space-y-4 min-w-0",
+            explorerCollapsed ? "lg:col-span-11" : "lg:col-span-9",
+          )}
+        >
           {/* Operation Mode Selector */}
           <div className="rounded-2xl border border-slate-200/70 dark:border-slate-800/70 bg-white/80 dark:bg-slate-900/70 p-4 shadow-sm">
             <div className="flex flex-col gap-3">
@@ -435,7 +563,7 @@ export function SQLExportWizard() {
                           ? "border-slate-900/15 bg-slate-900/[0.04] shadow-sm dark:border-white/10 dark:bg-white/5"
                           : "border-slate-200/70 bg-white/80 hover:border-slate-300 dark:border-slate-800/70 dark:bg-slate-900/70",
                       )}
-                      aria-pressed={isActive}
+                      aria-pressed={isActive ? "true" : "false"}
                     >
                       <div className="flex items-center gap-2 text-sm font-semibold text-slate-800 dark:text-slate-100">
                         <span
@@ -487,21 +615,21 @@ export function SQLExportWizard() {
         </div>
       </div>
 
-      {/* Results Preview / Status Bar */}
-      <div className="rounded-2xl border border-slate-200/70 dark:border-slate-800/70 bg-white/80 dark:bg-slate-900/70 p-4 shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
+      {/* Compact status bar: current status and last operation */}
+      <div className="rounded-xl border border-slate-200/70 dark:border-slate-800/70 bg-white/80 dark:bg-slate-900/70 px-4 py-2.5 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
           <div className="flex items-center gap-2 text-slate-600 dark:text-slate-400">
             <span className="font-semibold text-slate-700 dark:text-slate-200">
               Status
             </span>
-            <Badge variant="secondary" className="bg-emerald-500/10 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-200">
+            <Badge variant="secondary" className="bg-emerald-500/10 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-200 text-[10px]">
               Ready
             </Badge>
-            <span className="text-xs">Awaiting your next action.</span>
+            <span>Awaiting your next action.</span>
           </div>
-          <div className="text-xs text-slate-500 dark:text-slate-400">
+          <span className="text-slate-500 dark:text-slate-400">
             Last operation: No operations yet
-          </div>
+          </span>
         </div>
       </div>
     </div>

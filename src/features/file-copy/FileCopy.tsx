@@ -11,12 +11,15 @@ import { FileTree } from "./components/FileTree";
 import { OperationControls } from "./components/OperationControls";
 import { CopyToolbar } from "./components/CopyToolbar";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { PageHeader } from "@/components/layout/PageHeader";
+import { fileCopyInfo } from "@/components/layout/toolInfoContent";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   X,
+  Copy,
   CheckCircle,
-  RotateCcw
+  RotateCcw,
 } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { join, dirname, basename } from "@tauri-apps/api/path";
@@ -506,9 +509,35 @@ export const FileCopy = () => {
 
   return (
     <div className="h-full flex flex-col bg-background text-foreground animate-in fade-in duration-300">
-      
-      {/* 1. Top Toolbar */}
-      <CopyToolbar 
+      <PageHeader
+        icon={Copy}
+        title="File Copy"
+        subtitle="Copy or move files between locations"
+        info={fileCopyInfo}
+        right={
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              resetDestPath();
+              resetConflictResolution();
+              resetPreserveStructure();
+              resetFilterMode();
+              resetExcludeTemp();
+              setSelectedFiles(new Map());
+              setSearchTerm("");
+              setActiveFilters([]);
+            }}
+            className="text-xs gap-2 text-muted-foreground hover:text-foreground"
+          >
+            <RotateCcw className="h-3 w-3" />
+            Reset
+          </Button>
+        }
+      />
+
+      {/* Top Toolbar */}
+      <CopyToolbar
         currentPath={currentPath}
         onPathChange={setCurrentPath}
         onBrowseSource={selectDirectory}
@@ -531,30 +560,6 @@ export const FileCopy = () => {
         onToggleHistory={() => setShowHistory(!showHistory)}
         isProcessing={isProcessing}
       />
-      
-      {/* Reset Bar */}
-      <div className="flex justify-end p-2 bg-slate-50 border-b dark:bg-slate-900 border-slate-200 dark:border-slate-800">
-           <Button
-             variant="ghost" 
-             size="sm"
-             onClick={() => {
-                 resetDestPath();
-                 resetConflictResolution();
-                 resetPreserveStructure();
-                 resetFilterMode();
-                 resetExcludeTemp();
-                 
-                 // Local UI
-                 setSelectedFiles(new Map());
-                 setSearchTerm("");
-                 setActiveFilters([]);
-             }}
-             className="text-xs gap-2 text-muted-foreground hover:text-foreground"
-           >
-             <RotateCcw className="h-3 w-3" />
-             Reset Copy Tool
-           </Button>
-      </div>
 
       {/* 2. Main Content Area (Stack) */}
       <div className="flex-1 overflow-hidden flex flex-col relative">

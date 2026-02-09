@@ -36,6 +36,8 @@ import {
 } from "./utils/folderUtils";
 import { FolderForm } from "./components/FolderForm";
 import { FolderPreview } from "./components/FolderPreview";
+import { PageHeader } from "../../components/layout/PageHeader";
+import { folderCreationInfo } from "../../components/layout/toolInfoContent";
 import { Button } from "../../components/ui/button";
 import { Progress } from "../../components/ui/progress";
 import {
@@ -281,35 +283,26 @@ export const FolderCreation = () => {
 
   return (
     <div className="h-full flex flex-col bg-background text-foreground">
-      {/* Header */}
-      <div className="p-4 border-b flex items-center justify-between bg-card/50">
-        <div className="flex items-center gap-3">
-          <div className="p-2 bg-primary/10 rounded-lg text-primary">
-            <FolderPlus className="h-5 w-5" />
-          </div>
-          <div>
-            <h2 className="font-semibold text-lg">Folder Creation</h2>
-            <p className="text-xs text-muted-foreground">
-              Batch create organized folder structures
-            </p>
-          </div>
-        </div>
-        <div>
-           <Button
-               variant="ghost"
-               size="icon"
-               onClick={() => {
-                   resetConfig();
-                   // Reset local
-                   setPresetName("");
-               }}
-               className="h-8 w-8 text-muted-foreground hover:text-foreground"
-               title="Reset Configuration"
-           >
-               <RotateCcw className="h-4 w-4" />
-           </Button>
-        </div>
-      </div>
+      <PageHeader
+        icon={FolderPlus}
+        title="Folder Creation"
+        subtitle="Batch create organized folder structures"
+        info={folderCreationInfo}
+        right={
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => {
+              resetConfig();
+              setPresetName("");
+            }}
+            className="h-8 w-8 text-muted-foreground hover:text-foreground"
+            title="Reset Configuration"
+          >
+            <RotateCcw className="h-4 w-4" />
+          </Button>
+        }
+      />
 
       <div className="flex-1 flex overflow-hidden">
         {/* Config Panel - Left */}

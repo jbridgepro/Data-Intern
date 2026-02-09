@@ -27,7 +27,7 @@ interface DatabaseExplorerProps {
   connection: DatabaseConnection | null;
   selectedDatabase?: string;
   selectedTable?: { schema: string; name: string } | null;
-  onTableSelect?: (table: { schema: string; name: string }) => void;
+  onTableSelect?: (table: { schema: string; name: string; rowCount?: number; size?: number; lastUpdated?: string }) => void;
   onViewSelect?: (view: { schema: string; name: string }) => void;
 }
 

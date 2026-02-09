@@ -55,6 +55,10 @@ import { updateWidgetFromNaturalLanguage } from "../utils/widgetExtractor";
 import { agentService } from "../../agents/services/agentService";
 import { generateChatTitleSummary } from "../utils/aiService";
 import { useVoiceServiceManager } from "../voice/hooks/useVoiceServiceManager";
+import { voiceCommandRecognizer } from "../voice/command/voiceCommand";
+import type { VoiceCommand } from "../voice/command/voiceCommand";
+import { voiceCommandAnalytics } from "../voice/command/voiceCommandAnalytics";
+import { EntityExtractor } from "../voice/command/entityExtractor";
 import type { FileOperation, AISettings } from "../types";
 import type {
   VoiceSettings,
@@ -74,6 +78,22 @@ interface AIFileAssistantSessionProps {
 
 /** Maximum length for auto-generated chat/agent names. */
 const CONTEXTUAL_NAME_MAX_LENGTH = 40;
+
+type VoiceShortcutSource = "voice-mode" | "dictation";
+type VoiceShortcutActionType = "message" | "widget";
+
+interface PendingVoiceShortcut {
+  id: string;
+  source: VoiceShortcutSource;
+  actionType: VoiceShortcutActionType;
+  summary: string;
+  message?: string;
+  toolName?: string;
+  params?: Record<string, any>;
+  widgetId?: string;
+  confidence: number;
+  createdAt: number;
+}
 
 /**
  * Returns true if the name is a generic placeholder we can safely overwrite
@@ -304,9 +324,14 @@ export const AIFileAssistantSession = ({
   const [clarificationQuestions, setClarificationQuestions] = useState<
     ClarificationQuestion[]
   >([]);
+  const [pendingVoiceShortcut, setPendingVoiceShortcut] =
+    useState<PendingVoiceShortcut | null>(null);
   const [taskStartTime, setTaskStartTime] = useState<number | null>(null);
-  const [currentToolExecutions] = useState<any[]>([]);
-  const [currentReasoningSteps] = useState<any[]>([]);
+  const currentToolExecutions = activeSession?.currentToolExecutions || [];
+  const currentReasoningSteps =
+    settings.reasoningLive === false
+      ? []
+      : activeSession?.currentReasoningSteps || [];
 
   // Helpers/Adapters
   const addMessage = useCallback(
@@ -352,6 +377,94 @@ export const AIFileAssistantSession = ({
     [activeSession?.inputValue, sendMessage],
   );
 
+  const applyDirectoryChange = useCallback(
+    (nextDirectory: string) => {
+      const trimmed = nextDirectory.trim();
+      if (!trimmed) return;
+
+      setCurrentDirectory(trimmed);
+      setDirectory(trimmed);
+      if (onDirectoryChange) onDirectoryChange(trimmed);
+      localStorage.setItem("ai-assistant-current-directory", trimmed);
+    },
+    [onDirectoryChange, setCurrentDirectory, setDirectory],
+  );
+
+  const deriveHomeDirectory = useCallback((path: string): string => {
+    if (!path) return "";
+
+    const normalized = path.replace(/\\/g, "/");
+    const macMatch = normalized.match(/^\/Users\/[^/]+/);
+    if (macMatch) return macMatch[0];
+
+    const linuxMatch = normalized.match(/^\/home\/[^/]+/);
+    if (linuxMatch) return linuxMatch[0];
+
+    const windowsMatch = path.match(/^[A-Z]:\\Users\\[^\\]+/i);
+    if (windowsMatch) return windowsMatch[0];
+
+    return "";
+  }, []);
+
+  const resolveVoicePaths = useCallback(
+    (text: string) => {
+      const homeDirectory = deriveHomeDirectory(currentDirectory);
+      const fallbackDirectory = currentDirectory || homeDirectory || "/";
+      const commonFolders = new Map<string, string>([
+        ["Downloads", `${homeDirectory || fallbackDirectory}/Downloads`],
+        ["Documents", `${homeDirectory || fallbackDirectory}/Documents`],
+        ["Desktop", `${homeDirectory || fallbackDirectory}/Desktop`],
+        ["Pictures", `${homeDirectory || fallbackDirectory}/Pictures`],
+        ["Videos", `${homeDirectory || fallbackDirectory}/Videos`],
+        ["Music", `${homeDirectory || fallbackDirectory}/Music`],
+      ]);
+
+      const extractor = new EntityExtractor({
+        currentDirectory: fallbackDirectory,
+        recentPaths: [],
+        userHomeDirectory: homeDirectory || fallbackDirectory,
+        commonFolders,
+      });
+
+      return extractor
+        .extractPaths(text)
+        .map((entity) => String(entity.value))
+        .filter(Boolean);
+    },
+    [currentDirectory, deriveHomeDirectory],
+  );
+
+  const extractVoiceEntities = useCallback(
+    (text: string) => {
+      const homeDirectory = deriveHomeDirectory(currentDirectory);
+      const fallbackDirectory = currentDirectory || homeDirectory || "/";
+      const commonFolders = new Map<string, string>([
+        ["Downloads", `${homeDirectory || fallbackDirectory}/Downloads`],
+        ["Documents", `${homeDirectory || fallbackDirectory}/Documents`],
+        ["Desktop", `${homeDirectory || fallbackDirectory}/Desktop`],
+        ["Pictures", `${homeDirectory || fallbackDirectory}/Pictures`],
+        ["Videos", `${homeDirectory || fallbackDirectory}/Videos`],
+        ["Music", `${homeDirectory || fallbackDirectory}/Music`],
+      ]);
+
+      const extractor = new EntityExtractor({
+        currentDirectory: fallbackDirectory,
+        recentPaths: [],
+        userHomeDirectory: homeDirectory || fallbackDirectory,
+        commonFolders,
+      });
+
+      return extractor.extractAll(text);
+    },
+    [currentDirectory, deriveHomeDirectory],
+  );
+
+  const formatDirectoryLabel = useCallback((path: string) => {
+    const normalized = path.replace(/\/+$/, "");
+    const parts = normalized.split("/").filter(Boolean);
+    return parts[parts.length - 1] || normalized;
+  }, []);
+
   const handleSelectDirectory = useCallback(async () => {
     try {
       const selected = await open({
@@ -360,18 +473,17 @@ export const AIFileAssistantSession = ({
         defaultPath: currentDirectory || undefined,
       });
       if (selected && typeof selected === "string") {
-        setCurrentDirectory(selected);
-        setDirectory(selected);
-        if (onDirectoryChange) onDirectoryChange(selected);
+        applyDirectoryChange(selected);
       }
     } catch (err) {
       console.error("Failed to select directory", err);
     }
-  }, [currentDirectory, onDirectoryChange, setDirectory]);
+  }, [applyDirectoryChange, currentDirectory]);
 
   // Tools
   const {
     widgets,
+    createWidget,
     updateWidget,
     removeWidget,
     getWidgetsForMessage,
@@ -406,253 +518,6 @@ export const AIFileAssistantSession = ({
     setActiveOperation(null);
     addMessage("assistant", "Operation cancelled.");
   }, [addMessage]);
-
-  // Define handleVoiceTranscript after handleSendMessage
-  // This handler accumulates transcripts and only sends when user has clearly finished speaking
-  const handleVoiceTranscript = useCallback(
-    (text: string) => {
-      const trimmedText = text.trim();
-      if (!trimmedText) {
-        console.log("[Voice] Empty transcript, skipping");
-        return;
-      }
-
-      console.log("[Voice] Received transcript:", trimmedText);
-
-      // Clear any pending transcript timeout
-      if (pendingTranscriptRef.current?.timeoutId) {
-        clearTimeout(pendingTranscriptRef.current.timeoutId);
-        pendingTranscriptRef.current.timeoutId = null;
-      }
-
-      const now = Date.now();
-
-      // Detect incomplete sentences (likely not finished speaking)
-      // Be aggressive - prefer waiting for more input over sending partial messages
-      const looksIncomplete = (t: string): boolean => {
-        const text = t.trim().toLowerCase();
-
-        // Very short transcripts are almost certainly incomplete
-        if (text.length < 15) return true;
-
-        // Count words - single or two word sentences are usually incomplete
-        const wordCount = text.split(/\s+/).filter((w) => w.length > 0).length;
-        if (wordCount < 3) return true;
-
-        // Ends with common incomplete indicators
-        if (/\.\.\.$/.test(text)) return true; // Ends with ...
-        if (/,\s*$/.test(text)) return true; // Ends with comma
-
-        // Contains filler words that suggest it might be incomplete
-        if (/^(um|uh|so|and|but|or|well|like|okay|ok|h,|right)\b/i.test(text))
-          return true;
-
-        // Common incomplete starting phrases (user is likely saying more)
-        if (
-          /^(i want to|i need to|i would like|i'd like|can you|could you|please|let me|what about|how about|tell me|show me)\b/i.test(
-            text,
-          ) &&
-          wordCount < 5
-        )
-          return true;
-
-        // Ends with prepositions/conjunctions (more likely to come)
-        if (
-          /\s(to|for|with|about|from|in|on|at|by|of|and|or|but|the|a|an)\s*$/i.test(
-            text,
-          )
-        )
-          return true;
-
-        // Ends with "I" or "you" alone (sentence cut off)
-        if (/\s(i|you)\s*$/i.test(text)) return true;
-
-        // Very short sentences ending in punctuation might be transcription artifacts
-        // e.g., "H, right." is likely not a complete thought
-        if (text.length < 20 && /[.,!?]$/.test(text)) {
-          // Check if it looks like a real complete sentence
-          // Real sentences typically have a subject and verb
-          if (
-            !/\b(is|are|was|were|have|has|had|do|does|did|will|would|can|could|should|might|must|want|need|like|know|think|see|go|come|make|get|take)\b/i.test(
-              text,
-            )
-          ) {
-            return true; // Doesn't have a verb, probably incomplete
-          }
-        }
-
-        return false;
-      };
-
-      // Check if this looks like a continuation of the previous thought
-      const timeSinceLast = pendingTranscriptRef.current
-        ? now - pendingTranscriptRef.current.timestamp
-        : Infinity;
-
-      // If within 8 seconds and there's a pending transcript, accumulate them
-      // This gives users time to pause and think between phrases
-      if (pendingTranscriptRef.current && timeSinceLast < 8000) {
-        const prevText = pendingTranscriptRef.current.text;
-
-        // Check if new text is a refinement (starts similarly) or a continuation
-        const isRefinement = trimmedText
-          .toLowerCase()
-          .startsWith(
-            prevText.toLowerCase().substring(0, Math.min(10, prevText.length)),
-          );
-
-        if (isRefinement) {
-          // New text is a more complete version - replace
-          console.log("[Voice] Replacing with more complete version");
-          pendingTranscriptRef.current.text = trimmedText;
-        } else {
-          // New text is different - might be a continuation, accumulate with space
-          // But only if the previous one looked incomplete
-          if (looksIncomplete(prevText)) {
-            console.log("[Voice] Accumulating as continuation");
-            pendingTranscriptRef.current.text = prevText + " " + trimmedText;
-          } else {
-            // Previous looked complete, this is a new sentence
-            console.log("[Voice] New sentence detected");
-            pendingTranscriptRef.current.text = trimmedText;
-          }
-        }
-        pendingTranscriptRef.current.timestamp = now;
-      } else {
-        // New transcript (no pending or too much time passed)
-        pendingTranscriptRef.current = {
-          text: trimmedText,
-          timestamp: now,
-          timeoutId: null,
-        };
-      }
-
-      // Update the input value immediately so user can see it
-      setInputValue(pendingTranscriptRef.current.text);
-      setVoiceInputActive(true);
-
-      // Determine debounce time based on whether transcript looks complete
-      const currentText = pendingTranscriptRef.current.text;
-      const incomplete = looksIncomplete(currentText);
-      const endsWithPunctuation = /[.!?]$/.test(currentText);
-      const wordCount = currentText
-        .split(/\s+/)
-        .filter((w) => w.length > 0).length;
-
-      // Longer debounce for incomplete sentences
-      // For complete-looking sentences with punctuation, still wait a bit to catch continuations
-      // Minimum 2.5s even for "complete" sentences, up to 5s for incomplete ones
-      let debounceTime: number;
-      if (incomplete) {
-        debounceTime = 5000; // 5 seconds for incomplete
-      } else if (wordCount < 5) {
-        debounceTime = 4000; // 4 seconds for short but "complete" sentences
-      } else if (endsWithPunctuation) {
-        debounceTime = 2500; // 2.5 seconds for longer complete sentences
-      } else {
-        debounceTime = 4000; // 4 seconds for longer sentences without punctuation
-      }
-
-      console.log(
-        `[Voice] Debouncing for ${debounceTime}ms (incomplete: ${incomplete}, words: ${wordCount})`,
-      );
-
-      // Debounce: Wait for silence before processing
-      pendingTranscriptRef.current.timeoutId = setTimeout(() => {
-        const finalText = pendingTranscriptRef.current?.text.trim();
-        if (!finalText) {
-          pendingTranscriptRef.current = null;
-          setVoiceInputActive(false);
-          return;
-        }
-
-        console.log(
-          "[Voice] Processing final transcript after debounce:",
-          finalText,
-        );
-
-        // Validate minimum length
-        if (finalText.length < 5) {
-          console.log("[Voice] Transcript too short, keeping in buffer");
-          // Don't clear - keep accumulating
-          setVoiceInputActive(false);
-          return;
-        }
-
-        // For normal mode (not voice mode), just insert the text
-        // User must manually send by clicking the send button or pressing Enter
-        // This prevents any auto-sending of partial transcripts
-        if (!showVoiceMode) {
-          console.log(
-            "[Voice] Text inserted into input, user must manually send",
-          );
-          setVoiceInputActive(false);
-          // Keep the pending transcript in case more comes
-          // Only clear after user actually sends
-          return;
-        }
-
-        // Auto-send logic ONLY for immersive voice mode
-        if (showVoiceMode) {
-          // Relaxed validation - allow shorter but meaningful commands
-          // Reduced from 25 to 10 chars to support commands like "yes", "help me"
-          const MIN_VOICE_SEND_LENGTH = 10;
-          if (finalText.length < MIN_VOICE_SEND_LENGTH) {
-            console.log(
-              `[Voice] Voice mode: Transcript too short (${finalText.length} < ${MIN_VOICE_SEND_LENGTH}), waiting for more`,
-            );
-            setVoiceInputActive(false);
-            return;
-          }
-
-          // Check if it looks incomplete
-          if (looksIncomplete(finalText)) {
-            console.log(
-              "[Voice] Voice mode: Transcript looks incomplete, waiting for more",
-            );
-            setVoiceInputActive(false);
-            return;
-          }
-
-          // Relaxed check: require at least 2 words for voice mode
-          const wordCount = finalText
-            .split(/\s+/)
-            .filter((w) => w.length > 0).length;
-          if (wordCount < 2) {
-            console.log(
-              `[Voice] Voice mode: Not enough words (${wordCount} < 2), waiting for more`,
-            );
-            setVoiceInputActive(false);
-            return;
-          }
-
-          console.log(
-            "[Voice] Voice mode: Sending complete message:",
-            finalText,
-          );
-          handleSendMessage(finalText);
-          setInputValue("");
-          setVoiceInputActive(false);
-          pendingTranscriptRef.current = null;
-        }
-      }, debounceTime);
-    },
-    [handleSendMessage, showVoiceMode],
-  );
-
-  // Update the ref when handler changes
-  useEffect(() => {
-    voiceTranscriptHandlerRef.current = handleVoiceTranscript;
-  }, [handleVoiceTranscript]);
-
-  // Cleanup pending transcript timeout on unmount
-  useEffect(() => {
-    return () => {
-      if (pendingTranscriptRef.current?.timeoutId) {
-        clearTimeout(pendingTranscriptRef.current.timeoutId);
-      }
-    };
-  }, []);
 
   // Update agent name based on task understanding or implementation plan (voice flow)
   useEffect(() => {
@@ -897,6 +762,684 @@ export const AIFileAssistantSession = ({
     addMessage("assistant", "Plan cancelled. How else can I help?");
   };
 
+  const createVoiceShortcutMessage = useCallback(
+    (content: string) => {
+      if (!activeAgentId) return null;
+      const messageId = `voice-shortcut-${Date.now()}-${Math.random()
+        .toString(36)
+        .slice(2, 8)}`;
+      contextAddMessage(activeAgentId, {
+        id: messageId,
+        role: "assistant",
+        content,
+        timestamp: new Date(),
+      });
+      return messageId;
+    },
+    [activeAgentId, contextAddMessage],
+  );
+
+  const buildVoiceShortcut = useCallback(
+    (command: VoiceCommand, text: string): PendingVoiceShortcut | null => {
+      if (command.intent !== "execute_tool" && command.intent !== "query") {
+        return null;
+      }
+
+      const entities = extractVoiceEntities(text);
+      const paths = resolveVoicePaths(text);
+      const primaryPath = paths[0] || currentDirectory;
+      const pathLabel = primaryPath
+        ? formatDirectoryLabel(primaryPath)
+        : "current directory";
+
+      const strategyEntity = entities.find((entity) => entity.type === "strategy");
+      const strategyValue =
+        typeof strategyEntity?.value === "string" ? strategyEntity.value : "";
+      const strategyLabel = strategyValue
+        ? strategyValue.replace(/^by-/, "by ").replace(/-/g, " ")
+        : "";
+
+      switch (command.tool) {
+        case "organize_files": {
+          const summary = `organize ${pathLabel}${
+            strategyLabel ? ` ${strategyLabel}` : ""
+          }`;
+          const message = `Organize files in ${
+            primaryPath || "the current directory"
+          }${strategyLabel ? ` ${strategyLabel}` : ""}.`;
+          return {
+            id: `shortcut-${Date.now()}`,
+            source: "voice-mode",
+            actionType: "message",
+            summary,
+            message,
+            toolName: command.tool,
+            confidence: command.confidence,
+            createdAt: Date.now(),
+          };
+        }
+
+        case "find_duplicates": {
+          const summary = `find duplicates in ${pathLabel}`;
+          const message = `Find duplicate files in ${
+            primaryPath || "the current directory"
+          }.`;
+          return {
+            id: `shortcut-${Date.now()}`,
+            source: "voice-mode",
+            actionType: "message",
+            summary,
+            message,
+            toolName: command.tool,
+            confidence: command.confidence,
+            createdAt: Date.now(),
+          };
+        }
+
+        case "search_files": {
+          const query =
+            typeof command.parameters?.query === "string"
+              ? command.parameters?.query
+              : "";
+          if (!query) return null;
+          const summary = `search for "${query}" in ${pathLabel}`;
+          const message = `Search for "${query}" in ${
+            primaryPath || "the current directory"
+          }.`;
+          return {
+            id: `shortcut-${Date.now()}`,
+            source: "voice-mode",
+            actionType: "message",
+            summary,
+            message,
+            toolName: command.tool,
+            confidence: command.confidence,
+            createdAt: Date.now(),
+          };
+        }
+
+        case "delete_files": {
+          const pattern =
+            typeof command.parameters?.pattern === "string"
+              ? command.parameters?.pattern
+              : "";
+          if (!pattern) return null;
+          const summary = `delete "${pattern}" files in ${pathLabel}`;
+          const message = `Delete "${pattern}" files in ${
+            primaryPath || "the current directory"
+          }.`;
+          return {
+            id: `shortcut-${Date.now()}`,
+            source: "voice-mode",
+            actionType: "message",
+            summary,
+            message,
+            toolName: command.tool,
+            confidence: command.confidence,
+            createdAt: Date.now(),
+          };
+        }
+
+        case "analyze_directory": {
+          const summary = `analyze ${pathLabel}`;
+          const message = `Analyze ${
+            primaryPath || "the current directory"
+          }.`;
+          return {
+            id: `shortcut-${Date.now()}`,
+            source: "voice-mode",
+            actionType: "message",
+            summary,
+            message,
+            toolName: command.tool,
+            confidence: command.confidence,
+            createdAt: Date.now(),
+          };
+        }
+
+        case "list_directory_contents": {
+          const summary = `list contents of ${pathLabel}`;
+          const message = `List the contents of ${
+            primaryPath || "the current directory"
+          }.`;
+          return {
+            id: `shortcut-${Date.now()}`,
+            source: "voice-mode",
+            actionType: "message",
+            summary,
+            message,
+            toolName: command.tool,
+            confidence: command.confidence,
+            createdAt: Date.now(),
+          };
+        }
+
+        case "file_copy_tab": {
+          const sourcePath =
+            paths[0] ||
+            (typeof command.parameters?.sourcePath === "string"
+              ? command.parameters?.sourcePath
+              : "");
+          const destinationPath =
+            paths[1] ||
+            (typeof command.parameters?.destinationPath === "string"
+              ? command.parameters?.destinationPath
+              : "");
+          if (!sourcePath || !destinationPath) return null;
+
+          const summary = `copy from ${formatDirectoryLabel(
+            sourcePath,
+          )} to ${formatDirectoryLabel(destinationPath)}`;
+          return {
+            id: `shortcut-${Date.now()}`,
+            source: "voice-mode",
+            actionType: "widget",
+            summary,
+            toolName: "file_copy_tab",
+            params: {
+              sourcePath,
+              destinationPath,
+              operation: "copy",
+              includeSubdirectories: true,
+              overwrite: false,
+            },
+            confidence: command.confidence,
+            createdAt: Date.now(),
+          };
+        }
+
+        case "folder_creation_tab": {
+          const folderNames = Array.isArray(command.parameters?.folderNames)
+            ? command.parameters?.folderNames
+            : [];
+          if (folderNames.length === 0) return null;
+
+          const rootPath = primaryPath || currentDirectory;
+          const summary = `create ${folderNames.length} folder${
+            folderNames.length === 1 ? "" : "s"
+          } in ${pathLabel}`;
+
+          return {
+            id: `shortcut-${Date.now()}`,
+            source: "voice-mode",
+            actionType: "widget",
+            summary,
+            toolName: "folder_creation_tab",
+            params: {
+              rootPath,
+              folderNames,
+            },
+            confidence: command.confidence,
+            createdAt: Date.now(),
+          };
+        }
+
+        default:
+          return null;
+      }
+    },
+    [
+      currentDirectory,
+      extractVoiceEntities,
+      formatDirectoryLabel,
+      resolveVoicePaths,
+    ],
+  );
+
+  const enqueueVoiceShortcut = useCallback(
+    (shortcut: PendingVoiceShortcut) => {
+      if (pendingVoiceShortcut) {
+        if (voiceSettings.voiceOutputEnabled) {
+          speak("I still need confirmation. Say confirm or cancel.");
+        }
+        return;
+      }
+
+      const prompt = `I can ${shortcut.summary}. Say "confirm" to proceed or "cancel" to stop.`;
+      const messageId = createVoiceShortcutMessage(prompt);
+
+      let widgetId: string | undefined;
+      if (
+        shortcut.actionType === "widget" &&
+        shortcut.toolName &&
+        shortcut.params &&
+        messageId
+      ) {
+        const widget = createWidget({
+          toolName: shortcut.toolName,
+          params: shortcut.params,
+          description: shortcut.summary,
+          confidence: shortcut.confidence,
+          sourceMessageId: messageId,
+        });
+        widgetId = widget.id;
+      }
+
+      setPendingVoiceShortcut({
+        ...shortcut,
+        widgetId,
+      });
+
+      if (voiceSettings.voiceOutputEnabled) {
+        speak(prompt);
+      }
+    },
+    [
+      createVoiceShortcutMessage,
+      createWidget,
+      pendingVoiceShortcut,
+      speak,
+      voiceSettings.voiceOutputEnabled,
+    ],
+  );
+
+  const confirmPendingVoiceShortcut = useCallback(async () => {
+    if (!pendingVoiceShortcut) return;
+
+    if (pendingVoiceShortcut.actionType === "widget" && pendingVoiceShortcut.widgetId) {
+      const widget = widgets.find((item) => item.id === pendingVoiceShortcut.widgetId);
+      if (widget) {
+        confirmWidget(widget.id);
+        const toolCommand = `Execute ${widget.toolName} with these parameters: ${JSON.stringify(
+          widget.params,
+        )}`;
+        await handleSendMessage(toolCommand);
+      }
+    } else if (pendingVoiceShortcut.message) {
+      await handleSendMessage(pendingVoiceShortcut.message);
+    }
+
+    setPendingVoiceShortcut(null);
+  }, [confirmWidget, handleSendMessage, pendingVoiceShortcut, widgets]);
+
+  const cancelPendingVoiceShortcut = useCallback(() => {
+    if (!pendingVoiceShortcut) return;
+    if (pendingVoiceShortcut.widgetId) {
+      removeWidget(pendingVoiceShortcut.widgetId);
+    }
+    setPendingVoiceShortcut(null);
+    addMessage("assistant", "Voice shortcut cancelled.");
+    if (voiceSettings.voiceOutputEnabled) {
+      speak("Cancelled.");
+    }
+  }, [
+    addMessage,
+    pendingVoiceShortcut,
+    removeWidget,
+    speak,
+    voiceSettings.voiceOutputEnabled,
+  ]);
+
+  const handleStopExecution = useCallback(() => {
+    stopSpeaking();
+    setActiveOperation(null);
+    setExecutionProgress(null);
+    addMessage("assistant", "Execution stopped by user.");
+  }, [addMessage, stopSpeaking]);
+
+  const isLikelyVoiceCommand = useCallback((text: string) => {
+    const normalized = text.trim().toLowerCase();
+    if (!normalized) return false;
+    return /^(organize|find|search|delete|backup|copy|rename|create|analyze|list|show|go to|open|help|approve|confirm|cancel|stop|yes|no|what|how)\b/.test(
+      normalized,
+    );
+  }, []);
+
+  const handleVoiceCommandAction = useCallback(
+    (text: string, source: "voice-mode" | "dictation") => {
+      const command = voiceCommandRecognizer.parseCommand(text);
+      if (command.intent !== "unknown" || isLikelyVoiceCommand(text)) {
+        voiceCommandAnalytics.record(command, text);
+      }
+
+      if (command.intent === "approval" && awaitingApproval) {
+        void handleApprovePlan();
+        return true;
+      }
+
+      if (command.intent === "cancel" && awaitingApproval) {
+        handleCancelPlan();
+        return true;
+      }
+
+      if (pendingVoiceShortcut) {
+        if (command.intent === "approval") {
+          void confirmPendingVoiceShortcut();
+          return true;
+        }
+        if (command.intent === "cancel") {
+          cancelPendingVoiceShortcut();
+          return true;
+        }
+        if (voiceSettings.voiceOutputEnabled) {
+          speak("Please say confirm or cancel.");
+        }
+        return true;
+      }
+
+      if (command.intent === "cancel" && (executionProgress || activeOperation)) {
+        handleStopExecution();
+        return true;
+      }
+
+      if (command.intent === "navigate" && source === "voice-mode") {
+        const [resolvedPath] = resolveVoicePaths(command.rawText);
+        if (!resolvedPath) return false;
+
+        applyDirectoryChange(resolvedPath);
+
+        const label = formatDirectoryLabel(resolvedPath);
+        if (voiceSettings.voiceOutputEnabled) {
+          speak(`Switched to ${label}.`);
+        }
+        addMessage("assistant", `Switched to ${resolvedPath}.`);
+        return true;
+      }
+
+      const shortcut = buildVoiceShortcut(command, text);
+      if (shortcut) {
+        enqueueVoiceShortcut({ ...shortcut, source });
+        return true;
+      }
+
+      return false;
+    },
+    [
+      activeOperation,
+      addMessage,
+      applyDirectoryChange,
+      awaitingApproval,
+      buildVoiceShortcut,
+      cancelPendingVoiceShortcut,
+      confirmPendingVoiceShortcut,
+      enqueueVoiceShortcut,
+      executionProgress,
+      formatDirectoryLabel,
+      handleApprovePlan,
+      handleCancelPlan,
+      handleStopExecution,
+      isLikelyVoiceCommand,
+      pendingVoiceShortcut,
+      resolveVoicePaths,
+      speak,
+      voiceSettings.voiceOutputEnabled,
+    ],
+  );
+
+  // Define handleVoiceTranscript after voice command handlers
+  // This handler accumulates transcripts and only sends when user has clearly finished speaking
+  const handleVoiceTranscript = useCallback(
+    (text: string) => {
+      const trimmedText = text.trim();
+      if (!trimmedText) {
+        console.log("[Voice] Empty transcript, skipping");
+        return;
+      }
+
+      console.log("[Voice] Received transcript:", trimmedText);
+
+      // Clear any pending transcript timeout
+      if (pendingTranscriptRef.current?.timeoutId) {
+        clearTimeout(pendingTranscriptRef.current.timeoutId);
+        pendingTranscriptRef.current.timeoutId = null;
+      }
+
+      const now = Date.now();
+
+      // Detect incomplete sentences (likely not finished speaking)
+      // Be aggressive - prefer waiting for more input over sending partial messages
+      const looksIncomplete = (t: string): boolean => {
+        const text = t.trim().toLowerCase();
+
+        // Very short transcripts are almost certainly incomplete
+        if (text.length < 15) return true;
+
+        // Count words - single or two word sentences are usually incomplete
+        const wordCount = text.split(/\s+/).filter((w) => w.length > 0).length;
+        if (wordCount < 3) return true;
+
+        // Ends with common incomplete indicators
+        if (/\.\.\.$/.test(text)) return true; // Ends with ...
+        if (/,\s*$/.test(text)) return true; // Ends with comma
+
+        // Contains filler words that suggest it might be incomplete
+        if (/^(um|uh|so|and|but|or|well|like|okay|ok|h,|right)\b/i.test(text))
+          return true;
+
+        // Common incomplete starting phrases (user is likely saying more)
+        if (
+          /^(i want to|i need to|i would like|i'd like|can you|could you|please|let me|what about|how about|tell me|show me)\b/i.test(
+            text,
+          ) &&
+          wordCount < 5
+        )
+          return true;
+
+        // Ends with prepositions/conjunctions (more likely to come)
+        if (
+          /\s(to|for|with|about|from|in|on|at|by|of|and|or|but|the|a|an)\s*$/i.test(
+            text,
+          )
+        )
+          return true;
+
+        // Ends with "I" or "you" alone (sentence cut off)
+        if (/\s(i|you)\s*$/i.test(text)) return true;
+
+        // Very short sentences ending in punctuation might be transcription artifacts
+        // e.g., "H, right." is likely not a complete thought
+        if (text.length < 20 && /[.,!?]$/.test(text)) {
+          // Check if it looks like a real complete sentence
+          // Real sentences typically have a subject and verb
+          if (
+            !/\b(is|are|was|were|have|has|had|do|does|did|will|would|can|could|should|might|must|want|need|like|know|think|see|go|come|make|get|take)\b/i.test(
+              text,
+            )
+          ) {
+            return true; // Doesn't have a verb, probably incomplete
+          }
+        }
+
+        return false;
+      };
+
+      // Check if this looks like a continuation of the previous thought
+      const timeSinceLast = pendingTranscriptRef.current
+        ? now - pendingTranscriptRef.current.timestamp
+        : Infinity;
+
+      // If within 8 seconds and there's a pending transcript, accumulate them
+      // This gives users time to pause and think between phrases
+      if (pendingTranscriptRef.current && timeSinceLast < 8000) {
+        const prevText = pendingTranscriptRef.current.text;
+
+        // Check if new text is a refinement (starts similarly) or a continuation
+        const isRefinement = trimmedText
+          .toLowerCase()
+          .startsWith(
+            prevText.toLowerCase().substring(0, Math.min(10, prevText.length)),
+          );
+
+        if (isRefinement) {
+          // New text is a more complete version - replace
+          console.log("[Voice] Replacing with more complete version");
+          pendingTranscriptRef.current.text = trimmedText;
+        } else {
+          // New text is different - might be a continuation, accumulate with space
+          // But only if the previous one looked incomplete
+          if (looksIncomplete(prevText)) {
+            console.log("[Voice] Accumulating as continuation");
+            pendingTranscriptRef.current.text = prevText + " " + trimmedText;
+          } else {
+            // Previous looked complete, this is a new sentence
+            console.log("[Voice] New sentence detected");
+            pendingTranscriptRef.current.text = trimmedText;
+          }
+        }
+        pendingTranscriptRef.current.timestamp = now;
+      } else {
+        // New transcript (no pending or too much time passed)
+        pendingTranscriptRef.current = {
+          text: trimmedText,
+          timestamp: now,
+          timeoutId: null,
+        };
+      }
+
+      // Update the input value immediately so user can see it
+      setInputValue(pendingTranscriptRef.current.text);
+      setVoiceInputActive(true);
+
+      // Determine debounce time based on whether transcript looks complete
+      const currentText = pendingTranscriptRef.current.text;
+      const incomplete = looksIncomplete(currentText);
+      const endsWithPunctuation = /[.!?]$/.test(currentText);
+      const wordCount = currentText
+        .split(/\s+/)
+        .filter((w) => w.length > 0).length;
+
+      // Longer debounce for incomplete sentences
+      // For complete-looking sentences with punctuation, still wait a bit to catch continuations
+      // Minimum 2.5s even for "complete" sentences, up to 5s for incomplete ones
+      let debounceTime: number;
+      if (incomplete) {
+        debounceTime = 5000; // 5 seconds for incomplete
+      } else if (wordCount < 5) {
+        debounceTime = 4000; // 4 seconds for short but "complete" sentences
+      } else if (endsWithPunctuation) {
+        debounceTime = 2500; // 2.5 seconds for longer complete sentences
+      } else {
+        debounceTime = 4000; // 4 seconds for longer sentences without punctuation
+      }
+
+      console.log(
+        `[Voice] Debouncing for ${debounceTime}ms (incomplete: ${incomplete}, words: ${wordCount})`,
+      );
+
+      // Debounce: Wait for silence before processing
+      pendingTranscriptRef.current.timeoutId = setTimeout(() => {
+        const finalText = pendingTranscriptRef.current?.text.trim();
+        if (!finalText) {
+          pendingTranscriptRef.current = null;
+          setVoiceInputActive(false);
+          return;
+        }
+
+        console.log(
+          "[Voice] Processing final transcript after debounce:",
+          finalText,
+        );
+
+        // Allow voice commands to short-circuit before length checks
+        if (
+          handleVoiceCommandAction(
+            finalText,
+            showVoiceMode ? "voice-mode" : "dictation",
+          )
+        ) {
+          setInputValue("");
+          setVoiceInputActive(false);
+          pendingTranscriptRef.current = null;
+          return;
+        }
+
+        // Validate minimum length
+        if (finalText.length < 5) {
+          console.log("[Voice] Transcript too short, keeping in buffer");
+          // Don't clear - keep accumulating
+          setVoiceInputActive(false);
+          return;
+        }
+
+        // For normal mode (not voice mode), just insert the text
+        // User must manually send by clicking the send button or pressing Enter
+        // This prevents any auto-sending of partial transcripts
+        if (!showVoiceMode) {
+          console.log(
+            "[Voice] Text inserted into input, user must manually send",
+          );
+          setVoiceInputActive(false);
+          // Keep the pending transcript in case more comes
+          // Only clear after user actually sends
+          return;
+        }
+
+        // Auto-send logic ONLY for immersive voice mode
+        if (showVoiceMode) {
+          // Relaxed validation - allow shorter but meaningful commands
+          // Reduced from 25 to 10 chars to support commands like "yes", "help me"
+          const MIN_VOICE_SEND_LENGTH = 10;
+          if (finalText.length < MIN_VOICE_SEND_LENGTH) {
+            console.log(
+              `[Voice] Voice mode: Transcript too short (${finalText.length} < ${MIN_VOICE_SEND_LENGTH}), waiting for more`,
+            );
+            setVoiceInputActive(false);
+            return;
+          }
+
+          // Check if it looks incomplete
+          if (looksIncomplete(finalText)) {
+            console.log(
+              "[Voice] Voice mode: Transcript looks incomplete, waiting for more",
+            );
+            setVoiceInputActive(false);
+            return;
+          }
+
+          // Relaxed check: require at least 2 words for voice mode
+          const wordCount = finalText
+            .split(/\s+/)
+            .filter((w) => w.length > 0).length;
+          if (wordCount < 2) {
+            console.log(
+              `[Voice] Voice mode: Not enough words (${wordCount} < 2), waiting for more`,
+            );
+            setVoiceInputActive(false);
+            return;
+          }
+
+          console.log(
+            "[Voice] Voice mode: Sending complete message:",
+            finalText,
+          );
+          handleSendMessage(finalText);
+          setInputValue("");
+          setVoiceInputActive(false);
+          pendingTranscriptRef.current = null;
+        }
+      }, debounceTime);
+    },
+    [
+      handleSendMessage,
+      handleVoiceCommandAction,
+      setInputValue,
+      setVoiceInputActive,
+      showVoiceMode,
+    ],
+  );
+
+  // Update the ref when handler changes
+  useEffect(() => {
+    voiceTranscriptHandlerRef.current = handleVoiceTranscript;
+  }, [handleVoiceTranscript]);
+
+  // Cleanup pending transcript timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (pendingTranscriptRef.current?.timeoutId) {
+        clearTimeout(pendingTranscriptRef.current.timeoutId);
+      }
+    };
+  }, []);
+
+  const handleVoiceModeTranscript = useCallback(
+    (text: string) => {
+      if (handleVoiceCommandAction(text, "voice-mode")) return;
+      handleSendMessage(text);
+    },
+    [handleSendMessage, handleVoiceCommandAction],
+  );
+
   const handleAnswerClarification = (questionId: string, answer: any) => {
     // Remove answered question and continue processing
     setClarificationQuestions((prev) =>
@@ -1019,10 +1562,8 @@ export const AIFileAssistantSession = ({
             <VoiceModeOverlay
               settings={voiceSettings}
               onClose={() => setShowVoiceMode(false)}
-              onTranscript={(text) => {
-                // Auto-send in voice mode
-                handleSendMessage(text);
-              }}
+              onTranscript={handleVoiceModeTranscript}
+              onOpenSettings={() => setShowVoiceSettings(true)}
             />
           )}
 
@@ -1075,12 +1616,7 @@ export const AIFileAssistantSession = ({
                     voiceOutputEnabled: !prev.voiceOutputEnabled,
                   }))
                 }
-                onStop={() => {
-                  stopSpeaking();
-                  setActiveOperation(null);
-                  setExecutionProgress(null);
-                  addMessage("assistant", "Execution stopped by user.");
-                }}
+                onStop={handleStopExecution}
               />
             </div>
           )}

@@ -49,6 +49,8 @@ import {
   MonitorSmartphone,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+import { PageHeader } from "@/components/layout/PageHeader";
+import { settingsInfo } from "@/components/layout/toolInfoContent";
 import {
   Card,
   CardContent,
@@ -97,6 +99,10 @@ interface SettingsProps {
   themeMode: "light" | "dark";
   toggleTheme: () => void;
   onNavigateToPanelConfig?: () => void;
+  /** When set (e.g. from "Open AI Settings" link), scroll to this section id on mount */
+  initialSection?: string;
+  /** Called after scrolling to initialSection so the app can clear pending section */
+  onInitialSectionHandled?: () => void;
 }
 
 interface SettingsSection {
@@ -318,6 +324,8 @@ export const Settings = ({
   themeMode,
   toggleTheme,
   onNavigateToPanelConfig,
+  initialSection,
+  onInitialSectionHandled,
 }: SettingsProps) => {
   // ============================================================================
   // State Management - All Settings
@@ -545,6 +553,7 @@ export const Settings = ({
       ollamaModel: "llama3.2:3b",
       maxTokens: 4096,
       clawdbotEnabled: false,
+      reasoningLive: true,
     };
   });
 
@@ -559,6 +568,7 @@ export const Settings = ({
   const aiDryRunDefault = aiSettings.dryRunDefault === true;
   const aiEnableHistory = aiSettings.operationHistory?.enabled !== false;
   const aiAutoApproveThreshold = aiSettings.autoApproveThreshold || 50;
+  const aiReasoningLive = aiSettings.reasoningLive !== false;
 
   // Update AI settings helper
   const updateAiSettings = useCallback((updates: Record<string, any>) => {
@@ -604,6 +614,10 @@ export const Settings = ({
   );
   const setAiAutoApproveThreshold = useCallback(
     (value: number) => updateAiSettings({ autoApproveThreshold: value }),
+    [updateAiSettings],
+  );
+  const setAiReasoningLive = useCallback(
+    (value: boolean) => updateAiSettings({ reasoningLive: value }),
     [updateAiSettings],
   );
 
@@ -681,6 +695,7 @@ export const Settings = ({
     aiDryRunDefault,
     aiEnableHistory,
     aiAutoApproveThreshold,
+    aiReasoningLive,
   ]);
 
   // Auto-save settings to localStorage
@@ -878,6 +893,20 @@ export const Settings = ({
       element.scrollIntoView({ behavior: "smooth", block: "start" });
     }
   }, []);
+
+  // When opened with initialSection (e.g. "Open AI Settings" from Tool Info), scroll to that section
+  useEffect(() => {
+    if (!initialSection || !onInitialSectionHandled) return;
+    const id = setTimeout(() => {
+      const element = sectionRefs.current[initialSection];
+      if (element) {
+        setActiveSection(initialSection);
+        element.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+      onInitialSectionHandled();
+    }, 100);
+    return () => clearTimeout(id);
+  }, [initialSection, onInitialSectionHandled]);
 
   // Export all settings to JSON file
   const handleExportSettings = useCallback(() => {
@@ -2626,6 +2655,26 @@ export const Settings = ({
                   onCheckedChange={setAiEnableHistory}
                 />
               </div>
+
+              <div className="flex items-center justify-between p-3 rounded-lg bg-slate-50 dark:bg-slate-800/50">
+                <div className="flex items-center gap-3">
+                  <div className="p-1.5 rounded-md bg-emerald-100 dark:bg-emerald-900/50">
+                    <Brain className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+                  </div>
+                  <div>
+                    <Label className="text-sm font-medium cursor-pointer">
+                      Reasoning Live
+                    </Label>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">
+                      Show live reasoning while processing
+                    </p>
+                  </div>
+                </div>
+                <Switch
+                  checked={aiReasoningLive}
+                  onCheckedChange={setAiReasoningLive}
+                />
+              </div>
             </div>
           </div>
 
@@ -3009,43 +3058,34 @@ export const Settings = ({
     <div className="flex flex-col h-full glass rounded-2xl shadow-xl overflow-hidden relative min-h-0">
       <div className="absolute inset-0 bg-white/40 dark:bg-slate-900/40 pointer-events-none" />
 
-      {/* Header */}
-      <div className="relative z-10 p-4 sm:p-6 border-b border-slate-200/50 dark:border-slate-700/50 bg-slate-50/50 dark:bg-slate-800/30 backdrop-blur-md shrink-0">
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="p-2.5 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl shadow-lg shadow-blue-500/25">
-              <SettingsIcon className="h-6 w-6 text-white" />
+      {/* Header - consistent with other pages */}
+      <div className="relative z-10 shrink-0">
+        <PageHeader
+          icon={SettingsIcon}
+          title="Settings"
+          subtitle="Manage your application preferences"
+          info={settingsInfo}
+          right={
+            <div className="relative flex-1 max-w-md">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search settings..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-9 bg-background border-border"
+              />
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery("")}
+                  aria-label="Clear search"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded-full hover:bg-muted"
+                >
+                  <X className="h-3 w-3 text-muted-foreground" />
+                </button>
+              )}
             </div>
-            <div>
-              <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100">
-                Settings
-              </h1>
-              <p className="text-sm text-slate-600 dark:text-slate-400">
-                Manage your application preferences
-              </p>
-            </div>
-          </div>
-
-          {/* Search Bar */}
-          <div className="relative flex-1 max-w-md">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-            <Input
-              placeholder="Search settings..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-9 bg-white/80 dark:bg-slate-800/80 border-slate-200 dark:border-slate-700"
-            />
-            {searchQuery && (
-              <button
-                onClick={() => setSearchQuery("")}
-                aria-label="Clear search"
-                className="absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded-full hover:bg-slate-200 dark:hover:bg-slate-700"
-              >
-                <X className="h-3 w-3 text-slate-400" />
-              </button>
-            )}
-          </div>
-        </div>
+          }
+        />
       </div>
 
       {/* Main Content with Sidebar */}

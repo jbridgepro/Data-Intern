@@ -2,7 +2,9 @@
 // Front-end: Terminal tabs management component
 
 import { useState, useEffect } from "react";
-import { Plus, X, Settings, Download, Upload } from "lucide-react";
+import { Plus, X, Settings, Download, Upload, Terminal as TerminalIcon } from "lucide-react";
+import { PageHeader } from "../../../components/layout/PageHeader";
+import { terminalInfo } from "../../../components/layout/toolInfoContent";
 import { TerminalSession } from "./TerminalSession";
 import {
   TerminalTheme,
@@ -117,7 +119,13 @@ export const TerminalTabs = () => {
   const activeTab = tabs.find((tab) => tab.id === activeTabId);
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full bg-background text-foreground">
+      <PageHeader
+        icon={TerminalIcon}
+        title="Terminal"
+        subtitle="Run commands and scripts"
+        info={terminalInfo}
+      />
       {/* Tab Bar */}
       <div
         className="flex items-center gap-1 p-2 border-b"

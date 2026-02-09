@@ -24,7 +24,7 @@ export type CommandIntent =
  * Extracted entity from voice input
  */
 export interface ExtractedEntity {
-  type: 'path' | 'tool' | 'strategy' | 'number' | 'date' | 'file_type' | 'text';
+  type: 'path' | 'tool' | 'strategy' | 'number' | 'date' | 'file_type' | 'text' | 'array';
   value: any;
   confidence: number;
   sourceText: string; // Original text that was matched

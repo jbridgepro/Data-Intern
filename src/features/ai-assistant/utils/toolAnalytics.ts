@@ -178,8 +178,9 @@ export class ToolAnalyticsManager {
         results = results.filter(a => a.successRate >= 90);
       }
 
-      if (filter.minExecutions) {
-        results = results.filter(a => a.totalExecutions >= filter.minExecutions);
+      if (filter.minExecutions != null) {
+        const minEx = filter.minExecutions;
+        results = results.filter(a => a.totalExecutions >= minEx);
       }
 
       if (filter.dateRange) {
@@ -378,8 +379,8 @@ export class ToolAnalyticsManager {
       version: '1.0',
       exportedAt: new Date().toISOString(),
       analytics: Array.from(this.analytics.entries()).map(([name, data]) => ({
-        toolName: name,
         ...data,
+        toolName: name,
         dailyUsage: Array.from(data.dailyUsage.entries()),
       })),
       recentExecutions: Array.from(this.executions.entries()).map(([name, records]) => ({

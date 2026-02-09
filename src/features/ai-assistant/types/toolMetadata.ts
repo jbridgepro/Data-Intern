@@ -151,7 +151,7 @@ export interface ToolExecutionMetrics {
  * Tool relationship graph
  */
 export interface ToolRelationship {
-  sourceool: string;
+  sourceTool: string;
   targetTool: string;
   relationshipType: 'prerequisite' | 'related' | 'chainable' | 'alternative';
   strength: number; // 0-1, how strongly related

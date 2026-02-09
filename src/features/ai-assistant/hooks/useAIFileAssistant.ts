@@ -35,6 +35,7 @@ const DEFAULT_SETTINGS: AISettings = {
   clawdbotEnabled: false, // ClawdBot integration disabled by default
   aiName: undefined, // Default AI name (will use "FilePro" if not set)
   userName: undefined, // Default user name (will use "You" if not set)
+  reasoningLive: true,
 };
 
 /**
@@ -179,7 +180,11 @@ export const useAIFileAssistant = (currentDirectory: string) => {
     directoryAnalysis: DirectoryAnalysis | null = null,
     abortSignal?: AbortSignal,
     conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>,
-    voiceContext?: { enabled: boolean; persona?: string }
+    voiceContext?: { enabled: boolean; persona?: string },
+    progressCallbacks?: {
+      onToolExecutions?: (tools: any[]) => void;
+      onReasoningSteps?: (steps: any[]) => void;
+    }
   ): Promise<{ content: string; operation?: FileOperation; metadata?: any }> => {
     // Check if AI is configured based on provider
     const isAIConfigured = settings.provider === 'anthropic'
@@ -195,7 +200,8 @@ export const useAIFileAssistant = (currentDirectory: string) => {
           settings,
           abortSignal,
           conversationHistory,
-          voiceContext
+          voiceContext,
+          progressCallbacks
         );
         return aiResponse;
       } catch (error) {
