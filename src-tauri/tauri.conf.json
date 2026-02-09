@@ -32,7 +32,7 @@
       "icons/icon.ico"
     ],
     "macOS": {
-      "entitlements": null,
+      "entitlements": "entitlements.mac.plist",
       "exceptionDomain": "",
       "frameworks": [],
       "providerShortName": null,

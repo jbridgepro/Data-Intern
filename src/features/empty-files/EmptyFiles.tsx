@@ -835,10 +835,13 @@ export const EmptyFiles = () => {
                         {preset.name}
                       </button>
                       <button
+                        type="button"
                         onClick={() => deletePreset(index)}
                         className="opacity-0 group-hover:opacity-100 text-destructive hover:text-destructive/80 transition-opacity"
+                        aria-label={`Delete preset "${preset.name}"`}
+                        title={`Delete preset "${preset.name}"`}
                       >
-                        <XCircle className="h-3 w-3" />
+                        <XCircle className="h-3 w-3" aria-hidden="true" />
                       </button>
                     </div>
                   ))}

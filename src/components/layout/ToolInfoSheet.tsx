@@ -102,7 +102,7 @@ export function ToolInfoSheet({ title, content, open, onClose }: ToolInfoSheetPr
     <AnimatePresence>
       {open && (
         <div
-          className="fixed inset-0 z-[9999] flex items-end justify-center sm:items-center"
+          className="fixed inset-0 z-9999 flex items-end justify-center sm:items-center"
           aria-modal="true"
           aria-labelledby="tool-info-title"
           role="dialog"

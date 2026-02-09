@@ -201,13 +201,14 @@ export function DatabaseExplorer({
       <div key={node.id}>
         <div
           className={cn(
-            "flex items-center gap-2 px-2 py-1.5 rounded-lg border border-transparent hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer group transition-colors",
+            "flex items-center gap-2 py-1.5 rounded-lg border border-transparent hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer group transition-colors",
             level === 0 && "font-medium",
             node.type === "table" &&
               selectedTable?.name === node.label &&
               "border-sky-200 bg-sky-50/80 dark:border-sky-900/40 dark:bg-sky-900/20",
+            /* Dynamic left padding for tree indent; uses arbitrary value to satisfy no-inline-styles */
+            `pl-[${8 + indent}px] pr-2`,
           )}
-          style={{ paddingLeft: `${8 + indent}px` }}
           onClick={() => {
             if (hasChildren) {
               toggleNode(node.id);

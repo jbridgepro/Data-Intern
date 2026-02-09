@@ -156,7 +156,7 @@ export const AIFileAssistantTabs = () => {
               className={cn(
                 'group relative px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-all duration-200 cursor-pointer min-w-[120px] max-w-[180px]',
                 activeTabId === tab.id
-                  ? 'bg-gradient-to-r from-violet-500/10 to-blue-500/10 dark:from-violet-500/20 dark:to-blue-500/20 text-violet-700 dark:text-violet-300 shadow-sm border border-violet-200/50 dark:border-violet-800/50'
+                  ? 'bg-linear-to-r from-violet-500/10 to-blue-500/10 dark:from-violet-500/20 dark:to-blue-500/20 text-violet-700 dark:text-violet-300 shadow-sm border border-violet-200/50 dark:border-violet-800/50'
                   : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/50 hover:text-slate-900 dark:hover:text-slate-200'
               )}
               onClick={() => (tab.id === HUB_TAB_ID ? selectAgent(null) : selectAgent(tab.id))}
@@ -199,7 +199,7 @@ export const AIFileAssistantTabs = () => {
 
               {/* Active Tab Indicator */}
               {activeTabId === tab.id && (
-                <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 w-8 h-0.5 bg-gradient-to-r from-violet-500 to-blue-500 rounded-full" />
+                <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 w-8 h-0.5 bg-linear-to-r from-violet-500 to-blue-500 rounded-full" />
               )}
             </div>
           ))}

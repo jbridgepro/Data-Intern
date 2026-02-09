@@ -27,6 +27,15 @@
     .glass-card {
         @apply bg-white/50 dark:bg-slate-800/50 backdrop-blur-sm border border-slate-200/50 dark:border-slate-700/50 shadow-sm hover:shadow-md transition-all duration-300;
     }
+
+    /* Accent preset swatch colors (used in Settings to avoid inline styles) */
+    .accent-swatch-default { background-color: #0f172a; }
+    .accent-swatch-blue { background-color: #3b82f6; }
+    .accent-swatch-emerald { background-color: #10b981; }
+    .accent-swatch-amber { background-color: #f59e0b; }
+    .accent-swatch-rose { background-color: #f43f5e; }
+    .accent-swatch-violet { background-color: #8b5cf6; }
+    .accent-swatch-cyan { background-color: #06b6d4; }
 }
 
 body {

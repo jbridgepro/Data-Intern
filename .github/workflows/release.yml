@@ -1,3 +1,7 @@
+# File: .github/workflows/release.yml
+# Build and attach Tauri installers to GitHub Releases on version tags (v*) or workflow_dispatch.
+# macOS: signing and notarization when ENABLE_MACOS_SIGNING and Apple secrets are set.
+
 name: Build and Release Tauri App
 
 on:
@@ -14,20 +18,23 @@ on:
 permissions:
   contents: write
 
+env:
+  CI: "false"
+
 jobs:
   build-and-release:
-    name: Build and attach installers
+    name: Build and attach (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: macos-latest
-            rust-target: x86_64-apple-darwin
+            platform: macos
           - os: ubuntu-latest
-            rust-target: x86_64-unknown-linux-gnu
+            platform: linux
           - os: windows-latest
-            rust-target: x86_64-pc-windows-msvc
+            platform: windows
 
     steps:
       - name: Checkout repository
@@ -36,15 +43,14 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: "20"
+          cache: "npm"
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.rust-target }}
 
       - name: Install Linux dependencies
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.platform == 'linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -60,8 +66,36 @@ jobs:
             libxdo-dev \
             libglib2.0-dev
 
+      - name: Import Apple Developer Certificate (macOS)
+        if: matrix.platform == 'macos' && (vars.ENABLE_MACOS_SIGNING == 'true' || vars.ENABLE_MACOS_SIGNING == '1')
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          echo "$APPLE_CERTIFICATE" | base64 --decode > certificate.p12
+          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security set-keychain-settings -t 3600 -u build.keychain
+          security import certificate.p12 -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/productbuild
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
+          security find-identity -v -p codesigning build.keychain
+
+      - name: Set Apple signing identity (macOS)
+        if: matrix.platform == 'macos' && (vars.ENABLE_MACOS_SIGNING == 'true' || vars.ENABLE_MACOS_SIGNING == '1')
+        id: apple-identity
+        run: |
+          IDENTITY=$(security find-identity -v -p codesigning build.keychain | grep "Developer ID Application" | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+          if [ -z "$IDENTITY" ]; then
+            echo "Developer ID Application identity not found"
+            security find-identity -v -p codesigning build.keychain
+            exit 1
+          fi
+          echo "signing_identity=$IDENTITY" >> $GITHUB_OUTPUT
+
       - name: Install frontend dependencies
-        run: npm install
+        run: npm ci
 
       - name: Verify TypeScript build
         run: npm run build
@@ -70,11 +104,17 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_SIGNING_IDENTITY: ${{ steps.apple-identity.outputs.signing_identity }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
+          projectPath: "."
+          args: ${{ matrix.platform == 'windows' && '--bundles nsis' || (matrix.platform == 'linux' && '--bundles deb,rpm' || '') }}
           tagName: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
           releaseName: ProjectFile Pro ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
           releaseBody: |
             Automated build for ProjectFile Pro.
 
-            This release includes installable bundles built from tag ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}.
+            This release includes installable bundles built from ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}.
           includeDebug: false

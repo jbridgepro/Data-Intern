@@ -990,7 +990,7 @@ export const SqlFormatter: React.FC = () => {
               key={issue.id}
               className="flex items-center gap-2 text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 px-2.5 py-1.5 rounded-lg"
             >
-              <AlertCircle className="h-3.5 w-3.5 flex-shrink-0" />
+              <AlertCircle className="h-3.5 w-3.5 shrink-0" />
               {issue.message}
             </div>
           ))}
@@ -1031,7 +1031,7 @@ export const SqlFormatter: React.FC = () => {
               key={issue.id}
               className="flex items-center gap-2 text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 px-2.5 py-1.5 rounded-lg"
             >
-              <AlertCircle className="h-3.5 w-3.5 flex-shrink-0" />
+              <AlertCircle className="h-3.5 w-3.5 shrink-0" />
               {issue.message}
             </div>
           ))}
@@ -1065,7 +1065,7 @@ export const SqlFormatter: React.FC = () => {
         />
         {schemaError && (
           <div className="flex items-center gap-2 text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 px-2.5 py-1.5 rounded-lg">
-            <AlertCircle className="h-3.5 w-3.5 flex-shrink-0" />
+            <AlertCircle className="h-3.5 w-3.5 shrink-0" />
             {schemaError}
           </div>
         )}
@@ -1153,6 +1153,7 @@ export const SqlFormatter: React.FC = () => {
                   <GripVertical className="h-4 w-4" />
                 </div>
                 <select
+                  aria-label="Join type"
                   className="col-span-2 h-8 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 text-xs font-medium"
                   value={join.type}
                   onChange={(event) =>
@@ -1209,6 +1210,7 @@ export const SqlFormatter: React.FC = () => {
                 />
                 <button
                   type="button"
+                  aria-label="Remove join"
                   className="col-span-1 flex items-center justify-center h-8 w-8 rounded-md text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
                   onClick={() =>
                     updateBlocks((prev) => ({
@@ -1271,6 +1273,7 @@ export const SqlFormatter: React.FC = () => {
               </div>
               {index > 0 ? (
                 <select
+                  aria-label="Condition logic (AND/OR)"
                   className="col-span-2 h-9 rounded-md border border-slate-200 dark:border-slate-800 bg-transparent px-2 text-xs"
                   value={condition.logic}
                   onChange={(event) =>
@@ -1315,6 +1318,7 @@ export const SqlFormatter: React.FC = () => {
                 placeholder="column"
               />
               <select
+                aria-label="Comparison operator"
                 className="col-span-2 h-9 rounded-md border border-slate-200 dark:border-slate-800 bg-transparent px-2 text-xs"
                 value={condition.operator}
                 onChange={(event) =>
@@ -1477,6 +1481,7 @@ export const SqlFormatter: React.FC = () => {
                 placeholder="column"
               />
               <select
+                aria-label="Sort direction"
                 className="col-span-3 h-9 rounded-md border border-slate-200 dark:border-slate-800 bg-transparent px-2 text-xs"
                 value={order.direction}
                 onChange={(event) =>
@@ -1560,7 +1565,7 @@ export const SqlFormatter: React.FC = () => {
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-col p-6 overflow-hidden bg-gradient-to-br from-slate-50 via-white to-slate-100 dark:from-slate-950 dark:via-slate-950 dark:to-slate-900">
+    <div className="flex h-full min-h-0 flex-col p-6 overflow-hidden bg-linear-to-br from-slate-50 via-white to-slate-100 dark:from-slate-950 dark:via-slate-950 dark:to-slate-900">
       <div className="mb-6 flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-slate-200/70 bg-white/80 p-4 shadow-sm backdrop-blur dark:border-slate-800/70 dark:bg-slate-900/70">
         <div className="flex items-center gap-3">
           <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-100/70 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">
@@ -1649,7 +1654,7 @@ export const SqlFormatter: React.FC = () => {
           </div>
           <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-2 gap-3">
             <div className="flex flex-col min-h-0 rounded-xl border border-slate-200/70 bg-white/80 shadow-sm dark:border-slate-800/70 dark:bg-slate-900/70 overflow-hidden">
-              <div className="flex-shrink-0 px-3 py-2 border-b border-slate-200/70 dark:border-slate-800/70 bg-slate-50/80 dark:bg-slate-800/50 text-xs font-semibold text-slate-700 dark:text-slate-200">
+              <div className="shrink-0 px-3 py-2 border-b border-slate-200/70 dark:border-slate-800/70 bg-slate-50/80 dark:bg-slate-800/50 text-xs font-semibold text-slate-700 dark:text-slate-200">
                 SQL input
               </div>
               <textarea
@@ -1661,7 +1666,7 @@ export const SqlFormatter: React.FC = () => {
               />
             </div>
             <div className="flex flex-col min-h-0 rounded-xl border border-slate-200/70 bg-white/80 shadow-sm dark:border-slate-800/70 dark:bg-slate-900/70 overflow-hidden">
-              <div className="flex-shrink-0 flex items-center justify-between px-3 py-2 border-b border-slate-200/70 dark:border-slate-800/70 bg-slate-50/80 dark:bg-slate-800/50">
+              <div className="shrink-0 flex items-center justify-between px-3 py-2 border-b border-slate-200/70 dark:border-slate-800/70 bg-slate-50/80 dark:bg-slate-800/50">
                 <span className="text-xs font-semibold text-slate-700 dark:text-slate-200">
                   Formatted output
                 </span>
@@ -1695,7 +1700,8 @@ export const SqlFormatter: React.FC = () => {
                 <button
                   type="button"
                   className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left hover:bg-slate-50/80 dark:hover:bg-slate-800/50 transition-colors"
-                  aria-expanded={builderToolbarExpanded ? "true" : "false"}
+                  {...{ "aria-expanded": builderToolbarExpanded ? "true" : "false" }}
+                  title="Connection & options"
                 >
                   <span className="text-xs font-semibold text-slate-700 dark:text-slate-200">
                     Connection & options
@@ -1849,7 +1855,7 @@ export const SqlFormatter: React.FC = () => {
               {/* Left Column - Independent Scroll Container */}
               <div className="col-span-7 flex h-full flex-col min-h-0 overflow-hidden">
                 {/* Sticky Block Palette Header */}
-                <div className="flex-shrink-0 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3 shadow-sm mb-3">
+                <div className="shrink-0 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3 shadow-sm mb-3">
                   {/* Header Row */}
                   <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-2">
@@ -1983,7 +1989,7 @@ export const SqlFormatter: React.FC = () => {
                 <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden scrollbar-thin scrollbar-thumb-slate-300 dark:scrollbar-thumb-slate-600 scrollbar-track-transparent flex flex-col gap-3">
                   {/* Final SQL — primary output, always visible and prominent */}
                   <div className="rounded-xl border-2 border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 space-y-3 shadow-sm flex flex-col min-h-[220px]">
-                    <div className="flex items-center justify-between flex-shrink-0">
+                    <div className="flex items-center justify-between shrink-0">
                       <span className="text-sm font-semibold text-slate-800 dark:text-slate-100">
                         Final SQL ({DIALECT_LABELS[dialect]})
                       </span>
@@ -2006,7 +2012,7 @@ export const SqlFormatter: React.FC = () => {
                     >
                       {sql}
                     </pre>
-                    <div className="flex flex-col gap-1.5 text-xs flex-shrink-0">
+                    <div className="flex flex-col gap-1.5 text-xs shrink-0">
                       {issues.map((issue) => (
                         <div
                           key={issue.id}
@@ -2037,7 +2043,8 @@ export const SqlFormatter: React.FC = () => {
                         <button
                           type="button"
                           className="flex w-full items-center justify-between gap-2 px-4 py-2.5 text-left hover:bg-slate-50/80 dark:hover:bg-slate-800/50 transition-colors"
-                          aria-expanded={nlSectionOpen ? "true" : "false"}
+                          {...{ "aria-expanded": nlSectionOpen ? "true" : "false" }}
+                          title="Natural Language"
                         >
                           <div className="flex items-center gap-2">
                             <Sparkles className="h-4 w-4 text-slate-500 dark:text-slate-400" />

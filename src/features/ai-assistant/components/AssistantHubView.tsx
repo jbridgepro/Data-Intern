@@ -23,10 +23,10 @@ export const AssistantHubView: React.FC<AssistantHubViewProps> = ({
     <div className="h-full w-full overflow-y-auto p-8">
       <div className="mx-auto max-w-2xl">
         <div className="mb-10 text-center">
-          <div className="mb-4 inline-flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-violet-500/10 to-blue-500/10 dark:from-violet-500/20 dark:to-blue-500/20">
+          <div className="mb-4 inline-flex h-16 w-16 items-center justify-center rounded-2xl bg-linear-to-br from-violet-500/10 to-blue-500/10 dark:from-violet-500/20 dark:to-blue-500/20">
             <Sparkles className="h-8 w-8 text-violet-600 dark:text-violet-400" />
           </div>
-          <h1 className="text-3xl font-bold bg-gradient-to-r from-violet-600 to-blue-600 bg-clip-text text-transparent dark:from-violet-400 dark:to-blue-400">
+          <h1 className="text-3xl font-bold bg-linear-to-r from-violet-600 to-blue-600 bg-clip-text text-transparent dark:from-violet-400 dark:to-blue-400">
             AI Assistant
           </h1>
           <p className="mt-2 text-slate-600 dark:text-slate-400">

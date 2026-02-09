@@ -1129,7 +1129,7 @@ export const Settings = ({
       <Card className="glass-card">
         <CardHeader>
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-gradient-to-br from-blue-500/20 to-purple-500/20 rounded-xl">
+            <div className="p-2 bg-linear-to-br from-blue-500/20 to-purple-500/20 rounded-xl">
               <Palette className="h-5 w-5 text-blue-600 dark:text-blue-400" />
             </div>
             <div>
@@ -1203,8 +1203,7 @@ export const Settings = ({
                       } ${themePreferences.useCustomColors ? "opacity-50 cursor-not-allowed" : ""}`}
                     >
                       <span
-                        className="h-4 w-4 rounded-full border border-black/10"
-                        style={{ backgroundColor: preset.color }}
+                        className={`h-4 w-4 rounded-full border border-black/10 accent-swatch accent-swatch-${preset.id}`}
                       />
                       <span className="truncate">{preset.name}</span>
                     </button>
@@ -1461,7 +1460,7 @@ export const Settings = ({
       <Card className="glass-card">
         <CardHeader>
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-gradient-to-br from-green-500/20 to-emerald-500/20 rounded-xl">
+            <div className="p-2 bg-linear-to-br from-green-500/20 to-emerald-500/20 rounded-xl">
               <FileText className="h-5 w-5 text-green-600 dark:text-green-400" />
             </div>
             <div>
@@ -1525,7 +1524,7 @@ export const Settings = ({
       <Card className="glass-card">
         <CardHeader>
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-gradient-to-br from-orange-500/20 to-amber-500/20 rounded-xl">
+            <div className="p-2 bg-linear-to-br from-orange-500/20 to-amber-500/20 rounded-xl">
               <FolderTree className="h-5 w-5 text-orange-600 dark:text-orange-400" />
             </div>
             <div>
@@ -1630,7 +1629,7 @@ export const Settings = ({
       <Card className="glass-card">
         <CardHeader>
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-gradient-to-br from-cyan-500/20 to-teal-500/20 rounded-xl">
+            <div className="p-2 bg-linear-to-br from-cyan-500/20 to-teal-500/20 rounded-xl">
               <Copy className="h-5 w-5 text-cyan-600 dark:text-cyan-400" />
             </div>
             <div>
@@ -1716,7 +1715,7 @@ export const Settings = ({
       <Card className="glass-card">
         <CardHeader>
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-gradient-to-br from-yellow-500/20 to-orange-500/20 rounded-xl">
+            <div className="p-2 bg-linear-to-br from-yellow-500/20 to-orange-500/20 rounded-xl">
               <FolderPlus className="h-5 w-5 text-yellow-600 dark:text-yellow-400" />
             </div>
             <div>
@@ -1783,7 +1782,7 @@ export const Settings = ({
       <Card className="glass-card">
         <CardHeader>
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-gradient-to-br from-pink-500/20 to-rose-500/20 rounded-xl">
+            <div className="p-2 bg-linear-to-br from-pink-500/20 to-rose-500/20 rounded-xl">
               <FilePlus className="h-5 w-5 text-pink-600 dark:text-pink-400" />
             </div>
             <div>
@@ -1866,7 +1865,7 @@ export const Settings = ({
       <Card className="glass-card">
         <CardHeader>
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-gradient-to-br from-slate-500/20 to-gray-500/20 rounded-xl">
+            <div className="p-2 bg-linear-to-br from-slate-500/20 to-gray-500/20 rounded-xl">
               <Terminal className="h-5 w-5 text-slate-600 dark:text-slate-400" />
             </div>
             <div>
@@ -1965,7 +1964,7 @@ export const Settings = ({
       <Card className="glass-card">
         <CardHeader>
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-gradient-to-br from-indigo-500/20 to-violet-500/20 rounded-xl">
+            <div className="p-2 bg-linear-to-br from-indigo-500/20 to-violet-500/20 rounded-xl">
               <Search className="h-5 w-5 text-indigo-600 dark:text-indigo-400" />
             </div>
             <div>
@@ -2041,7 +2040,7 @@ export const Settings = ({
       <Card className="glass-card">
         <CardHeader>
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-gradient-to-br from-emerald-500/20 to-green-500/20 rounded-xl">
+            <div className="p-2 bg-linear-to-br from-emerald-500/20 to-green-500/20 rounded-xl">
               <Database className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
             </div>
             <div>
@@ -2185,7 +2184,7 @@ export const Settings = ({
       )}
 
       <Card className="glass-card overflow-hidden">
-        <CardHeader className="bg-gradient-to-r from-violet-500/10 via-purple-500/10 to-fuchsia-500/10 dark:from-violet-500/20 dark:via-purple-500/20 dark:to-fuchsia-500/20">
+        <CardHeader className="bg-linear-to-r from-violet-500/10 via-purple-500/10 to-fuchsia-500/10 dark:from-violet-500/20 dark:via-purple-500/20 dark:to-fuchsia-500/20">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <div className="p-2 bg-violet-100 dark:bg-violet-900/50 rounded-xl">
@@ -2217,7 +2216,7 @@ export const Settings = ({
         <CardContent className="space-y-6 pt-6">
           {/* Setup Required Banner */}
           {!isAiProviderConfigured && (
-            <div className="p-4 rounded-xl bg-gradient-to-r from-violet-50 to-purple-50 dark:from-violet-900/20 dark:to-purple-900/20 border border-violet-200 dark:border-violet-800">
+            <div className="p-4 rounded-xl bg-linear-to-r from-violet-50 to-purple-50 dark:from-violet-900/20 dark:to-purple-900/20 border border-violet-200 dark:border-violet-800">
               <div className="flex items-start gap-3">
                 <div className="p-2 bg-violet-100 dark:bg-violet-900/50 rounded-lg">
                   <Zap className="h-5 w-5 text-violet-600 dark:text-violet-400" />
@@ -2723,7 +2722,7 @@ export const Settings = ({
       <Card className="glass-card">
         <CardHeader>
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-gradient-to-br from-purple-500/20 to-pink-500/20 rounded-xl">
+            <div className="p-2 bg-linear-to-br from-purple-500/20 to-pink-500/20 rounded-xl">
               <Keyboard className="h-5 w-5 text-purple-600 dark:text-purple-400" />
             </div>
             <div>
@@ -2803,7 +2802,7 @@ export const Settings = ({
       <Card className="glass-card">
         <CardHeader>
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-gradient-to-br from-amber-500/20 to-yellow-500/20 rounded-xl">
+            <div className="p-2 bg-linear-to-br from-amber-500/20 to-yellow-500/20 rounded-xl">
               <Bell className="h-5 w-5 text-amber-600 dark:text-amber-400" />
             </div>
             <div>
@@ -2843,7 +2842,7 @@ export const Settings = ({
       <Card className="glass-card">
         <CardHeader>
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-gradient-to-br from-red-500/20 to-orange-500/20 rounded-xl">
+            <div className="p-2 bg-linear-to-br from-red-500/20 to-orange-500/20 rounded-xl">
               <Shield className="h-5 w-5 text-red-600 dark:text-red-400" />
             </div>
             <div>
@@ -2885,7 +2884,7 @@ export const Settings = ({
       <Card className="glass-card">
         <CardHeader>
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-gradient-to-br from-teal-500/20 to-cyan-500/20 rounded-xl">
+            <div className="p-2 bg-linear-to-br from-teal-500/20 to-cyan-500/20 rounded-xl">
               <HardDrive className="h-5 w-5 text-teal-600 dark:text-teal-400" />
             </div>
             <div>
@@ -2991,7 +2990,7 @@ export const Settings = ({
       <Card className="glass-card">
         <CardHeader>
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-gradient-to-br from-slate-500/20 to-gray-500/20 rounded-xl">
+            <div className="p-2 bg-linear-to-br from-slate-500/20 to-gray-500/20 rounded-xl">
               <Info className="h-5 w-5 text-slate-600 dark:text-slate-400" />
             </div>
             <div>
@@ -3001,7 +3000,7 @@ export const Settings = ({
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="p-4 rounded-lg bg-gradient-to-br from-blue-500/10 to-purple-500/10 dark:from-blue-500/20 dark:to-purple-500/20 border border-blue-200/50 dark:border-blue-800/50">
+          <div className="p-4 rounded-lg bg-linear-to-br from-blue-500/10 to-purple-500/10 dark:from-blue-500/20 dark:to-purple-500/20 border border-blue-200/50 dark:border-blue-800/50">
             <div className="flex items-center gap-3 mb-4">
               <img
                 src="/logo.png"

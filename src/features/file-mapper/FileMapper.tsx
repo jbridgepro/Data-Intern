@@ -486,7 +486,7 @@ export const FileMapper = () => {
                <Button
                  onClick={handleGenerateMap}
                  disabled={loading || !sourcePath}
-                 className="h-9 shadow-sm bg-gradient-to-r from-blue-600 to-indigo-600 text-white border-0"
+                 className="h-9 shadow-sm bg-linear-to-r from-blue-600 to-indigo-600 text-white border-0"
                >
                  {loading ? "Scanning..." : "Generate"}
                </Button>
@@ -509,8 +509,14 @@ export const FileMapper = () => {
                     className="h-8 pl-8 pr-8 text-xs bg-white/50 dark:bg-slate-800/50"
                   />
                   {searchTerm && (
-                    <button onClick={() => setSearchTerm("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
-                       <X className="h-3 w-3" />
+                    <button
+                      type="button"
+                      onClick={() => setSearchTerm("")}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                      aria-label="Clear search"
+                      title="Clear search"
+                    >
+                      <X className="h-3 w-3" />
                     </button>
                   )}
                 </div>

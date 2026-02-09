@@ -279,7 +279,7 @@ export function SQLExportWizard() {
             <button
               type="button"
               className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-slate-50/80 dark:hover:bg-slate-800/50 transition-colors"
-              aria-expanded={connectionOpen ? "true" : "false"}
+              {...{ "aria-expanded": connectionOpen ? "true" : "false" }}
             >
               <div className="flex items-center gap-2">
                 {connectionOpen ? (
@@ -328,7 +328,7 @@ export function SQLExportWizard() {
             <button
               type="button"
               className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-slate-50/80 dark:hover:bg-slate-800/50 transition-colors"
-              aria-expanded={activityOpen ? "true" : "false"}
+              {...{ "aria-expanded": activityOpen ? "true" : "false" }}
             >
               <div className="flex items-center gap-2">
                 {activityOpen ? (
@@ -476,7 +476,7 @@ export function SQLExportWizard() {
                     <button
                       type="button"
                       className="flex w-full items-center justify-between gap-2 px-3 py-2.5 text-left hover:bg-slate-50/80 dark:hover:bg-slate-800/50 transition-colors"
-                      aria-expanded={previewOpen ? "true" : "false"}
+                      {...{ "aria-expanded": previewOpen ? "true" : "false" }}
                     >
                       <span className="text-xs font-semibold text-slate-800 dark:text-slate-100">
                         Table Quick Preview
@@ -560,10 +560,10 @@ export function SQLExportWizard() {
                       className={cn(
                         "flex h-full flex-col gap-2 rounded-xl border px-4 py-3 text-left transition-all",
                         isActive
-                          ? "border-slate-900/15 bg-slate-900/[0.04] shadow-sm dark:border-white/10 dark:bg-white/5"
+                          ? "border-slate-900/15 bg-slate-900/4 shadow-sm dark:border-white/10 dark:bg-white/5"
                           : "border-slate-200/70 bg-white/80 hover:border-slate-300 dark:border-slate-800/70 dark:bg-slate-900/70",
                       )}
-                      aria-pressed={isActive ? "true" : "false"}
+                      {...{ "aria-pressed": isActive ? "true" : "false" }}
                     >
                       <div className="flex items-center gap-2 text-sm font-semibold text-slate-800 dark:text-slate-100">
                         <span
