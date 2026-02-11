@@ -139,6 +139,8 @@ jobs:
 
 
       - name: Build and upload Tauri bundles (signed macOS)
+        id: signed-build
+        continue-on-error: true
         if: (matrix.platform != 'macos' || (vars.ENABLE_MACOS_SIGNING == 'true' || vars.ENABLE_MACOS_SIGNING == '1')) && needs.validate.outputs.has-signing-key == 'true'
         uses: tauri-apps/tauri-action@v0
         env:
@@ -159,7 +161,7 @@ jobs:
           includeDebug: false
 
       - name: Build and upload Tauri bundles (unsigned fallback)
-        if: needs.validate.outputs.has-signing-key != 'true'
+        if: needs.validate.outputs.has-signing-key != 'true' || steps.signed-build.outcome == 'failure'
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
