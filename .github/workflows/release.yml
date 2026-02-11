@@ -157,7 +157,7 @@ jobs:
           includeDebug: false
 
       - name: Build and upload Tauri bundles (unsigned fallback)
-        if: matrix.platform == 'macos' && steps.check-signing-key.outputs.has-key != 'true'
+        if: steps.check-signing-key.outputs.has-key != 'true'
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -170,7 +170,7 @@ jobs:
           releaseBody: |
             ${{ needs.changelog.outputs.body }}
 
-            > **Note:** macOS build is unsigned due to missing or invalid signing key.
+            > **Note:** Build is unsigned due to missing or invalid signing key.
           releaseDraft: true
           includeDebug: false
 
