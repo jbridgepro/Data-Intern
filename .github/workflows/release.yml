@@ -31,6 +31,8 @@ jobs:
   validate:
     name: Validate
     runs-on: ubuntu-latest
+    outputs:
+      has-signing-key: ${{ steps.check-key.outputs.has-key }}
     steps:
       - uses: actions/checkout@v4
 
@@ -44,6 +46,17 @@ jobs:
         run: npx tsc --noEmit
       - name: Build frontend
         run: npm run build
+
+      - name: Check for signing key
+        id: check-key
+        env:
+          KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [ -n "$KEY" ]; then
+            echo "has-key=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has-key=false" >> "$GITHUB_OUTPUT"
+          fi
 
   # ── Generate changelog from git history ─────────────────────────
   changelog:
@@ -123,21 +136,10 @@ jobs:
           apple-certificate-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           keychain-password: ${{ secrets.KEYCHAIN_PASSWORD }}
 
-      - name: Check for signing key
-        id: check-signing-key
-        shell: bash
-        env:
-          KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-        run: |
-          if [ -n "$KEY" ]; then
-            echo "has-key=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "::warning::Tauri signing key is missing. Build will proceed unsigned."
-            echo "has-key=false" >> "$GITHUB_OUTPUT"
-          fi
+
 
       - name: Build and upload Tauri bundles (signed macOS)
-        if: (matrix.platform != 'macos' || (vars.ENABLE_MACOS_SIGNING == 'true' || vars.ENABLE_MACOS_SIGNING == '1')) && steps.check-signing-key.outputs.has-key == 'true'
+        if: (matrix.platform != 'macos' || (vars.ENABLE_MACOS_SIGNING == 'true' || vars.ENABLE_MACOS_SIGNING == '1')) && needs.validate.outputs.has-signing-key == 'true'
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -157,7 +159,7 @@ jobs:
           includeDebug: false
 
       - name: Build and upload Tauri bundles (unsigned fallback)
-        if: steps.check-signing-key.outputs.has-key != 'true'
+        if: needs.validate.outputs.has-signing-key != 'true'
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -175,7 +177,7 @@ jobs:
           includeDebug: false
 
       - name: Build and upload Tauri bundles (unsigned macOS + updater)
-        if: (matrix.platform == 'macos' && !(vars.ENABLE_MACOS_SIGNING == 'true' || vars.ENABLE_MACOS_SIGNING == '1')) && steps.check-signing-key.outputs.has-key == 'true'
+        if: (matrix.platform == 'macos' && !(vars.ENABLE_MACOS_SIGNING == 'true' || vars.ENABLE_MACOS_SIGNING == '1')) && needs.validate.outputs.has-signing-key == 'true'
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -194,7 +196,7 @@ jobs:
           includeDebug: false
 
       - name: Build and upload Tauri bundles (unsigned macOS - no updater)
-        if: (matrix.platform == 'macos' && !(vars.ENABLE_MACOS_SIGNING == 'true' || vars.ENABLE_MACOS_SIGNING == '1')) && steps.check-signing-key.outputs.has-key != 'true'
+        if: (matrix.platform == 'macos' && !(vars.ENABLE_MACOS_SIGNING == 'true' || vars.ENABLE_MACOS_SIGNING == '1')) && needs.validate.outputs.has-signing-key != 'true'
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
