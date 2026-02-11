@@ -87,7 +87,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEE0M0Q5RjYwRERFRDMzODYKUldTR00rM2RZSjg5cEpvdGtRdmtMY2Z1WVUzZkVxa0J3blM2S21sYUFtaWFIOEhlL2tnVWw1OTMK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDREM0U5QTQ5QUI5OUIwMDEKUldRQnNKbXJTWm8rVFpuQWtSTnBnUUxoQU1GbVprdzRNb0NRbS95U2dBMHF2VjQ4bjFRTVFiK3IK",
       "endpoints": [
         "https://github.com/jbridgepro/projectfile-pro/releases/latest/download/latest.json"
       ],
