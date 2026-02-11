@@ -1,8 +1,8 @@
 [package]
 name = "projectfile-pro"
 version = "1.0.5"
-description = "A Tauri App"
-authors = ["you"]
+description = "Professional file management and organization tool"
+authors = ["ProjectFile Pro"]
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -33,3 +33,5 @@ tokio-util = { version = "0.7", features = ["compat"] }
 futures = "0.3"
 base64 = "0.22"
 sqlx = { version = "0.7", features = ["runtime-tokio-native-tls", "mysql", "postgres", "sqlite", "macros"] }
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"

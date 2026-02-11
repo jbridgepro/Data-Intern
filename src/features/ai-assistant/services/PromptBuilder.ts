@@ -324,8 +324,10 @@ export class PromptBuilder {
 
         // Also check for "and add/put" pattern which implies hierarchy
         const hasAndAdd = /folder.*(?:and\s+(?:add|put|create)).*(?:document|file)/i.test(lower);
+        // Also match "1 folder and 3 files inside" pattern
+        const hasCountedFiles = /folder.*(?:and)\s+(?:\d+|two|three|four|five|six|seven|eight|nine|ten|some|a few|several|multiple)\s+(?:new\s+)?files/i.test(lower);
 
-        return hasFolderKeyword && hasFileKeyword && (hasHierarchy || hasAndAdd);
+        return hasFolderKeyword && hasFileKeyword && (hasHierarchy || hasAndAdd || hasCountedFiles);
     }
 
     /**
@@ -364,6 +366,12 @@ export class PromptBuilder {
             /(?:create|make|add|put)\s+(?:a\s+)?note/i,     // "create a note"
             /document\s+(?:called|named|inside)/i,          // "document called X"
             /file\s+(?:called|named)\s+[^.]+(?:\s|$)/i,     // "file called X" (no extension)
+            // Catch numbered file requests (e.g. "3 files")
+            /(?:create|make|add|put)\s+(?:\d+|two|three|four|five|six|seven|eight|nine|ten|some|a few|several|multiple)\s+(?:new\s+)?files/i,
+            // Catch "files inside" matches
+            /files?\s+(?:inside|in|within|into)/i,
+            // Catch bare "create/make files" (no count, no type)
+            /(?:create|make)\s+(?:new\s+)?files?\s*$/i,
         ];
 
         return ambiguousTerms.some(pattern => pattern.test(command));
@@ -384,13 +392,23 @@ export class PromptBuilder {
             prompt += `\n⚠️ **STOP - CLARIFICATION REQUIRED** ⚠️\n\n`;
             prompt += `The user said "document" or "file" but did NOT specify what type (txt, docx, md, etc.).\n\n`;
             prompt += `**YOU MUST NOT CALL ANY TOOLS YET.**\n\n`;
+
+            // Check if filenames are missing (numbered request)
+            const isNumberedRequest = /\d+\s+files|\s+files/i.test(command);
+
             prompt += `Instead, respond with ONLY this question (customize the folder/file names):\n\n`;
             prompt += `---\n`;
             prompt += `I'll create the folder "[folder name]" for you.\n\n`;
-            prompt += `What type of file would you like for "[file name]"?\n`;
-            prompt += `- **.txt** - Plain text\n`;
-            prompt += `- **.docx** - Word document\n`;
-            prompt += `- **.md** - Markdown\n`;
+
+            if (isNumberedRequest) {
+                prompt += `For the files inside, what should I name them and what type (extension) should they be?\n`;
+                prompt += `- Example: "notes.txt", "report.docx"\n`;
+            } else {
+                prompt += `What type of file would you like for "[file name]"?\n`;
+                prompt += `- **.txt** - Plain text\n`;
+                prompt += `- **.docx** - Word document\n`;
+                prompt += `- **.md** - Markdown\n`;
+            }
             prompt += `- Or tell me another format\n`;
             prompt += `---\n\n`;
             prompt += `**CRITICAL**: Do NOT use tool_use. Do NOT create any files. Just ask the question above.\n`;
@@ -426,12 +444,21 @@ export class PromptBuilder {
             prompt += `\n\n⚠️ **STOP - CLARIFICATION REQUIRED** ⚠️\n\n`;
             prompt += `The user said "document" or "file" but did NOT specify what type (txt, docx, md, etc.).\n\n`;
             prompt += `**YOU MUST NOT CALL ANY TOOLS YET.**\n\n`;
+
+            // Check if filenames are missing (numbered request)
+            const isNumberedRequest = /\d+\s+files|\s+files/i.test(command);
+
             prompt += `Instead, respond with ONLY this question:\n\n`;
             prompt += `---\n`;
-            prompt += `What type of file would you like to create?\n`;
-            prompt += `- **.txt** - Plain text\n`;
-            prompt += `- **.docx** - Word document\n`;
-            prompt += `- **.md** - Markdown\n`;
+
+            if (isNumberedRequest) {
+                prompt += `What should I name these files, and what type (extension) should they be?\n`;
+            } else {
+                prompt += `What type of file would you like to create?\n`;
+                prompt += `- **.txt** - Plain text\n`;
+                prompt += `- **.docx** - Word document\n`;
+                prompt += `- **.md** - Markdown\n`;
+            }
             prompt += `- Or tell me another format\n`;
             prompt += `---\n\n`;
             prompt += `**CRITICAL**: Do NOT use tool_use. Do NOT create any files. Just ask the question above.\n`;

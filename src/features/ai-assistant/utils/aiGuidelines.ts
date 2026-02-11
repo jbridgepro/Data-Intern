@@ -43,6 +43,8 @@ export const TOOL_USAGE_GUIDELINES = `
      * "file" - Could be any type
      * "note" - Could be .txt, .md, .note, etc.
      * "spreadsheet" - Could be .xlsx, .csv, .numbers, etc.
+     * "3 files" / "some files" - Count without names/types
+     * "files inside" - Location without names/types
    - Terms that DO NOT require clarification (extension is clear):
      * "text file" → .txt
      * "Word document" → .docx
@@ -125,7 +127,8 @@ export const TOOL_USAGE_GUIDELINES = `
      
      * **Step 1: Check if file type is specified**
        - If user says "add a document" or "add a file" WITHOUT extension → ASK for file type first!
-       - Example response: "I'll create the folder 'Justin's new project'. What type of file would you like for 'new idea'? Options: .txt (plain text), .docx (Word document), .md (Markdown), or another type?"
+       - If user says "3 files" or "some files" WITHOUT specifying type → ASK for file type AND names!
+       - Example: "I'll create the folder 'Justin's new project'. For the 3 files, what should they be named and what type (.txt, .docx)?"
        
      * **Step 2: Create the folder** (after clarification if needed)
        - Use 'create_directory' or 'folder_creation_tab'

@@ -1,25 +1,56 @@
 # File: .github/workflows/build.yml
-# Multi-platform build for ProjectFile Pro (Tauri 2).
-# Produces signed/notarized macOS DMG when Apple secrets are set; clean artifacts for Windows and Linux.
+# Multi-platform CI build for ProjectFile Pro (Tauri 2).
+# Runs a fast type-check gate, then builds per-platform bundles.
+# macOS: signing and notarization when ENABLE_MACOS_SIGNING and Apple secrets are set.
 
-name: Multi-Platform Build
+name: CI Build
 
 on:
   push:
     branches:
       - master
-    tags:
-      - 'v*'
+    paths-ignore:
+      - "*.md"
+      - "docs/**"
+      - "LICENSE"
+      - ".gitignore"
+  pull_request:
+    branches:
+      - master
+    paths-ignore:
+      - "*.md"
+      - "docs/**"
+      - "LICENSE"
+      - ".gitignore"
   workflow_dispatch:
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
-  # Prevent Tauri CLI from receiving invalid --ci 1 (GitHub sets CI=true → "1");
-  # Tauri expects --ci true/false string. Unset for the build job so tauri build runs non-interactive without invalid flag.
   CI: "false"
 
 jobs:
+  # ── Fast-fail gate ──────────────────────────────────────────────
+  lint:
+    name: Type Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - run: npm ci
+      - run: npx tsc --noEmit
+
+  # ── Multi-platform build ────────────────────────────────────────
   build:
-    name: Build (${{ matrix.os }})
+    name: Build (${{ matrix.platform }})
+    needs: [lint]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -33,91 +64,51 @@ jobs:
             platform: windows
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Setup Tauri build environment
+        uses: ./.github/actions/setup-tauri
         with:
-          node-version: "20"
-          cache: "npm"
+          enable-macos-signing: ${{ vars.ENABLE_MACOS_SIGNING || 'false' }}
+          apple-certificate: ${{ secrets.APPLE_CERTIFICATE }}
+          apple-certificate-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          keychain-password: ${{ secrets.KEYCHAIN_PASSWORD }}
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      # --- Linux: install system deps required by Tauri (WebKitGTK, etc.)
-      - name: Install Linux dependencies
-        if: matrix.platform == 'linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential \
-            curl \
-            wget \
-            file \
-            libgtk-3-dev \
-            libwebkit2gtk-4.1-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
-            libssl-dev \
-            libxdo-dev \
-            libglib2.0-dev
-
-      # --- macOS: import Developer ID certificate for code signing (optional).
-      # Set repository variable ENABLE_MACOS_SIGNING = true and add Apple secrets to enable signing + notarization.
-      - name: Import Apple Developer Certificate (macOS)
-        if: matrix.platform == 'macos' && (vars.ENABLE_MACOS_SIGNING == 'true' || vars.ENABLE_MACOS_SIGNING == '1')
-        env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
-        run: |
-          echo "$APPLE_CERTIFICATE" | base64 --decode > certificate.p12
-          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
-          security default-keychain -s build.keychain
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
-          security set-keychain-settings -t 3600 -u build.keychain
-          security import certificate.p12 -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/productbuild
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
-          security find-identity -v -p codesigning build.keychain
-
-      - name: Set Apple signing identity (macOS)
-        if: matrix.platform == 'macos' && (vars.ENABLE_MACOS_SIGNING == 'true' || vars.ENABLE_MACOS_SIGNING == '1')
-        id: apple-identity
-        run: |
-          IDENTITY=$(security find-identity -v -p codesigning build.keychain | grep "Developer ID Application" | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
-          if [ -z "$IDENTITY" ]; then
-            echo "Developer ID Application identity not found; listing:"
-            security find-identity -v -p codesigning build.keychain
-            exit 1
-          fi
-          echo "signing_identity=$IDENTITY" >> $GITHUB_OUTPUT
-
-      - name: Install frontend dependencies
-        run: npm ci
-
-      # Windows: build NSIS only to avoid WiX download (GitHub/CDN often returns 500 for wix314-binaries.zip).
+      # Windows: build NSIS only to avoid WiX download (CDN often returns 500 for wix314-binaries.zip).
       - name: Build Tauri app (Windows)
         if: matrix.platform == 'windows'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: npm run tauri build -- --bundles nsis
 
-      # Linux: build DEB + RPM only to avoid AppImage/AppRun download (tauri-apps/binary-releases often returns 500).
       - name: Build Tauri app (Linux)
         if: matrix.platform == 'linux'
-        run: npm run tauri build -- --bundles deb,rpm
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npm run tauri build -- --bundles deb,rpm,appimage
 
-      - name: Build Tauri app (macOS)
-        if: matrix.platform == 'macos'
+      - name: Build Tauri app (macOS – signed)
+        if: matrix.platform == 'macos' && (vars.ENABLE_MACOS_SIGNING == 'true' || vars.ENABLE_MACOS_SIGNING == '1')
         env:
           APPLE_SIGNING_IDENTITY: ${{ steps.apple-identity.outputs.signing_identity }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: npm run tauri build
 
-      # --- Verification: macOS code signature and notarization staple
+      - name: Build Tauri app (macOS – unsigned)
+        if: matrix.platform == 'macos' && !(vars.ENABLE_MACOS_SIGNING == 'true' || vars.ENABLE_MACOS_SIGNING == '1')
+        env:
+          APPLE_SIGNING_IDENTITY: "-"
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npm run tauri build
+
+      # ── Verification ──
       - name: Verify macOS code signature and notarization
-        if: matrix.platform == 'macos' && success()
+        if: matrix.platform == 'macos' && success() && (vars.ENABLE_MACOS_SIGNING == 'true' || vars.ENABLE_MACOS_SIGNING == '1')
         run: |
           BUNDLE_DIR="src-tauri/target/release/bundle/macos"
           APP_PATH="$BUNDLE_DIR/projectfile-pro.app"
@@ -137,7 +128,7 @@ jobs:
             xcrun stapler validate "$APP_PATH" || true
           fi
 
-      # --- Upload artifacts (paths match Tauri 2 default bundle output)
+      # ── Upload artifacts ──
       - name: Upload Build Artifacts (Linux)
         if: matrix.platform == 'linux' && success()
         uses: actions/upload-artifact@v4
@@ -146,6 +137,7 @@ jobs:
           path: |
             src-tauri/target/release/bundle/deb/*.deb
             src-tauri/target/release/bundle/rpm/*.rpm
+            src-tauri/target/release/bundle/appimage/*.AppImage
 
       - name: Upload Build Artifacts (macOS)
         if: matrix.platform == 'macos' && success()

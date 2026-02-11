@@ -83,6 +83,12 @@ export function needsFileTypeClarification(command: string): boolean {
     /(?:create|make|add|put)\s+(?:a\s+)?note/i,     // "create a note"
     /document\s+(?:called|named|inside)/i,          // "document called X"
     /file\s+(?:called|named)\s+[^.]+(?:\s|$)/i,     // "file called X" (no extension)
+    // Catch numbered file requests (e.g. "3 files")
+    /(?:create|make|add|put)\s+(?:\d+|two|three|four|five|six|seven|eight|nine|ten|some|a few|several|multiple)\s+(?:new\s+)?files/i,
+    // Catch "files inside" matches
+    /files?\s+(?:inside|in|within|into)/i,
+    // Catch bare "create/make files" (no count, no type)
+    /(?:create|make)\s+(?:new\s+)?files?\s*$/i,
   ];
 
   return ambiguousTerms.some(pattern => pattern.test(command));
@@ -114,11 +120,13 @@ export function isCompositeCreationRequest(command: string): boolean {
 
   // Also check for "and add/put" pattern which implies hierarchy
   const hasAndAdd = /folder.*(?:and\s+(?:add|put|create)).*(?:document|file)/i.test(lower);
+  // Also match "1 folder and 3 files inside" pattern
+  const hasCountedFiles = /folder.*(?:and)\s+(?:\d+|two|three|four|five|six|seven|eight|nine|ten|some|a few|several|multiple)\s+(?:new\s+)?files/i.test(lower);
 
   // Debug logging
   console.log(`[isCompositeCreationRequest] folder=${hasFolderKeyword}, file=${hasFileKeyword}, hierarchy=${hasHierarchy}, andAdd=${hasAndAdd}`);
 
-  return hasFolderKeyword && hasFileKeyword && (hasHierarchy || hasAndAdd);
+  return hasFolderKeyword && hasFileKeyword && (hasHierarchy || hasAndAdd || hasCountedFiles);
 }
 
 /**

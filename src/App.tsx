@@ -39,6 +39,7 @@ import {
   applyThemePreferences,
   loadThemePreferences,
 } from "./lib/themePreferences";
+import { UpdateChecker } from "./components/common/UpdateChecker";
 
 function App() {
   // Use persistent state for active tab
@@ -241,6 +242,8 @@ function App() {
       <ChatProvider>
         <EditorProvider>
           <div className="flex h-screen flex-col bg-background font-sans text-foreground overflow-hidden">
+            {/* Auto-update checker */}
+            <UpdateChecker />
             {/* Title Bar */}
             <TitleBar
               isVisible={configuration.layout.showTitleBar}
