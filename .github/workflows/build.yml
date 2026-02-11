@@ -64,6 +64,9 @@ jobs:
             platform: windows
 
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Setup Tauri build environment
         uses: ./.github/actions/setup-tauri
         with:
