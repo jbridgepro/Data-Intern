@@ -53,7 +53,12 @@ jobs:
           KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: |
           if [ -n "$KEY" ]; then
-            echo "has-key=true" >> "$GITHUB_OUTPUT"
+            if [[ "$KEY" == "untrusted comment"* ]]; then
+              echo "::warning::Tauri signing key appears to include the file header ('untrusted comment'). Please update the secret to contain ONLY the base64 key payload (the second line of the key file)."
+              echo "has-key=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "has-key=true" >> "$GITHUB_OUTPUT"
+            fi
           else
             echo "has-key=false" >> "$GITHUB_OUTPUT"
           fi
