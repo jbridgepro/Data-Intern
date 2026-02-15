@@ -1,0 +1,2467 @@
+/**
+ * File: src/features/ai-assistant/utils/aiService.ts
+ * 
+ * Service for interacting with AI providers (Anthropic Claude API and Ollama).
+ * Handles AI-powered file organization suggestions and command processing.
+ * Supports tool use for custom file operations and MCP tools.
+ */
+
+import Anthropic from '@anthropic-ai/sdk';
+import type { AISettings, FileOperation, DirectoryAnalysis, DEFAULT_CONTEXT_SETTINGS } from '../types';
+import { getAllTools, executeTool, type ToolContext, type ToolResult } from './toolsRegistry';
+import { executeMCPTool, isMCPTool, parseMCPToolName } from './mcpIntegration';
+import {
+  isFileCreationRequest,
+  parseFileCreationRequest,
+  isCompositeCreationRequest,
+  parseCompositeCreationRequest,
+  isFolderCreationRequest,
+  parseFolderCreationRequest,
+  needsFileTypeClarification,
+} from './fileCreationFallback';
+import { toolOrchestrator } from './toolOrchestrator';
+import { generateSystemPrompt } from './aiGuidelines';
+import { getClawdhubSkillsContext } from './clawdhubToolDiscovery';
+import type { ToolExecutionInfo } from '../components/ToolExecutionCard';
+import type { ReasoningStep } from '../components/ReasoningChain';
+import { ResponseParser } from '../services/ResponseParser';
+import {
+  initializeOllamaClient,
+  processCommandWithOllama,
+  testOllamaConnection,
+  listOllamaModels
+} from './ollamaService';
+import {
+  ContextManager,
+  contextManager,
+  type ConversationMessage
+} from './contextManager';
+import {
+  openRouterService,
+  type OpenRouterMessage,
+} from './openRouterService';
+import { DEFAULT_OPENROUTER_SETTINGS } from '../types';
+
+let anthropicClient: Anthropic | null = null;
+
+/**
+ * Initializes the AI client based on provider settings.
+ */
+export function initializeAIClient(settings: AISettings): void {
+  if (settings.provider === 'anthropic') {
+    // Initialize Anthropic client
+    if (!settings.apiKey) {
+      anthropicClient = null;
+      return;
+    }
+
+    try {
+      anthropicClient = new Anthropic({
+        apiKey: settings.apiKey,
+      });
+    } catch (error) {
+      console.error('Failed to initialize Anthropic client:', error);
+      anthropicClient = null;
+    }
+  } else if (settings.provider === 'ollama') {
+    // Initialize Ollama client
+    initializeOllamaClient({
+      baseUrl: settings.ollamaBaseUrl || 'http://localhost:11434',
+      model: settings.ollamaModel || settings.model || 'llama3.2:3b',
+    });
+  } else if (settings.provider === 'openrouter') {
+    // Initialize OpenRouter service with settings
+    const openRouterSettings = settings.openRouter || DEFAULT_OPENROUTER_SETTINGS;
+    openRouterService.updateSettings(openRouterSettings);
+    console.log(`[AI Service] OpenRouter initialized with model: ${openRouterSettings.model}`);
+  }
+}
+
+/**
+ * Gets the model name for Anthropic API based on settings.
+ * Uses the latest Claude 4.5 series models.
+ */
+function getModelName(settings: AISettings): string {
+  const modelMap: Record<string, string> = {
+    'claude-sonnet': 'claude-sonnet-4-20250514', // Claude Sonnet 4.5
+    'claude-opus': 'claude-opus-4-20250514', // Claude Opus 4.5
+    'claude-haiku': 'claude-3-5-haiku-20241022', // Claude Haiku 4.5
+  };
+  return modelMap[settings.model] || modelMap['claude-sonnet'];
+}
+
+/**
+ * Gets the temperature based on creativity level.
+ */
+function getTemperature(creativityLevel: AISettings['creativityLevel']): number {
+  const tempMap = {
+    'conservative': 0.3,
+    'balanced': 0.7,
+    'creative': 1.0,
+  };
+  return tempMap[creativityLevel];
+}
+
+/**
+ * Formats tool results in natural language for user-facing responses.
+ * Prevents raw JSON from being shown to users.
+ */
+function formatToolResultForUser(toolName: string, toolResult: ToolResult): string {
+  if (!toolResult.success) {
+    return `I encountered an error: ${toolResult.error || 'Unknown error'}.`;
+  }
+
+  if (!toolResult.data) {
+    return 'Operation completed successfully.';
+  }
+
+  const data = toolResult.data;
+
+  // Format common tool results
+  switch (toolName) {
+    case 'analyze_directory':
+      if (data.totalFiles !== undefined) {
+        const fileTypes = data.fileTypes || [];
+        const imageTypes = fileTypes.filter((ft: any) =>
+          ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'svg', 'heic', 'heif'].includes(ft.extension?.toLowerCase())
+        );
+        if (imageTypes.length > 0) {
+          const totalImages = imageTypes.reduce((sum: number, ft: any) => sum + (ft.count || 0), 0);
+          return `Found ${totalImages} image file${totalImages !== 1 ? 's' : ''} in ${data.totalFiles} total file${data.totalFiles !== 1 ? 's' : ''}.`;
+        }
+        return `Found ${data.totalFiles} file${data.totalFiles !== 1 ? 's' : ''} in the directory.`;
+      }
+      break;
+
+    case 'folder_creation_tab':
+    case 'folder_creation':
+      if (data.foldersCreated !== undefined) {
+        return `Created ${data.foldersCreated} folder${data.foldersCreated !== 1 ? 's' : ''} successfully.`;
+      }
+      break;
+
+    case 'file_creation_tab':
+    case 'file_creation':
+      if (data.filesCreated !== undefined) {
+        return `Created ${data.filesCreated} file${data.filesCreated !== 1 ? 's' : ''} successfully.`;
+      }
+      break;
+
+    case 'write_file_content':
+      if (data.fileName) {
+        return `Created file: ${data.fileName}.`;
+      } else if (data.path) {
+        const fileName = data.path.split('/').pop() || data.path;
+        return `Created file: ${fileName}.`;
+      }
+      return 'File created successfully.';
+      break;
+
+    case 'search_files':
+      if (data.count !== undefined) {
+        return `Found ${data.count} file${data.count !== 1 ? 's' : ''} matching your search.`;
+      }
+      break;
+
+    case 'list_directory_contents':
+      if (data.count !== undefined) {
+        return `Listed ${data.count} item${data.count !== 1 ? 's' : ''} in the directory.`;
+      }
+      break;
+
+    case 'calculate_directory_size':
+      if (data.totalSizeFormatted) {
+        return `Total directory size: ${data.totalSizeFormatted} (${data.fileCount} files, ${data.folderCount} folders).`;
+      }
+      break;
+
+    case 'find_duplicates':
+      if (data.totalDuplicates !== undefined) {
+        return `Found ${data.totalDuplicates} duplicate file${data.totalDuplicates !== 1 ? 's' : ''}.`;
+      }
+      break;
+
+    case 'delete_files':
+      if (data.count !== undefined) {
+        return `Deleted ${data.count} file${data.count !== 1 ? 's' : ''} successfully.`;
+      }
+      break;
+
+    case 'organize_files':
+      if (data.fileCount !== undefined) {
+        return `Organized ${data.fileCount} file${data.fileCount !== 1 ? 's' : ''}.`;
+      }
+      break;
+
+    case 'rename_files':
+      if (data.fileCount !== undefined) {
+        return `Renamed ${data.fileCount} file${data.fileCount !== 1 ? 's' : ''} successfully.`;
+      }
+      break;
+
+    default:
+      // Generic formatting for unknown tools
+      if (data.message) {
+        return data.message;
+      }
+      if (data.count !== undefined) {
+        return `Processed ${data.count} item${data.count !== 1 ? 's' : ''}.`;
+      }
+      return 'Operation completed successfully.';
+  }
+
+  return 'Operation completed successfully.';
+}
+
+type PendingCompositeContext = {
+  folderName: string;
+  count: number;
+};
+
+function detectFileTypeReply(command: string): string | null {
+  const raw = command.trim().toLowerCase();
+  const plain = raw.replace(/^\.+/, '');
+  const map: Record<string, string> = {
+    txt: 'txt',
+    text: 'txt',
+    docx: 'docx',
+    doc: 'docx',
+    word: 'docx',
+    md: 'md',
+    markdown: 'md',
+    pdf: 'pdf',
+    rtf: 'rtf',
+    csv: 'csv',
+    xlsx: 'xlsx',
+    xls: 'xls',
+  };
+  return map[plain] || null;
+}
+
+function parseCountFromText(text: string): number | null {
+  const lower = text.toLowerCase();
+  const wordMap: Record<string, number> = {
+    one: 1,
+    two: 2,
+    three: 3,
+    four: 4,
+    five: 5,
+    six: 6,
+    seven: 7,
+    eight: 8,
+    nine: 9,
+    ten: 10,
+  };
+  const numberMatch = lower.match(/(\d+)\s+(?:files?|documents?)/i);
+  if (numberMatch?.[1]) return Math.max(1, parseInt(numberMatch[1], 10));
+  const wordMatch = lower.match(/\b(one|two|three|four|five|six|seven|eight|nine|ten)\s+(?:files?|documents?)\b/i);
+  if (wordMatch?.[1]) return wordMap[wordMatch[1]] || 1;
+  return null;
+}
+
+function extractPendingCompositeContext(
+  conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>
+): PendingCompositeContext | null {
+  if (!conversationHistory || conversationHistory.length === 0) return null;
+
+  let folderName: string | null = null;
+  let count: number | null = null;
+
+  for (let i = conversationHistory.length - 1; i >= 0; i -= 1) {
+    const msg = conversationHistory[i];
+    const content = msg.content || '';
+
+    if (msg.role === 'assistant') {
+      if (/what\s+type\s+of\s+files?/i.test(content)) {
+        const folderMatch = content.match(/folder\s+"([^"]+)"/i);
+        if (folderMatch?.[1]) folderName = folderMatch[1].trim();
+      }
+    }
+
+    if (msg.role === 'user') {
+      if (/folder|directory/i.test(content) && /document|file/i.test(content)) {
+        if (!folderName) {
+          const folderMatch =
+            content.match(/(?:folder|directory)\s+(?:called|named|titled)\s+["']?([^"']+)["']?/i) ||
+            content.match(/(?:folder|directory)\s+["']?([^"']+)["']?/i);
+          if (folderMatch?.[1]) folderName = folderMatch[1].trim();
+        }
+        if (count === null) {
+          count = parseCountFromText(content);
+        }
+      }
+    }
+
+    if (folderName && count !== null) break;
+  }
+
+  if (!folderName) return null;
+  return {
+    folderName,
+    count: count || 1,
+  };
+}
+
+/**
+ * Processes a user command using AI with tool use support.
+ * The AI can call custom file operation tools and MCP tools.
+ * Supports both Anthropic and Ollama providers.
+ */
+export async function processCommandWithAI(
+  command: string,
+  currentDirectory: string,
+  directoryAnalysis: DirectoryAnalysis | null,
+  settings: AISettings,
+  abortSignal?: AbortSignal,
+  conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>,
+  voiceContext?: { enabled: boolean; persona?: string },
+  progressCallbacks?: {
+    onToolExecutions?: (tools: ToolExecutionInfo[]) => void;
+    onReasoningSteps?: (steps: ReasoningStep[]) => void;
+  }
+): Promise<{ content: string; operation?: FileOperation; metadata?: any }> {
+  // Route to appropriate provider
+  if (settings.provider === 'ollama') {
+    return processCommandWithOllamaProvider(
+      command,
+      currentDirectory,
+      directoryAnalysis,
+      settings,
+      abortSignal,
+      conversationHistory,
+      voiceContext,
+      progressCallbacks
+    );
+  } else if (settings.provider === 'openrouter') {
+    return processCommandWithOpenRouterProvider(
+      command,
+      currentDirectory,
+      directoryAnalysis,
+      settings,
+      abortSignal,
+      conversationHistory,
+      voiceContext,
+      progressCallbacks
+    );
+  } else {
+    // Default to Anthropic
+    return processCommandWithAnthropicProvider(
+      command,
+      currentDirectory,
+      directoryAnalysis,
+      settings,
+      abortSignal,
+      conversationHistory,
+      voiceContext,
+      progressCallbacks
+    );
+  }
+}
+
+/**
+ * Processes a user command using Anthropic Claude API.
+ */
+async function processCommandWithAnthropicProvider(
+  command: string,
+  currentDirectory: string,
+  directoryAnalysis: DirectoryAnalysis | null,
+  settings: AISettings,
+  abortSignal?: AbortSignal,
+  conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>,
+  voiceContext?: { enabled: boolean; persona?: string },
+  progressCallbacks?: {
+    onToolExecutions?: (tools: ToolExecutionInfo[]) => void;
+    onReasoningSteps?: (steps: ReasoningStep[]) => void;
+  }
+): Promise<{ content: string; operation?: FileOperation; metadata?: any }> {
+  if (!anthropicClient || !settings.apiKey) {
+    return {
+      content: 'Please configure your Anthropic API key in settings to use AI-powered features.',
+    };
+  }
+
+    const toolExecutions: ToolExecutionInfo[] = [];
+    const reasoningSteps: ReasoningStep[] = [];
+    let operation: FileOperation | undefined;
+
+  try {
+    // Get all available tools (custom + MCP), filtered by settings
+    const tools = await getAllTools(settings);
+    const toolDefinitions = tools.map(tool => ({
+      name: tool.name,
+      description: tool.description,
+      input_schema: tool.input_schema,
+    }));
+
+    let systemPrompt = settings.systemPrompt;
+
+    if (!systemPrompt) {
+      let skillContext = '';
+      if (settings.clawdbotEnabled) {
+        try {
+          skillContext = await getClawdhubSkillsContext();
+        } catch (e) {
+          console.error("Failed to get skill context", e);
+        }
+      }
+
+      systemPrompt = generateSystemPrompt(tools, {
+        clawdbotEnabled: settings.clawdbotEnabled,
+        aiName: settings.aiName,
+        userName: settings.userName
+      }, skillContext, voiceContext);
+    }
+
+    const userPrompt = buildUserPrompt(command, currentDirectory, directoryAnalysis);
+    const context: ToolContext = {
+      currentDirectory,
+      settings,
+      directoryAnalysis,
+    };
+
+    // Shortcut: user is replying with a file type for a pending composite request.
+    const fileTypeReply = detectFileTypeReply(command);
+    if (fileTypeReply) {
+      const pending = extractPendingCompositeContext(conversationHistory);
+      if (pending && context.currentDirectory) {
+        const folderPath = `${context.currentDirectory}/${pending.folderName}`;
+        const folderRes = await executeTool('create_directory', { path: folderPath }, context);
+        toolExecutions.push({
+          tool: 'create_directory',
+          description: `Create folder: ${pending.folderName}`,
+          params: { path: folderPath },
+          status: folderRes.success ? 'success' : 'error',
+          result: folderRes,
+        });
+
+        const createdFiles: string[] = [];
+        const errors: string[] = [];
+        for (let i = 1; i <= pending.count; i += 1) {
+          const fileName = `Document ${i}.${fileTypeReply}`;
+          const filePath = `${folderPath}/${fileName}`;
+          const fileRes = await executeTool(
+            'write_file_content',
+            { path: filePath, content: '', createDirectories: true, overwrite: false },
+            context
+          );
+          toolExecutions.push({
+            tool: 'write_file_content',
+            description: `Create file: ${fileName}`,
+            params: { path: filePath, content: '', createDirectories: true, overwrite: false },
+            status: fileRes.success ? 'success' : 'error',
+            result: fileRes,
+          });
+          if (fileRes.success) createdFiles.push(fileName);
+          else if (fileRes.error) errors.push(fileRes.error);
+        }
+        progressCallbacks?.onToolExecutions?.([...toolExecutions]);
+
+        let responseText = `Created ${createdFiles.length} file(s) in "${pending.folderName}": ${createdFiles.join(', ')}.`;
+        if (errors.length > 0) responseText += ` ${errors.length} failed: ${errors.join('; ')}`;
+
+        return {
+          content: responseText,
+          operation,
+          metadata: {
+            model: settings.model,
+            toolsUsed: toolExecutions.length,
+            toolExecutions,
+            reasoningSteps,
+          },
+        };
+      }
+    }
+
+    // Build conversation history - use intelligent context selection
+    const messages: Anthropic.MessageParam[] = [];
+
+    // Configure context manager with user settings
+    if (settings.contextSettings) {
+      contextManager.updateSettings(settings.contextSettings);
+    }
+
+    // Use intelligent context selection instead of simple slice
+    if (conversationHistory && conversationHistory.length > 0) {
+      // Convert to ConversationMessage format with enriched metadata
+      const enrichedHistory: ConversationMessage[] = conversationHistory.map((msg, idx) =>
+        contextManager.enrichMessageMetadata({
+          id: `msg-${idx}`,
+          role: msg.role,
+          content: msg.content,
+          timestamp: Date.now() - (conversationHistory.length - idx) * 1000,
+        })
+      );
+
+      // Select relevant context based on current command
+      const contextResult = contextManager.selectRelevantContext(enrichedHistory, command);
+
+      // Log context selection for debugging (can be removed in production)
+      if (contextResult.truncated) {
+        console.log(`[Context Manager] Selected ${contextResult.messagesIncluded}/${contextResult.totalMessagesConsidered} messages`);
+        if (contextResult.contextSummary) {
+          console.log(`[Context Manager] Summary: ${contextResult.contextSummary}`);
+        }
+      }
+
+      // Format and add selected context to messages
+      const formattedContext = contextManager.formatContextForProvider(contextResult);
+      for (const msg of formattedContext) {
+        messages.push({
+          role: msg.role,
+          content: msg.content,
+        });
+      }
+    }
+
+    // Add current user message
+    messages.push({
+      role: 'user',
+      content: userPrompt,
+    });
+
+    let finalResponse = '';
+    // Definitions moved to outer scope
+    let maxIterations = 10; // Prevent infinite loops
+    let iteration = 0;
+    let stepCounter = 1;
+
+    // Set up progress callbacks for tool orchestrator
+    toolOrchestrator.setProgressCallback((step, total, tool, progress) => {
+      // Update tool execution progress
+      const execution = toolExecutions.find(e => e.tool === tool);
+      if (execution) {
+        execution.progress = progress;
+        execution.status = 'running';
+        progressCallbacks?.onToolExecutions?.([...toolExecutions]);
+      }
+    });
+
+    toolOrchestrator.setStepCompleteCallback((step, tool, result) => {
+      const execution = toolExecutions.find(e => e.tool === tool);
+      if (execution) {
+        execution.status = result.success ? 'success' : 'error';
+        execution.result = result;
+        progressCallbacks?.onToolExecutions?.([...toolExecutions]);
+      }
+    });
+
+    while (iteration < maxIterations) {
+      const response = await anthropicClient.messages.create({
+        model: getModelName(settings),
+        max_tokens: settings.maxTokens || 4096,
+        temperature: getTemperature(settings.creativityLevel),
+        system: systemPrompt,
+        tools: toolDefinitions,
+        messages,
+      }, { signal: abortSignal });
+
+      // Process the response
+      for (const content of response.content) {
+        if (content.type === 'text') {
+          // Extract reasoning from text response
+          const text = content.text;
+
+          // Check if this looks like reasoning (contains "I need", "I'll", "Based on", etc.)
+          const reasoningIndicators = [
+            /I need to/i,
+            /I'll/i,
+            /I should/i,
+            /Based on/i,
+            /First, I'll/i,
+            /Next, I'll/i,
+            /Let me/i,
+            /I'll start by/i,
+            /I'll use/i,
+            /I'm going to/i,
+            /I will/i,
+            /To accomplish/i,
+            /The best approach/i,
+            /I should first/i,
+            /Let me analyze/i,
+            /I'll check/i,
+          ];
+
+          const isReasoning = reasoningIndicators.some(pattern => pattern.test(text));
+
+          // Extract reasoning steps from text (look for numbered steps or sequential reasoning)
+          if (isReasoning) {
+            // Check if this is planning/analysis before tool use
+            if (iteration === 0 || text.length < 500) {
+              // This is likely initial reasoning or planning
+              const reasoningType = text.toLowerCase().includes('plan') || text.toLowerCase().includes('strategy')
+                ? 'planning'
+                : 'analysis';
+
+              reasoningSteps.push({
+                id: `reasoning-${stepCounter}`,
+                step: stepCounter++,
+                type: reasoningType,
+                content: text,
+                timestamp: Date.now(),
+              });
+              progressCallbacks?.onReasoningSteps?.([...reasoningSteps]);
+            }
+          }
+
+          // Filter out JSON command blocks and technical details from user-facing responses
+          let cleanedText = text;
+
+          // Remove ALL JSON blocks (aggressive cleaning)
+          cleanedText = cleanedText.replace(/```json[\s\S]*?```/gi, '');
+          cleanedText = cleanedText.replace(/```[\s\S]*?tool:[\s\S]*?```/gi, '');
+          cleanedText = cleanedText.replace(/tool:\s*\w+[\s\S]*?path:[\s\S]*?content:[\s\S]*?/gi, '');
+
+          // Remove JSON code blocks that show tool definitions
+          cleanedText = cleanedText.replace(/```json\s*\{[^}]*"tool"[^}]*\}[^`]*```/gi, '');
+          cleanedText = cleanedText.replace(/```json\s*\{[\s\S]*?"tool"[\s\S]*?\}[\s\S]*?```/gi, '');
+
+          // Remove standalone JSON blocks that look like tool commands
+          cleanedText = cleanedText.replace(/\{[\s\S]*?"tool"\s*:\s*"[^"]+"[\s\S]*?\}/g, '');
+          cleanedText = cleanedText.replace(/tool:\s*\w+/gi, '');
+          cleanedText = cleanedText.replace(/path:\s*[^\n]+/gi, '');
+          cleanedText = cleanedText.replace(/content:\s*[^\n]+/gi, '');
+
+          // Remove phrases that introduce JSON blocks
+          cleanedText = cleanedText.replace(/Here's a (sample )?command block in JSON format:[\s\S]*?```json[\s\S]*?```/gi, '');
+          cleanedText = cleanedText.replace(/Here's the JSON (command|format|block):[\s\S]*?```json[\s\S]*?```/gi, '');
+          cleanedText = cleanedText.replace(/You can use this JSON:[\s\S]*?```json[\s\S]*?```/gi, '');
+          cleanedText = cleanedText.replace(/Here's (an )?example (JSON )?(command|format|block):[\s\S]*?```json[\s\S]*?```/gi, '');
+
+          // Remove references to showing JSON
+          cleanedText = cleanedText.replace(/I'll show you the JSON (command|format|block)[\s\S]*?```json[\s\S]*?```/gi, '');
+          cleanedText = cleanedText.replace(/Here's how to (do|execute) it in JSON:[\s\S]*?```json[\s\S]*?```/gi, '');
+          cleanedText = cleanedText.replace(/To use a tool, (you|we) (can|need to|must) (use|output|provide) (this|the following) JSON:[\s\S]*?```json[\s\S]*?```/gi, '');
+          cleanedText = cleanedText.replace(/We'll need to (use|output|provide) (this|the following) JSON:[\s\S]*?```json[\s\S]*?```/gi, '');
+          cleanedText = cleanedText.replace(/The (JSON|command) (format|block|structure) (is|would be|looks like):[\s\S]*?```json[\s\S]*?```/gi, '');
+          cleanedText = cleanedText.replace(/In JSON format:[\s\S]*?```json[\s\S]*?```/gi, '');
+
+          // Remove any remaining standalone JSON blocks (even without "tool" key)
+          cleanedText = cleanedText.replace(/```json\s*\{[\s\S]*?"(foldersCreated|filesProcessed|count|totalFiles|arguments)"[\s\S]*?\}[\s\S]*?```/gi, '');
+
+          // Remove phrases that mention JSON without showing it
+          cleanedText = cleanedText.replace(/I can (show|provide|give) you the JSON (command|format|block)[\s\S]*?\./gi, '');
+          cleanedText = cleanedText.replace(/Here's (a|an) (sample|example) (JSON )?(command|format|block)[\s\S]*?\./gi, '');
+
+          // Remove descriptions of actions instead of executing
+          cleanedText = cleanedText.replace(/I'll help[\s\S]*?(?=I'll|I will|The|Please|Before|Creating|I've|Created|These)/gi, '');
+          cleanedText = cleanedText.replace(/First, let's[\s\S]*?(?=I'll|I will|The|Please|Before|Creating|I've|Created|These)/gi, '');
+          cleanedText = cleanedText.replace(/Let's extract[\s\S]*?(?=I'll|I will|The|Please|Before|Creating|I've|Created|These)/gi, '');
+          cleanedText = cleanedText.replace(/To create these files[\s\S]*?(?=I'll|I will|The|Please|Before|Creating|I've|Created|These)/gi, '');
+          cleanedText = cleanedText.replace(/Here are the steps:[\s\S]*?(?=I'll|I will|The|Please|Before|Creating|I've|Created|These)/gi, '');
+          cleanedText = cleanedText.replace(/I'll write[\s\S]*?(?=I'll|I will|The|Please|Before|Creating|I've|Created|These)/gi, '');
+          cleanedText = cleanedText.replace(/I'll call[\s\S]*?(?=I'll|I will|The|Please|Before|Creating|I've|Created|These)/gi, '');
+          cleanedText = cleanedText.replace(/These two files will be[\s\S]*?(?=I'll|I will|The|Please|Before|Creating|I've|Created|These)/gi, '');
+
+          // Clean up multiple newlines
+          cleanedText = cleanedText.replace(/\n{3,}/g, '\n\n');
+          cleanedText = cleanedText.replace(/^\s*\n/gm, ''); // Remove lines with only whitespace
+
+          // Only add to response if there's meaningful content left
+          if (cleanedText.trim().length > 0) {
+            finalResponse += cleanedText + '\n\n';
+            messages.push({
+              role: 'assistant',
+              content: cleanedText,
+            });
+          }
+        } else if (content.type === 'tool_use') {
+          // AI wants to use a tool
+          const toolName = content.name;
+          // Anthropic SDK types the input as unknown; normalize to a record for downstream helpers
+          const toolArgs = content.input as Record<string, any>;
+
+          // Add reasoning step for tool selection
+          reasoningSteps.push({
+            id: `reasoning-${stepCounter}`,
+            step: stepCounter++,
+            type: 'tool_selection',
+            content: `I'll use the ${toolName} tool to ${getToolDescription(toolName, toolArgs)}.`,
+            timestamp: Date.now(),
+            toolUsed: toolName,
+            result: 'pending',
+          });
+          progressCallbacks?.onReasoningSteps?.([...reasoningSteps]);
+
+          // Create tool execution info
+          const execution: ToolExecutionInfo = {
+            tool: toolName,
+            description: getToolDescription(toolName, toolArgs),
+            params: toolArgs,
+            status: 'running',
+          };
+          toolExecutions.push(execution);
+          progressCallbacks?.onToolExecutions?.([...toolExecutions]);
+
+          // For tool_use blocks, the Anthropic client expects an array of content blocks
+          messages.push({
+            role: 'assistant',
+            content: [content],
+          });
+
+          // Execute the tool
+          let toolResult: ToolResult;
+
+          if (isMCPTool(toolName)) {
+            // Execute MCP tool
+            const parsed = parseMCPToolName(toolName);
+            if (parsed) {
+              toolResult = await executeMCPTool(parsed.server, parsed.tool, toolArgs);
+            } else {
+              toolResult = {
+                success: false,
+                error: `Invalid MCP tool name: ${toolName}`,
+              };
+            }
+          } else {
+            // Execute custom tool
+            toolResult = await executeTool(toolName, toolArgs, context);
+          }
+
+          // Update execution status
+          execution.status = toolResult.success ? 'success' : 'error';
+          execution.result = toolResult;
+          progressCallbacks?.onToolExecutions?.([...toolExecutions]);
+
+          // Update reasoning step with result
+          const lastReasoningStep = reasoningSteps[reasoningSteps.length - 1];
+          if (lastReasoningStep && lastReasoningStep.toolUsed === toolName) {
+            lastReasoningStep.result = toolResult.success ? 'success' : 'error';
+            if (toolResult.success && toolResult.data) {
+              // Extract key information for reasoning
+              let resultSummary = '';
+              if (toolName === 'analyze_directory' && typeof toolResult.data === 'object') {
+                const data = toolResult.data as any;
+                if (data.fileTypes) {
+                  const imageTypes = data.fileTypes.filter((ft: any) =>
+                    ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'svg', 'heic', 'heif'].includes(ft.extension?.toLowerCase())
+                  );
+                  if (imageTypes.length > 0) {
+                    const totalImages = imageTypes.reduce((sum: number, ft: any) => sum + (ft.count || 0), 0);
+                    resultSummary = `Found ${totalImages} image file(s)`;
+                  } else {
+                    resultSummary = `Found ${data.totalFiles || 0} file(s)`;
+                  }
+                } else {
+                  resultSummary = `Analysis complete: ${data.totalFiles || 0} files`;
+                }
+              } else {
+                const dataSummary = typeof toolResult.data === 'object'
+                  ? JSON.stringify(toolResult.data).substring(0, 150) + '...'
+                  : String(toolResult.data).substring(0, 150);
+                resultSummary = `Result: ${dataSummary}`;
+              }
+              lastReasoningStep.content += ` ${resultSummary}`;
+            } else if (!toolResult.success) {
+              lastReasoningStep.content += ` Error: ${toolResult.error}`;
+            }
+            progressCallbacks?.onReasoningSteps?.([...reasoningSteps]);
+          }
+
+          // Add reasoning step for analysis of results (only if we need to process further)
+          if (toolResult.success && toolResult.data && toolName === 'analyze_directory') {
+            // Extract image count for "how many pictures" questions
+            const data = toolResult.data as any;
+            if (data.fileTypes) {
+              const imageTypes = data.fileTypes.filter((ft: any) =>
+                ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'svg', 'heic', 'heif'].includes(ft.extension?.toLowerCase())
+              );
+              if (imageTypes.length > 0) {
+                const totalImages = imageTypes.reduce((sum: number, ft: any) => sum + (ft.count || 0), 0);
+            reasoningSteps.push({
+              id: `reasoning-${stepCounter}`,
+              step: stepCounter++,
+              type: 'analysis',
+              content: `Identified ${totalImages} image file(s) from the analysis results.`,
+              timestamp: Date.now(),
+            });
+            progressCallbacks?.onReasoningSteps?.([...reasoningSteps]);
+          }
+        }
+          }
+
+          // Add tool result to conversation
+          messages.push({
+            role: 'user',
+            content: [
+              {
+                type: 'tool_result',
+                tool_use_id: content.id,
+                content: toolResult.success
+                  ? JSON.stringify(toolResult.data || { success: true })
+                  : `Error: ${toolResult.error}`,
+              },
+            ],
+          });
+
+          // Store operation if tool returned one
+          if (toolResult.operation) {
+            operation = toolResult.operation;
+          }
+
+          // Update context if we got new directory analysis
+          if (toolName === 'analyze_directory' && toolResult.success && toolResult.data) {
+            context.directoryAnalysis = toolResult.data as DirectoryAnalysis;
+          }
+        }
+      }
+
+      // Check if we should continue (AI might want to use more tools)
+      const lastContent = response.content[response.content.length - 1];
+
+      // If AI only provided text describing actions instead of using tools, force tool execution
+      if (lastContent.type === 'text' && response.content.length === 1) {
+        const textContent = lastContent.text.toLowerCase();
+        const wantsFileCreation = /(?:create|make|generate).*(?:document|file|files)/i.test(command);
+        const describesAction = /(?:I'll|I will|I'm going to|let me|I'll help|first, let's|to create)/i.test(textContent);
+        const showsJson = /(?:json|tool:|path:|content:)/i.test(textContent);
+
+        // If AI is describing file creation instead of executing, force it to use tools
+        if (wantsFileCreation && (describesAction || showsJson) && toolExecutions.length === 0) {
+          console.warn('[AI] AI described actions instead of executing tools. Forcing tool execution...');
+          // Add a message to force tool execution
+          messages.push({
+            role: 'user',
+            content: 'You described what you would do, but you need to ACTUALLY EXECUTE the tools. Use the write_file_content tool NOW for each file. Do not describe - just execute.',
+          });
+          // Continue the loop to force tool execution
+          iteration++;
+          continue;
+        }
+
+        // AI finished with a text response, we're done
+        break;
+      }
+
+      iteration++;
+    }
+
+    // ========== DIRECT CREATION FALLBACK (Anthropic) ==========
+    // Handles cases where the AI didn't properly call tools for folder/file creation
+    // BUT: Skip fallback if file type clarification is needed - let AI ask the user
+    const executedToolsCountAnthropic = toolExecutions.length;
+    const requiresClarificationAnthropic = needsFileTypeClarification(command);
+    const isCompositeRequestAnthropic = isCompositeCreationRequest(command);
+
+    const hasCreatedFolderAnthropic = (folderName?: string): boolean => {
+      const createdFolders = toolExecutions.filter(
+        (e) => e.tool === 'create_directory' || e.tool === 'folder_creation_tab'
+      );
+      if (!folderName) return createdFolders.length > 0;
+      return createdFolders.some((exec) => {
+        const params = exec.params || {};
+        if (Array.isArray(params.folderNames) && params.folderNames.includes(folderName)) {
+          return true;
+        }
+        const path = typeof params.path === 'string' ? params.path : '';
+        return path === folderName || path.endsWith(`/${folderName}`);
+      });
+    };
+
+    if (requiresClarificationAnthropic && isCompositeRequestAnthropic) {
+      // For composite requests, it's safe to create the folder now and ask about file types.
+      if (context.currentDirectory) {
+        const parsed = parseCompositeCreationRequest(command);
+        const folder = parsed.folders[0];
+        if (folder && !hasCreatedFolderAnthropic(folder.folderName)) {
+          const folderPath = `${context.currentDirectory}/${folder.folderName}`;
+          const folderRes = await executeTool('create_directory', { path: folderPath }, context);
+          toolExecutions.push({
+            tool: 'create_directory',
+            description: `Create folder: ${folder.folderName}`,
+            params: { path: folderPath },
+            status: folderRes.success ? 'success' : 'error',
+            result: folderRes,
+          });
+        }
+      }
+      console.log('[Anthropic Fallback] Clarification needed for file types - delaying file creation.');
+    } else if (requiresClarificationAnthropic) {
+      console.log('[Anthropic Fallback] File type clarification needed - skipping auto-execution');
+      // Don't auto-execute files - the AI should ask the user what file type they want
+    }
+    // Check for composite folder+file requests first (e.g., "make folder X and add document Y inside")
+    else if (isCompositeRequestAnthropic) {
+      const createdFolders = toolExecutions.filter((e) => e.tool === 'create_directory' || e.tool === 'folder_creation_tab');
+      const createdFiles = toolExecutions.filter((e) => e.tool === 'write_file_content');
+
+      if ((createdFolders.length === 0 || createdFiles.length === 0) && context.currentDirectory) {
+        console.log('[Anthropic Fallback] Composite creation request detected, executing directly...');
+        const parsed = parseCompositeCreationRequest(command);
+        const createdItems: string[] = [];
+        const errors: string[] = [];
+
+        for (const folder of parsed.folders) {
+          const folderPath = `${context.currentDirectory}/${folder.folderName}`;
+          let folderRes: ToolResult = { success: true };
+          if (!hasCreatedFolderAnthropic(folder.folderName)) {
+            folderRes = await executeTool('create_directory', { path: folderPath }, context);
+            toolExecutions.push({
+              tool: 'create_directory',
+              description: `Create folder: ${folder.folderName}`,
+              params: { path: folderPath },
+              status: folderRes.success ? 'success' : 'error',
+              result: folderRes,
+            });
+          }
+
+          if (folderRes.success) {
+            createdItems.push(`📁 ${folder.folderName}`);
+
+            for (const file of folder.filesInside) {
+              const filePath = `${folderPath}/${file.fileName}`;
+              const fileRes = await executeTool(
+                'write_file_content',
+                { path: filePath, content: file.content || '', createDirectories: true },
+                context
+              );
+              toolExecutions.push({
+                tool: 'write_file_content',
+                description: `Create file: ${file.fileName}`,
+                params: { path: filePath },
+                status: fileRes.success ? 'success' : 'error',
+                result: fileRes,
+              });
+
+              if (fileRes.success) {
+                createdItems.push(`  📄 ${file.fileName}`);
+              } else if (fileRes.error) {
+                errors.push(fileRes.error);
+              }
+            }
+          } else if (folderRes.error) {
+            errors.push(folderRes.error);
+          }
+        }
+
+        if (createdItems.length > 0) {
+          finalResponse = `Done! I created:\n${createdItems.join('\n')}`;
+          if (errors.length > 0) finalResponse += `\n\n⚠️ Some errors: ${errors.join('; ')}`;
+        }
+      }
+    }
+    // Check for folder-only creation requests (folders don't need type clarification)
+    else if (isFolderCreationRequest(command) && !isCompositeCreationRequest(command)) {
+      const createdFolders = toolExecutions.filter((e) => e.tool === 'create_directory' || e.tool === 'folder_creation_tab');
+
+      if (createdFolders.length === 0 && context.currentDirectory) {
+        console.log('[Anthropic Fallback] Folder creation request detected, executing directly...');
+        const folder = parseFolderCreationRequest(command);
+        if (folder) {
+          const folderPath = `${context.currentDirectory}/${folder.folderName}`;
+          const res = await executeTool('create_directory', { path: folderPath }, context);
+          const exec: ToolExecutionInfo = {
+            tool: 'create_directory',
+            description: `Create folder: ${folder.folderName}`,
+            params: { path: folderPath },
+            status: res.success ? 'success' : 'error',
+            result: res,
+          };
+          toolExecutions.push(exec);
+
+          if (res.success) {
+            finalResponse = `Done! I created the folder: 📁 ${folder.folderName}`;
+          } else {
+            finalResponse = `I encountered an error creating the folder: ${res.error}`;
+          }
+        }
+      }
+    }
+    // Check for file-only creation requests (only if type is clear)
+    else if (isFileCreationRequest(command)) {
+      const wrote = toolExecutions.filter((e) => e.tool === 'write_file_content');
+      if (wrote.length === 0 && context.currentDirectory) {
+        console.log('[Anthropic Fallback] File creation request detected, executing directly...');
+        const items = parseFileCreationRequest(command);
+        if (items.length > 0) {
+          const created: string[] = [];
+          const errors: string[] = [];
+          for (const item of items) {
+            const params = {
+              path: `${context.currentDirectory}/${item.fileName}`,
+              content: item.content || '',
+              createDirectories: true,
+              overwrite: false,
+            };
+            const res = await executeTool('write_file_content', params, context);
+            const exec: ToolExecutionInfo = {
+              tool: 'write_file_content',
+              description: `Create file: ${item.fileName}`,
+              params,
+              status: res.success ? 'success' : 'error',
+              result: res,
+            };
+            toolExecutions.push(exec);
+            if (res.success) created.push(item.fileName);
+            else if (res.error) errors.push(res.error);
+          }
+          const successCount = created.length;
+          if (successCount > 0) {
+            finalResponse = `Created ${successCount} file(s): ${created.join(', ')}.`;
+            if (errors.length > 0) finalResponse += ` ${errors.length} failed: ${errors.join('; ')}`;
+          } else {
+            finalResponse = `I attempted to create the files but encountered errors: ${errors.join('; ')}.`;
+          }
+        }
+      }
+    }
+
+    // If we executed fallback tools and there's no response yet, generate one
+    if (toolExecutions.length > executedToolsCountAnthropic && (!finalResponse || finalResponse.trim().length === 0)) {
+      finalResponse = 'Done! I completed the operation.';
+    }
+
+    // ========== CLARIFICATION OVERRIDE (Anthropic) ==========
+    // If clarification was needed but the AI didn't ask (it just claimed to create files),
+    // override the response with a clarification prompt.
+    // Trigger when: no tools executed OR all tools failed
+    const successfulFileCreationsAnthropic = toolExecutions.filter(
+      exec => exec.tool === 'write_file_content' && exec.status === 'success' && exec.result?.success
+    );
+    const shouldAskClarificationAnthropic = requiresClarificationAnthropic && successfulFileCreationsAnthropic.length === 0;
+
+    if (shouldAskClarificationAnthropic) {
+      const alreadyAskingAnthropic = /what\s+(?:type|kind|format)\s+(?:of\s+)?(?:file|document)/i.test(finalResponse);
+
+      if (!alreadyAskingAnthropic) {
+        console.log('[Anthropic Fallback] Clarification needed. Forcing clarification prompt.');
+
+        // Parse the request to get folder and file names for the clarification message
+        if (isCompositeRequestAnthropic) {
+          const parsed = parseCompositeCreationRequest(command);
+          if (parsed.folders.length > 0) {
+            const folder = parsed.folders[0];
+            const folderCreated = hasCreatedFolderAnthropic(folder.folderName);
+            const folderLine = folderCreated
+              ? `I created the folder "${folder.folderName}".`
+              : `I can add the documents inside "${folder.folderName}".`;
+            finalResponse = `${folderLine}\n\nWhat type of files would you like for the documents inside?\n- **.txt** - Plain text\n- **.docx** - Word document\n- **.md** - Markdown\n- Or tell me another format`;
+          } else {
+            finalResponse = `What type of file would you like to create?\n- **.txt** - Plain text\n- **.docx** - Word document\n- **.md** - Markdown\n- Or tell me another format`;
+          }
+        } else {
+          finalResponse = `What type of file would you like to create?\n- **.txt** - Plain text\n- **.docx** - Word document\n- **.md** - Markdown\n- Or tell me another format`;
+        }
+      }
+    }
+
+    // Generate implementation plan if we have tool executions
+    let implementationPlan: any = null;
+    if (toolExecutions.length > 0) {
+      const { generatePlanFromToolExecutions } = await import('../voice/utils/planGenerator');
+      implementationPlan = generatePlanFromToolExecutions(command, toolExecutions);
+    }
+
+    // Add final conclusion reasoning step
+    if (reasoningSteps.length > 0 && finalResponse.trim()) {
+      reasoningSteps.push({
+        id: `reasoning-${stepCounter}`,
+        step: stepCounter++,
+        type: 'conclusion',
+        content: 'Completed processing. Preparing final response for the user.',
+        timestamp: Date.now(),
+      });
+      progressCallbacks?.onReasoningSteps?.([...reasoningSteps]);
+    }
+
+    // Final cleanup of response - remove any remaining JSON blocks or technical details
+    let cleanedResponse = finalResponse.trim();
+
+    // Remove any remaining JSON command blocks (multiple patterns to catch all variations)
+    cleanedResponse = cleanedResponse.replace(/```json\s*\{[^}]*"tool"[^}]*\}[^`]*```/gi, '');
+    cleanedResponse = cleanedResponse.replace(/```json\s*\{[\s\S]*?"tool"[\s\S]*?\}[\s\S]*?```/gi, '');
+    cleanedResponse = cleanedResponse.replace(/```json[\s\S]*?"tool"[\s\S]*?```/gi, '');
+    cleanedResponse = cleanedResponse.replace(/\{[\s\S]*?"tool"\s*:\s*"[^"]+"[\s\S]*?\}/g, '');
+
+    // Remove phrases introducing JSON blocks
+    cleanedResponse = cleanedResponse.replace(/Here's a (sample )?command block in JSON format:[\s\S]*?```json[\s\S]*?```/gi, '');
+    cleanedResponse = cleanedResponse.replace(/Here's the JSON (command|format|block):[\s\S]*?```json[\s\S]*?```/gi, '');
+    cleanedResponse = cleanedResponse.replace(/You can use this JSON:[\s\S]*?```json[\s\S]*?```/gi, '');
+    cleanedResponse = cleanedResponse.replace(/Here's (an )?example (JSON )?(command|format|block):[\s\S]*?```json[\s\S]*?```/gi, '');
+    cleanedResponse = cleanedResponse.replace(/I'll show you the JSON (command|format|block)[\s\S]*?```json[\s\S]*?```/gi, '');
+    cleanedResponse = cleanedResponse.replace(/Here's how to (do|execute) it in JSON:[\s\S]*?```json[\s\S]*?```/gi, '');
+    cleanedResponse = cleanedResponse.replace(/To use a tool, (you|we) (can|need to|must) (use|output|provide) (this|the following) JSON:[\s\S]*?```json[\s\S]*?```/gi, '');
+    cleanedResponse = cleanedResponse.replace(/We'll need to (use|output|provide) (this|the following) JSON:[\s\S]*?```json[\s\S]*?```/gi, '');
+
+    // Remove "Tool Execution Result" JSON blocks
+    cleanedResponse = cleanedResponse.replace(/\*\*Tool Execution Result:\*\*[\s\S]*?```json[\s\S]*?```/gi, '');
+    cleanedResponse = cleanedResponse.replace(/Tool Execution Result:[\s\S]*?```json[\s\S]*?```/gi, '');
+    cleanedResponse = cleanedResponse.replace(/\*\*Tool Execution Result:\*\*[\s\S]*?\{[\s\S]*?\}/gi, '');
+    cleanedResponse = cleanedResponse.replace(/Tool Execution Result:[\s\S]*?\{[\s\S]*?\}/gi, '');
+
+    // Remove standalone JSON result blocks
+    cleanedResponse = cleanedResponse.replace(/```json\s*\{[\s\S]*?"foldersCreated"[\s\S]*?\}[\s\S]*?```/gi, '');
+    cleanedResponse = cleanedResponse.replace(/```json\s*\{[\s\S]*?"filesProcessed"[\s\S]*?\}[\s\S]*?```/gi, '');
+    cleanedResponse = cleanedResponse.replace(/```json\s*\{[\s\S]*?"count"[\s\S]*?\}[\s\S]*?```/gi, '');
+
+    // Remove references to JSON in explanations
+    cleanedResponse = cleanedResponse.replace(/The (JSON|command) (format|block|structure) (is|would be|looks like):[\s\S]*?```json[\s\S]*?```/gi, '');
+    cleanedResponse = cleanedResponse.replace(/In JSON format:[\s\S]*?```json[\s\S]*?```/gi, '');
+
+    // Remove ALL JSON blocks and tool parameter displays
+    cleanedResponse = cleanedResponse.replace(/```json[\s\S]*?```/gi, '');
+    cleanedResponse = cleanedResponse.replace(/```[\s\S]*?tool:[\s\S]*?```/gi, '');
+    cleanedResponse = cleanedResponse.replace(/tool:\s*\w+[\s\S]*?path:[\s\S]*?content:[\s\S]*?/gi, '');
+
+    // Remove phrases about executing or showing commands
+    cleanedResponse = cleanedResponse.replace(/Here's the JSON command block:[\s\S]*?/gi, '');
+    cleanedResponse = cleanedResponse.replace(/Here's a JSON command block:[\s\S]*?/gi, '');
+    cleanedResponse = cleanedResponse.replace(/And again:[\s\S]*?/gi, '');
+    cleanedResponse = cleanedResponse.replace(/I'll execute these commands immediately[\s\S]*?/gi, '');
+    cleanedResponse = cleanedResponse.replace(/To execute these operations[\s\S]*?/gi, '');
+    cleanedResponse = cleanedResponse.replace(/I will use the[\s\S]*?tool[\s\S]*?/gi, '');
+    cleanedResponse = cleanedResponse.replace(/I'll use the[\s\S]*?tool[\s\S]*?/gi, '');
+    cleanedResponse = cleanedResponse.replace(/I understand the user's request[\s\S]*?(?=I'll|I will|The|Please|Before|Creating|I've|Created)/gi, '');
+    cleanedResponse = cleanedResponse.replace(/Since the user wants[\s\S]*?(?=I'll|I will|The|Please|Before|Creating|I've|Created)/gi, '');
+    cleanedResponse = cleanedResponse.replace(/I'll help[\s\S]*?(?=I'll|I will|The|Please|Before|Creating|I've|Created)/gi, '');
+    cleanedResponse = cleanedResponse.replace(/First, let's[\s\S]*?(?=I'll|I will|The|Please|Before|Creating|I've|Created)/gi, '');
+    cleanedResponse = cleanedResponse.replace(/Let's extract[\s\S]*?(?=I'll|I will|The|Please|Before|Creating|I've|Created)/gi, '');
+    cleanedResponse = cleanedResponse.replace(/To create these files[\s\S]*?(?=I'll|I will|The|Please|Before|Creating|I've|Created)/gi, '');
+    cleanedResponse = cleanedResponse.replace(/Here are the steps:[\s\S]*?(?=I'll|I will|The|Please|Before|Creating|I've|Created)/gi, '');
+
+    // Remove descriptions of what will be done instead of doing it
+    cleanedResponse = cleanedResponse.replace(/Here's what I'll do:[\s\S]*?(?=I'll|I will|The|Please|Before|Creating|I've|Created)/gi, '');
+    cleanedResponse = cleanedResponse.replace(/Here's what will happen:[\s\S]*?(?=I'll|I will|The|Please|Before|Creating|I've|Created)/gi, '');
+    cleanedResponse = cleanedResponse.replace(/I will extract[\s\S]*?(?=I'll|I will|The|Please|Before|Creating|I've|Created)/gi, '');
+    cleanedResponse = cleanedResponse.replace(/I'll extract[\s\S]*?(?=I'll|I will|The|Please|Before|Creating|I've|Created)/gi, '');
+    cleanedResponse = cleanedResponse.replace(/I'll write[\s\S]*?(?=I'll|I will|The|Please|Before|Creating|I've|Created)/gi, '');
+    cleanedResponse = cleanedResponse.replace(/I'll call[\s\S]*?(?=I'll|I will|The|Please|Before|Creating|I've|Created)/gi, '');
+    cleanedResponse = cleanedResponse.replace(/These two files will be[\s\S]*?(?=I'll|I will|The|Please|Before|Creating|I've|Created)/gi, '');
+
+    // Remove "Please confirm" phrases when tools should execute immediately
+    cleanedResponse = cleanedResponse.replace(/Please confirm before proceeding\.[\s\S]*?/gi, '');
+    cleanedResponse = cleanedResponse.replace(/Please respond with[\s\S]*?(?=I'll|I will|The|Before|Creating|I've|Created)/gi, '');
+    cleanedResponse = cleanedResponse.replace(/Before I proceed[\s\S]*?(?=I'll|I will|The|Creating|I've|Created)/gi, '');
+    cleanedResponse = cleanedResponse.replace(/Before creating[\s\S]*?(?=I'll|I will|The|Creating|I've|Created)/gi, '');
+    cleanedResponse = cleanedResponse.replace(/To ensure safety[\s\S]*?(?=I'll|I will|The|Creating|I've|Created)/gi, '');
+
+    // Remove empty lines and clean up multiple newlines
+    cleanedResponse = cleanedResponse.replace(/\n{3,}/g, '\n\n');
+    cleanedResponse = cleanedResponse.replace(/^\s*\n/gm, ''); // Remove lines with only whitespace
+    cleanedResponse = cleanedResponse.trim();
+
+    // Verify tool execution before allowing success messages
+    // If user requested file creation, ensure tools were actually executed
+    const wantsFileCreation = /(?:create|make|generate).*(?:document|file|files)/i.test(command);
+    if (wantsFileCreation) {
+      const writeFileExecutions = toolExecutions.filter(exec => exec.tool === 'write_file_content');
+      const successfulExecutions = writeFileExecutions.filter(exec => exec.status === 'success' && exec.result?.success);
+
+      // If AI claims success but no tools executed, replace with error
+      if (writeFileExecutions.length === 0) {
+        console.warn('[AI] File creation requested but no write_file_content tools were executed');
+        if (cleanedResponse.toLowerCase().includes('created') && !cleanedResponse.toLowerCase().includes('error')) {
+          cleanedResponse = 'I apologize, but I was unable to create the files. The tools were not executed. Please try again.';
+        } else if (cleanedResponse.toLowerCase().includes("i'll") || cleanedResponse.toLowerCase().includes("i will") || cleanedResponse.toLowerCase().includes("let's")) {
+          cleanedResponse = "I apologize - I described what I would do instead of actually creating the files. Please try again, and I'll execute the tools immediately.";
+        }
+      } else if (successfulExecutions.length === 0) {
+        // Tools executed but all failed
+        console.warn('[AI] File creation tools executed but all failed');
+        const errors = writeFileExecutions
+          .filter(exec => exec.result && !exec.result.success)
+          .map(exec => exec.result?.error || 'Unknown error')
+          .join('; ');
+        cleanedResponse = `I attempted to create the files but encountered errors: ${errors}. Please check the file paths and permissions.`;
+      } else if (successfulExecutions.length < writeFileExecutions.length) {
+        // Some succeeded, some failed
+        const failedCount = writeFileExecutions.length - successfulExecutions.length;
+        const errors = writeFileExecutions
+          .filter(exec => exec.result && !exec.result.success)
+          .map(exec => exec.result?.error || 'Unknown error')
+          .join('; ');
+        const createdFiles = successfulExecutions
+          .map(exec => exec.result?.data?.fileName || exec.params?.path?.split('/').pop())
+          .filter(Boolean);
+        cleanedResponse = `Created ${successfulExecutions.length} file(s): ${createdFiles.join(', ')}. However, ${failedCount} file(s) failed: ${errors}`;
+      } else {
+        // All succeeded - verify we have actual file names from tool results
+        const createdFiles = successfulExecutions
+          .map(exec => exec.result?.data?.fileName || exec.params?.path?.split('/').pop())
+          .filter(Boolean);
+        if (createdFiles.length > 0) {
+          // Replace AI's response with verified file names
+          cleanedResponse = `Created ${createdFiles.length} file(s): ${createdFiles.join(', ')}.`;
+        }
+      }
+    }
+
+    return {
+      content: cleanedResponse || 'I processed your request using available tools.',
+      operation,
+      metadata: {
+        model: settings.model,
+        toolsUsed: toolExecutions.length,
+        toolExecutions, // Include tool execution details for UI
+        implementationPlan, // Include plan for approval
+        reasoningSteps, // Include reasoning chain for display
+      },
+    };
+  } catch (error: any) {
+    console.error('AI API error:', error);
+
+    if (error.status === 401) {
+      return {
+        content: 'Invalid API key. Please check your API key in settings.',
+      };
+    }
+
+    if (error.status === 429) {
+      return {
+        content: 'Rate limit exceeded. Please try again in a moment.',
+      };
+    }
+
+    return {
+      content: `I encountered an error: ${error.message || 'Unknown error'}. Please try again.`,
+      metadata: {
+        model: settings.model,
+        toolsUsed: toolExecutions.length,
+        toolExecutions,
+        reasoningSteps,
+        isError: true,
+      }
+    };
+  }
+}
+
+/**
+ * Processes a user command using Ollama local LLM.
+ */
+async function processCommandWithOllamaProvider(
+  command: string,
+  currentDirectory: string,
+  directoryAnalysis: DirectoryAnalysis | null,
+  settings: AISettings,
+  abortSignal?: AbortSignal,
+  conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>,
+  voiceContext?: { enabled: boolean; persona?: string },
+  progressCallbacks?: {
+    onToolExecutions?: (tools: ToolExecutionInfo[]) => void;
+    onReasoningSteps?: (steps: ReasoningStep[]) => void;
+  }
+): Promise<{ content: string; operation?: FileOperation; metadata?: any }> {
+  try {
+    // Get all available tools (custom + MCP), filtered by settings
+    const tools = await getAllTools(settings);
+
+    let systemPrompt = settings.systemPrompt;
+    let skillContext = '';
+
+    if (settings.clawdbotEnabled) {
+      try {
+        skillContext = await getClawdhubSkillsContext();
+      } catch (e) {
+        // Ignore for local
+      }
+    }
+
+    if (!systemPrompt) {
+      systemPrompt = generateSystemPrompt(tools, {
+        clawdbotEnabled: settings.clawdbotEnabled,
+        aiName: settings.aiName,
+        userName: settings.userName
+      }, skillContext, voiceContext);
+    }
+
+    return await processCommandWithOllama(
+      command,
+      currentDirectory,
+      directoryAnalysis,
+      settings,
+      tools,
+      systemPrompt,
+      skillContext,
+      abortSignal,
+      conversationHistory,
+      undefined,
+      progressCallbacks
+    );
+  } catch (error: any) {
+    console.error('Ollama processing error:', error);
+    return {
+      content: `I encountered an error: ${error.message || 'Unknown error'}. Please try again.`,
+    };
+  }
+}
+
+/**
+ * Processes a user command using OpenRouter API.
+ * Supports multiple AI models through a unified API.
+ */
+async function processCommandWithOpenRouterProvider(
+  command: string,
+  currentDirectory: string,
+  directoryAnalysis: DirectoryAnalysis | null,
+  settings: AISettings,
+  abortSignal?: AbortSignal,
+  conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>,
+  voiceContext?: { enabled: boolean; persona?: string },
+  progressCallbacks?: {
+    onToolExecutions?: (tools: ToolExecutionInfo[]) => void;
+    onReasoningSteps?: (steps: ReasoningStep[]) => void;
+  }
+): Promise<{ content: string; operation?: FileOperation; metadata?: any }> {
+  // Ensure OpenRouter is configured
+  const openRouterSettings = settings.openRouter || DEFAULT_OPENROUTER_SETTINGS;
+
+  if (!openRouterSettings.apiKey) {
+    return {
+      content: 'Please configure your OpenRouter API key in settings to use AI-powered features.',
+    };
+  }
+
+  // Update service with current settings
+  openRouterService.updateSettings(openRouterSettings);
+
+  const toolExecutions: ToolExecutionInfo[] = [];
+
+  try {
+    // Get all available tools (custom + MCP), filtered by settings
+    const tools = await getAllTools(settings);
+
+    // Generate system prompt
+    let skillContext = '';
+    if (settings.clawdbotEnabled) {
+      try {
+        skillContext = await getClawdhubSkillsContext();
+      } catch (e) {
+        // Ignore skill context errors
+      }
+    }
+
+    const systemPrompt = settings.systemPrompt || generateSystemPrompt(tools, {
+      clawdbotEnabled: settings.clawdbotEnabled,
+      aiName: settings.aiName,
+      userName: settings.userName
+    }, skillContext, voiceContext);
+
+    // Build user prompt with context
+    const userPrompt = buildUserPrompt(command, currentDirectory, directoryAnalysis, conversationHistory);
+
+    // Build messages array for OpenRouter
+    const messages: OpenRouterMessage[] = [
+      { role: 'system', content: systemPrompt },
+    ];
+
+    // Add conversation history with context management
+    if (settings.contextSettings) {
+      contextManager.updateSettings(settings.contextSettings);
+    }
+
+    if (conversationHistory && conversationHistory.length > 0) {
+      const enrichedHistory: ConversationMessage[] = conversationHistory.map((msg, idx) =>
+        contextManager.enrichMessageMetadata({
+          id: `msg-${idx}`,
+          role: msg.role,
+          content: msg.content,
+          timestamp: Date.now() - (conversationHistory.length - idx) * 1000,
+        })
+      );
+
+      const contextResult = contextManager.selectRelevantContext(enrichedHistory, command);
+      const formattedContext = contextManager.formatContextForProvider(contextResult);
+
+      for (const msg of formattedContext) {
+        messages.push({ role: msg.role as 'user' | 'assistant', content: msg.content });
+      }
+    }
+
+    // Add user message
+    messages.push({ role: 'user', content: userPrompt });
+
+    // Create tool context for execution
+    const toolContext: ToolContext = {
+      currentDirectory,
+      settings,
+      directoryAnalysis,
+    };
+
+    let operation: FileOperation | undefined;
+
+    // Shortcut: user is replying with a file type for a pending composite request.
+    const fileTypeReply = detectFileTypeReply(command);
+    if (fileTypeReply) {
+      const pending = extractPendingCompositeContext(conversationHistory);
+      if (pending && toolContext.currentDirectory) {
+        const folderPath = `${toolContext.currentDirectory}/${pending.folderName}`;
+        const folderRes = await executeTool('create_directory', { path: folderPath }, toolContext);
+        toolExecutions.push({
+          tool: 'create_directory',
+          description: `Create folder: ${pending.folderName}`,
+          params: { path: folderPath },
+          status: folderRes.success ? 'success' : 'error',
+          result: folderRes,
+        });
+
+        const createdFiles: string[] = [];
+        const errors: string[] = [];
+        for (let i = 1; i <= pending.count; i += 1) {
+          const fileName = `Document ${i}.${fileTypeReply}`;
+          const filePath = `${folderPath}/${fileName}`;
+          const fileRes = await executeTool(
+            'write_file_content',
+            { path: filePath, content: '', createDirectories: true, overwrite: false },
+            toolContext
+          );
+          toolExecutions.push({
+            tool: 'write_file_content',
+            description: `Create file: ${fileName}`,
+            params: { path: filePath, content: '', createDirectories: true, overwrite: false },
+            status: fileRes.success ? 'success' : 'error',
+            result: fileRes,
+          });
+          if (fileRes.success) createdFiles.push(fileName);
+          else if (fileRes.error) errors.push(fileRes.error);
+        }
+
+        let responseText = `Created ${createdFiles.length} file(s) in "${pending.folderName}": ${createdFiles.join(', ')}.`;
+        if (errors.length > 0) responseText += ` ${errors.length} failed: ${errors.join('; ')}`;
+
+        progressCallbacks?.onToolExecutions?.([...toolExecutions]);
+        return {
+          content: responseText,
+          operation,
+          metadata: {
+            provider: 'openrouter',
+            model: openRouterSettings.model,
+            toolsUsed: toolExecutions.map(exec => exec.tool),
+            toolsUsedCount: toolExecutions.length,
+            toolExecutions,
+          },
+        };
+      }
+    }
+
+    // Create tool executor function
+    const toolExecutor = async (toolName: string, args: Record<string, any>): Promise<any> => {
+      // Check if this is an MCP tool
+      if (isMCPTool(toolName)) {
+        const parsed = parseMCPToolName(toolName);
+        if (!parsed) {
+          throw new Error(`Invalid MCP tool name: ${toolName}`);
+        }
+        const { server, tool } = parsed;
+        const result = await executeMCPTool(server, tool, args);
+        return result;
+      }
+
+      // Execute regular tool
+      const result: ToolResult = await executeTool(toolName, args, toolContext);
+      if (!result.success) {
+        throw new Error(result.error || 'Tool execution failed');
+      }
+      return result;
+    };
+
+    // Execute chat with tool calling loop
+    const { response, toolResults } = await openRouterService.chatWithTools(
+      messages,
+      tools,
+      toolExecutor,
+      {
+        maxToolCalls: 10,
+        signal: abortSignal,
+        onToolCall: (toolName, args) => {
+          console.log(`[OpenRouter] Tool call: ${toolName}`, args);
+        },
+      }
+    );
+
+    // Extract the final content
+    const assistantMessage = response.choices[0]?.message;
+    let finalResponse = typeof assistantMessage?.content === 'string'
+      ? assistantMessage.content
+      : '';
+
+    // Build metadata
+    const metadata: any = {
+      provider: 'openrouter',
+      model: response.model || openRouterSettings.model,
+      toolsUsed: toolResults.map(tr => tr.toolName),
+      usage: response.usage,
+    };
+
+    // Check for operation in tool results
+    for (const toolResult of toolResults) {
+      if (toolResult.result?.operation) {
+        operation = toolResult.result.operation;
+        break;
+      }
+      if (toolResult.result?.data?.operation) {
+        operation = toolResult.result.data.operation;
+        break;
+      }
+    }
+
+    // Normalize tool results into execution info for UI + verification
+    for (const toolResult of toolResults) {
+      const status = toolResult.error
+        ? 'error'
+        : toolResult.result?.success
+          ? 'success'
+          : 'error';
+      toolExecutions.push({
+        tool: toolResult.toolName,
+        description: getToolDescription(toolResult.toolName, toolResult.args || {}),
+        params: toolResult.args || {},
+        status,
+        result: toolResult.error
+          ? { success: false, error: toolResult.error }
+          : toolResult.result,
+      });
+    }
+    progressCallbacks?.onToolExecutions?.([...toolExecutions]);
+
+    // ===== JSON COMMAND FALLBACK =====
+    // Some OpenRouter models respond with JSON blocks instead of tool_calls.
+    if (toolExecutions.length === 0) {
+      const parsedJson = ResponseParser.parseJsonCommand(finalResponse);
+      if (parsedJson) {
+        let jsonArgs: Record<string, any> = {};
+        try {
+          jsonArgs = typeof parsedJson.arguments === 'string'
+            ? JSON.parse(parsedJson.arguments)
+            : (parsedJson.arguments || {});
+        } catch {
+          jsonArgs = {};
+        }
+
+        let jsonResult: ToolResult;
+        try {
+          if (isMCPTool(parsedJson.tool)) {
+            const parsed = parseMCPToolName(parsedJson.tool);
+            if (!parsed) {
+              jsonResult = { success: false, error: `Invalid MCP tool name: ${parsedJson.tool}` };
+            } else {
+              jsonResult = await executeMCPTool(parsed.server, parsed.tool, jsonArgs);
+            }
+          } else {
+            jsonResult = await executeTool(parsedJson.tool, jsonArgs, toolContext);
+          }
+        } catch (error: any) {
+          jsonResult = { success: false, error: error.message || 'Tool execution failed' };
+        }
+
+        toolExecutions.push({
+          tool: parsedJson.tool,
+          description: getToolDescription(parsedJson.tool, jsonArgs),
+          params: jsonArgs,
+          status: jsonResult.success ? 'success' : 'error',
+          result: jsonResult,
+        });
+
+        if (!operation && jsonResult.operation) {
+          operation = jsonResult.operation;
+        }
+
+        finalResponse = formatToolResultForUser(parsedJson.tool, jsonResult);
+      }
+    }
+
+    // ===== DIRECT CREATION FALLBACK =====
+    // If no tools executed, ensure folder/file creation requests are fulfilled.
+    const executedToolsCount = toolExecutions.length;
+    const requiresClarification = needsFileTypeClarification(command);
+    const isCompositeRequestOpenRouter = isCompositeCreationRequest(command);
+
+    const hasCreatedFolderOpenRouter = (folderName?: string): boolean => {
+      const createdFolders = toolExecutions.filter(
+        (e) => e.tool === 'create_directory' || e.tool === 'folder_creation_tab'
+      );
+      if (!folderName) return createdFolders.length > 0;
+      return createdFolders.some((exec) => {
+        const params = exec.params || {};
+        if (Array.isArray(params.folderNames) && params.folderNames.includes(folderName)) {
+          return true;
+        }
+        const path = typeof params.path === 'string' ? params.path : '';
+        return path === folderName || path.endsWith(`/${folderName}`);
+      });
+    };
+
+    if (requiresClarification && isCompositeRequestOpenRouter) {
+      if (toolContext.currentDirectory) {
+        const parsed = parseCompositeCreationRequest(command);
+        const folder = parsed.folders[0];
+        if (folder && !hasCreatedFolderOpenRouter(folder.folderName)) {
+          const folderPath = `${toolContext.currentDirectory}/${folder.folderName}`;
+          const folderRes = await executeTool('create_directory', { path: folderPath }, toolContext);
+          toolExecutions.push({
+            tool: 'create_directory',
+            description: `Create folder: ${folder.folderName}`,
+            params: { path: folderPath },
+            status: folderRes.success ? 'success' : 'error',
+            result: folderRes,
+          });
+        }
+      }
+    } else if (!requiresClarification) {
+      if (isCompositeRequestOpenRouter) {
+        const createdFolders = toolExecutions.filter((e) =>
+          e.tool === 'create_directory' || e.tool === 'folder_creation_tab'
+        );
+        const createdFiles = toolExecutions.filter((e) => e.tool === 'write_file_content');
+
+        if ((createdFolders.length === 0 || createdFiles.length === 0) && toolContext.currentDirectory) {
+          const parsed = parseCompositeCreationRequest(command);
+          const createdItems: string[] = [];
+          const errors: string[] = [];
+
+          for (const folder of parsed.folders) {
+            const folderPath = `${toolContext.currentDirectory}/${folder.folderName}`;
+            let folderRes: ToolResult = { success: true };
+            if (!hasCreatedFolderOpenRouter(folder.folderName)) {
+              folderRes = await executeTool('create_directory', { path: folderPath }, toolContext);
+              toolExecutions.push({
+                tool: 'create_directory',
+                description: `Create folder: ${folder.folderName}`,
+                params: { path: folderPath },
+                status: folderRes.success ? 'success' : 'error',
+                result: folderRes,
+              });
+            }
+
+            if (folderRes.success) {
+              createdItems.push(`📁 ${folder.folderName}`);
+
+              for (const file of folder.filesInside) {
+                const filePath = `${folderPath}/${file.fileName}`;
+                const fileRes = await executeTool(
+                  'write_file_content',
+                  { path: filePath, content: file.content || '', createDirectories: true },
+                  toolContext
+                );
+                toolExecutions.push({
+                  tool: 'write_file_content',
+                  description: `Create file: ${file.fileName}`,
+                  params: { path: filePath, content: file.content || '', createDirectories: true },
+                  status: fileRes.success ? 'success' : 'error',
+                  result: fileRes,
+                });
+
+                if (fileRes.success) {
+                  createdItems.push(`  📄 ${file.fileName}`);
+                } else if (fileRes.error) {
+                  errors.push(fileRes.error);
+                }
+              }
+            } else if (folderRes.error) {
+              errors.push(folderRes.error);
+            }
+          }
+
+          if (createdItems.length > 0) {
+            finalResponse = `Done! I created:\n${createdItems.join('\n')}`;
+            if (errors.length > 0) finalResponse += `\n\n⚠️ Some errors: ${errors.join('; ')}`;
+          }
+        }
+      } else if (isFolderCreationRequest(command)) {
+        const createdFolders = toolExecutions.filter((e) =>
+          e.tool === 'create_directory' || e.tool === 'folder_creation_tab'
+        );
+
+        if (createdFolders.length === 0 && toolContext.currentDirectory) {
+          const folder = parseFolderCreationRequest(command);
+          if (folder) {
+            const folderPath = `${toolContext.currentDirectory}/${folder.folderName}`;
+            const res = await executeTool('create_directory', { path: folderPath }, toolContext);
+            toolExecutions.push({
+              tool: 'create_directory',
+              description: `Create folder: ${folder.folderName}`,
+              params: { path: folderPath },
+              status: res.success ? 'success' : 'error',
+              result: res,
+            });
+
+            if (res.success) {
+              finalResponse = `Done! I created the folder: 📁 ${folder.folderName}`;
+            } else {
+              finalResponse = `I encountered an error creating the folder: ${res.error}`;
+            }
+          }
+        }
+      } else if (isFileCreationRequest(command)) {
+        const wrote = toolExecutions.filter((e) => e.tool === 'write_file_content');
+        if (wrote.length === 0 && toolContext.currentDirectory) {
+          const items = parseFileCreationRequest(command);
+          if (items.length > 0) {
+            const created: string[] = [];
+            const errors: string[] = [];
+            for (const item of items) {
+              const params = {
+                path: `${toolContext.currentDirectory}/${item.fileName}`,
+                content: item.content || '',
+                createDirectories: true,
+                overwrite: false,
+              };
+              const res = await executeTool('write_file_content', params, toolContext);
+              toolExecutions.push({
+                tool: 'write_file_content',
+                description: `Create file: ${item.fileName}`,
+                params,
+                status: res.success ? 'success' : 'error',
+                result: res,
+              });
+              if (res.success) created.push(item.fileName);
+              else if (res.error) errors.push(res.error);
+            }
+            const successCount = created.length;
+            if (successCount > 0) {
+              finalResponse = `Created ${successCount} file(s): ${created.join(', ')}.`;
+              if (errors.length > 0) finalResponse += ` ${errors.length} failed: ${errors.join('; ')}`;
+            } else {
+              finalResponse = `I attempted to create the files but encountered errors: ${errors.join('; ')}.`;
+            }
+          }
+        }
+      }
+    }
+
+    if (toolExecutions.length > executedToolsCount && (!finalResponse || finalResponse.trim().length === 0)) {
+      finalResponse = 'Done! I completed the operation.';
+    }
+
+    // ===== CLARIFICATION OVERRIDE =====
+    const successfulFileCreationsOpenRouter = toolExecutions.filter(
+      exec => exec.tool === 'write_file_content' && exec.status === 'success' && exec.result?.success
+    );
+    const shouldAskClarification = requiresClarification && successfulFileCreationsOpenRouter.length === 0;
+
+    if (shouldAskClarification) {
+      const alreadyAsking = /what\s+(?:type|kind|format)\s+(?:of\s+)?(?:file|document)/i.test(finalResponse);
+      if (!alreadyAsking) {
+        if (isCompositeRequestOpenRouter) {
+          const parsed = parseCompositeCreationRequest(command);
+          if (parsed.folders.length > 0) {
+            const folder = parsed.folders[0];
+            const folderCreated = hasCreatedFolderOpenRouter(folder.folderName);
+            const folderLine = folderCreated
+              ? `I created the folder "${folder.folderName}".`
+              : `I can add the documents inside "${folder.folderName}".`;
+            finalResponse = `${folderLine}\n\nWhat type of files would you like for the documents inside?\n- **.txt** - Plain text\n- **.docx** - Word document\n- **.md** - Markdown\n- Or tell me another format`;
+          } else {
+            finalResponse = `What type of file would you like to create?\n- **.txt** - Plain text\n- **.docx** - Word document\n- **.md** - Markdown\n- Or tell me another format`;
+          }
+        } else {
+          finalResponse = `What type of file would you like to create?\n- **.txt** - Plain text\n- **.docx** - Word document\n- **.md** - Markdown\n- Or tell me another format`;
+        }
+      }
+    }
+
+    // Clean any JSON/tool artifacts from the final response
+    finalResponse = ResponseParser.cleanResponse(finalResponse);
+
+    // Verify folder creation responses
+    const wantsFolderCreation = isFolderCreationRequest(command) || isCompositeCreationRequest(command);
+    if (wantsFolderCreation) {
+      const folderExecutions = toolExecutions.filter(
+        exec => exec.tool === 'create_directory' || exec.tool === 'folder_creation_tab'
+      );
+      const successfulFolderExecutions = folderExecutions.filter(exec => exec.status === 'success' && exec.result?.success);
+
+      if (folderExecutions.length === 0) {
+        if (/created|done|completed/i.test(finalResponse)) {
+          finalResponse = 'I apologize, but I was unable to create the folder. The tools were not executed. Please try again.';
+        }
+      } else if (successfulFolderExecutions.length === 0) {
+        const errors = folderExecutions
+          .filter(exec => exec.result && !exec.result.success)
+          .map(exec => exec.result?.error || 'Unknown error')
+          .join('; ');
+        finalResponse = `I attempted to create the folder but encountered errors: ${errors}. Please check the path and permissions.`;
+      }
+    }
+
+    // Verify file creation responses
+    const wantsFileCreation = /(?:create|make|generate).*(?:document|file|files)/i.test(command);
+    if (wantsFileCreation) {
+      const writeFileExecutions = toolExecutions.filter(exec => exec.tool === 'write_file_content');
+      const successfulExecutions = writeFileExecutions.filter(exec => exec.status === 'success' && exec.result?.success);
+
+      if (writeFileExecutions.length === 0) {
+        if (/created|done|completed/i.test(finalResponse)) {
+          finalResponse = 'I apologize, but I was unable to create the files. The tools were not executed. Please try again.';
+        }
+      } else if (successfulExecutions.length === 0) {
+        const errors = writeFileExecutions
+          .filter(exec => exec.result && !exec.result.success)
+          .map(exec => exec.result?.error || 'Unknown error')
+          .join('; ');
+        finalResponse = `I attempted to create the files but encountered errors: ${errors}. Please check the file paths and permissions.`;
+      } else if (successfulExecutions.length < writeFileExecutions.length) {
+        const failedCount = writeFileExecutions.length - successfulExecutions.length;
+        const errors = writeFileExecutions
+          .filter(exec => exec.result && !exec.result.success)
+          .map(exec => exec.result?.error || 'Unknown error')
+          .join('; ');
+        const createdFiles = successfulExecutions
+          .map(exec => exec.result?.data?.fileName || exec.params?.path?.split('/').pop())
+          .filter(Boolean);
+        finalResponse = `Created ${successfulExecutions.length} file(s): ${createdFiles.join(', ')}. However, ${failedCount} file(s) failed: ${errors}`;
+      } else {
+        const createdFiles = successfulExecutions
+          .map(exec => exec.result?.data?.fileName || exec.params?.path?.split('/').pop())
+          .filter(Boolean);
+        if (createdFiles.length > 0) {
+          finalResponse = `Created ${createdFiles.length} file(s): ${createdFiles.join(', ')}.`;
+        }
+      }
+    }
+
+    const toolsUsedNames = toolExecutions.map(exec => exec.tool);
+    return {
+      content: finalResponse || 'I completed the requested operation.',
+      operation,
+      metadata: {
+        ...metadata,
+        toolsUsed: toolsUsedNames,
+        toolsUsedCount: toolExecutions.length,
+        toolExecutions,
+      },
+    };
+
+  } catch (error: any) {
+    console.error('OpenRouter processing error:', error);
+
+    // Check for specific error types
+    if (error.message?.includes('API key')) {
+      return {
+        content: 'OpenRouter API key is invalid or expired. Please check your API key in settings.',
+      };
+    }
+
+    if (error.message?.includes('rate limit')) {
+      return {
+        content: 'OpenRouter rate limit reached. Please wait a moment and try again.',
+      };
+    }
+
+    if (error.message?.includes('cancelled')) {
+      return {
+        content: 'Request was cancelled.',
+      };
+    }
+
+    return {
+      content: `I encountered an error with OpenRouter: ${error.message || 'Unknown error'}. Please try again.`,
+    };
+  }
+}
+
+/**
+ * Builds a prompt for the AI based on user command and context.
+ */
+function buildUserPrompt(
+  command: string,
+  currentDirectory: string,
+  directoryAnalysis: DirectoryAnalysis | null,
+  conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>
+): string {
+  // Detect if this is a confirmation response (yes, no, ok, sure, etc.)
+  const isConfirmation = /^(yes|yeah|yep|yup|ok|okay|sure|alright|all right|go ahead|proceed|continue|do it|execute|confirm|approved?|agreed?)$/i.test(command.trim());
+  const isRejection = /^(no|nope|nah|cancel|stop|abort|don't|dont)$/i.test(command.trim());
+
+  // Detect if this is a question that requires immediate tool execution
+  const isQuestion = /^(how many|how much|what|which|where|when|who|count|list|show|find|analyze)/i.test(command.trim());
+  const needsAnalysis = /(pictures?|images?|files?|photos?|documents?|videos?|audio|size|space|count)/i.test(command);
+
+  let prompt = `User command: "${command}"\n\n`;
+
+  // Handle confirmation/rejection responses with context
+  if (isConfirmation || isRejection) {
+    if (conversationHistory && conversationHistory.length > 0) {
+      // Find the last assistant message that asked for confirmation
+      const lastAssistantMessage = [...conversationHistory].reverse().find(msg => msg.role === 'assistant');
+      if (lastAssistantMessage) {
+        const lastMessage = lastAssistantMessage.content;
+        prompt += `CRITICAL CONTEXT: The user is responding "${command}" to your previous message where you asked for confirmation or approval.\n\n`;
+        prompt += `Your previous message was: "${lastMessage.substring(0, 800)}"\n\n`;
+
+        if (isConfirmation) {
+          // Extract what operation was discussed
+          const operationKeywords = {
+            'organize': ['organize', 'organization', 'organizing', 'group', 'grouping'],
+            'create folders': ['create', 'creating', 'folders', 'subfolders', 'directory', 'directories'],
+            'create files': ['create', 'creating', 'files', 'file', 'generate', 'generating', 'make', 'making', 'documents', 'document'],
+            'move files': ['move', 'moving', 'relocate'],
+            'rename': ['rename', 'renaming', 'rename files'],
+            'delete': ['delete', 'deleting', 'remove', 'removing'],
+          };
+
+          let detectedOperation = '';
+          for (const [op, keywords] of Object.entries(operationKeywords)) {
+            if (keywords.some(kw => lastMessage.toLowerCase().includes(kw))) {
+              detectedOperation = op;
+              break;
+            }
+          }
+
+          prompt += `ACTION REQUIRED: The user has confirmed/approved with "${command}".\n\n`;
+          prompt += `You MUST immediately EXECUTE the tools (not describe them). Do NOT repeat information or ask again.\n`;
+          prompt += `If you mentioned creating files, ACTUALLY CALL the 'write_file_content' tool NOW for each file.\n`;
+          prompt += `Do NOT describe what you would do - ACTUALLY EXECUTE the tools.\n\n`;
+
+          if (detectedOperation) {
+            prompt += `Based on your previous message, you were discussing: ${detectedOperation}.\n\n`;
+            prompt += `IMMEDIATELY execute the appropriate tools to ${detectedOperation}:\n`;
+            if (detectedOperation.includes('organize')) {
+              prompt += `- Use 'organize_files' or 'folder_creation_tab' to create the folder structure\n`;
+              prompt += `- Use 'move_file' or 'copy_file' to organize files into the new structure\n`;
+            } else if (detectedOperation.includes('create folders')) {
+              prompt += `- Use 'folder_creation_tab' or 'create_directory' to create the folders\n`;
+            } else if (detectedOperation.includes('create files') || detectedOperation.includes('create file')) {
+              // Check if user mentioned specific file names (documents) vs patterns
+              const hasSpecificNames = /(?:called|named|titled|with name|with the name|one that says|that says|the first|the second|the other)/i.test(lastMessage);
+              const mentionsDocuments = /(?:document|documents|\.docx|\.txt|file|files)/i.test(lastMessage);
+              if (hasSpecificNames || mentionsDocuments) {
+                prompt += `\\n=== ACTION REQUIRED: USER CONFIRMED FILE CREATION ===\\n`;
+                prompt += `The user said "yes" to creating files. EXECUTE IMMEDIATELY - NO MORE QUESTIONS.\\n\\n`;
+                prompt += `YOU MUST:\\n`;
+                prompt += `1. Extract ALL file names from: "${lastMessage}"\\n`;
+                prompt += `2. For EACH file, IMMEDIATELY call 'write_file_content' tool (use tool_use, NOT text):\\n`;
+                prompt += `   - path: [currentDirectory]/[filename].docx (add .docx if no extension)\\n`;
+                prompt += `   - content: "" (empty string)\\n`;
+                prompt += `   - createDirectories: true\\n`;
+                prompt += `   - overwrite: false\\n`;
+                prompt += `3. Call 'write_file_content' MULTIPLE TIMES (once per file)\\n`;
+                prompt += `4. DO NOT write any text response until AFTER tools execute\\n`;
+                prompt += `5. After execution, report: "Created [X] file(s): [list names]"\\n\\n`;
+                prompt += `FORBIDDEN:\\n`;
+                prompt += `- Do NOT ask for confirmation again\\n`;
+                prompt += `- Do NOT describe what you'll do\\n`;
+                prompt += `- Do NOT show JSON or tool parameters\\n`;
+                prompt += `- Do NOT use 'folder_creation_tab'\\n\\n`;
+                prompt += `EXECUTE THE TOOLS NOW USING tool_use.\\n\\n`;
+              } else {
+                prompt += `- Use 'file_creation_tab' to create files with patterns\n`;
+              }
+            } else if (detectedOperation.includes('move')) {
+              prompt += `- Use 'move_file' to move files to their new locations\n`;
+            } else if (detectedOperation.includes('rename')) {
+              prompt += `- Use 'rename_files' to rename the files\n`;
+            }
+            prompt += `\nDO NOT ask for permission again. DO NOT just describe what you would do. EXECUTE THE TOOLS NOW.\n\n`;
+          } else {
+            prompt += `IMMEDIATELY execute the tools you mentioned in your previous message. Do not repeat information - take action now.\n\n`;
+          }
+        } else {
+          prompt += `The user has rejected/cancelled. Acknowledge this and ask if they'd like to try a different approach or cancel the operation.\n\n`;
+        }
+      }
+    }
+  }
+
+  // Handle action commands (create, confirm, etc.) - treat them as confirmations
+  const actionCommands: Record<string, string> = {
+    'create': 'yes',
+    'confirm': 'yes',
+    'approve': 'yes',
+    'proceed': 'yes',
+    'go ahead': 'yes',
+    'do it': 'yes',
+    'execute': 'yes',
+    'cancel': 'no',
+    'stop': 'no',
+    'abort': 'no',
+  };
+
+  const normalizedCommand = command.trim().toLowerCase();
+  if (actionCommands[normalizedCommand] && !isConfirmation && !isRejection) {
+    // Treat action commands as confirmations
+    const action = actionCommands[normalizedCommand];
+    if (conversationHistory && conversationHistory.length > 0) {
+      const lastAssistantMessage = [...conversationHistory].reverse().find(msg => msg.role === 'assistant');
+      if (lastAssistantMessage) {
+        prompt += `CONTEXT: The user clicked a confirmation button or said "${command}" to approve the operation.\n\n`;
+        prompt += `Your previous message was: "${lastAssistantMessage.content.substring(0, 800)}"\n\n`;
+
+        if (action === 'yes') {
+          prompt += `The user has confirmed/approved. Proceed with the operation you described. Execute the tools you mentioned and complete the task immediately.\n\n`;
+        } else {
+          prompt += `The user has rejected/cancelled. Acknowledge this and ask if they'd like to try a different approach.\n\n`;
+        }
+      }
+    }
+  }
+
+  // Detect if user wants to create documents/files (not folders)
+  const wantsDocuments = /(?:create|make|generate)\s+(?:two|three|four|five|\d+)?\s*(?:document|documents|file|files|\.docx|\.txt|\.md)/i.test(command);
+  const hasSpecificFileNames = /(?:called|named|titled|with name|with the name|one that says|that says|the first|the second|the other)/i.test(command);
+  const mentionsDocuments = /(?:document|documents|\.docx|\.txt|\.md|text file)/i.test(command);
+
+  if ((wantsDocuments || mentionsDocuments || hasSpecificFileNames) && !isConfirmation && !isRejection) {
+    prompt += `\n\n=== CRITICAL: FILE CREATION REQUEST ===\n`;
+    prompt += `The user wants to create FILES/DOCUMENTS. This is NON-DESTRUCTIVE - NO CONFIRMATION NEEDED.\n\n`;
+    prompt += `YOU MUST IMMEDIATELY USE THE 'write_file_content' TOOL - DO NOT DESCRIBE, ACTUALLY CALL IT.\n\n`;
+    prompt += `EXECUTION STEPS (DO THIS NOW):\n`;
+    prompt += `1. Extract ALL file names from: "${command}"\n`;
+    prompt += `   - Pattern: "one that says, X, and the other one is, Y" = TWO files: X and Y\n`;
+    prompt += `   - Pattern: "the first document should be called A, the second is B" = TWO files: A and B\n`;
+    prompt += `2. For EACH file name, IMMEDIATELY call 'write_file_content' tool (use tool_use, not text):\n`;
+    prompt += `   - path: [currentDirectory]/[filename].docx (add .docx if no extension provided)\n`;
+    prompt += `   - content: "" (empty string, unless user specified content)\n`;
+    prompt += `   - createDirectories: true\n`;
+    prompt += `   - overwrite: false\n`;
+    prompt += `3. DO NOT write any text response describing what you'll do.\n`;
+    prompt += `4. DO NOT ask for confirmation - just execute.\n`;
+    prompt += `5. After tools execute, report: "Created [X] file(s): [list file names]"\n\n`;
+    prompt += `ABSOLUTELY FORBIDDEN:\n`;
+    prompt += `- Do NOT say "I'll create", "I will create", "I understand", "Before creating", "Let me"\n`;
+    prompt += `- Do NOT show JSON blocks, tool parameters, or technical details\n`;
+    prompt += `- Do NOT ask "Please confirm" or "Would you like me to proceed"\n`;
+    prompt += `- Do NOT use 'folder_creation_tab' (that's for folders only)\n`;
+    prompt += `- Do NOT describe the steps - just execute the tools\n\n`;
+    prompt += `START CALLING THE TOOLS NOW USING tool_use - NO TEXT RESPONSE UNTIL AFTER EXECUTION.\n\n`;
+  }
+
+  // Add instruction for direct action if it's a question
+  if (isQuestion && needsAnalysis && !isConfirmation && !isRejection && !actionCommands[normalizedCommand]) {
+    prompt += `IMPORTANT: This is a question that requires data. Execute the appropriate tool (e.g., analyze_directory) IMMEDIATELY to get the answer. Do not ask for permission or show JSON blocks - just execute and provide the direct answer.\n\n`;
+  }
+
+  if (currentDirectory) {
+    prompt += `Current working directory: ${currentDirectory}\n\n`;
+  }
+
+  if (directoryAnalysis) {
+    prompt += `Directory Analysis:\n`;
+    prompt += `- Total files: ${directoryAnalysis.totalFiles}\n`;
+    prompt += `- Total size: ${formatBytes(directoryAnalysis.totalSize)}\n`;
+    prompt += `- Organization score: ${directoryAnalysis.organizationScore}/100\n\n`;
+
+    if (directoryAnalysis.fileTypes.length > 0) {
+      prompt += `File types:\n`;
+      directoryAnalysis.fileTypes.slice(0, 5).forEach(type => {
+        prompt += `- ${type.extension}: ${type.count} files (${formatBytes(type.totalSize)})\n`;
+      });
+      prompt += `\n`;
+    }
+  }
+
+  if (!isConfirmation && !isRejection) {
+    prompt += `Please provide a helpful response and suggest file operations if appropriate. `;
+    prompt += `Be specific about what will happen and always prioritize safety.`;
+  }
+
+  return prompt;
+}
+
+/**
+ * Uses AI to analyze directory and suggest organization strategies.
+ * Supports both Anthropic and Ollama providers.
+ */
+export async function suggestOrganizationStrategy(
+  directoryAnalysis: DirectoryAnalysis,
+  settings: AISettings
+): Promise<string> {
+  if (settings.provider === 'ollama') {
+    // Use Ollama for suggestions
+    try {
+      const prompt = `Based on this directory analysis, suggest the best organization strategy:
+
+Total files: ${directoryAnalysis.totalFiles}
+Total size: ${formatBytes(directoryAnalysis.totalSize)}
+Organization score: ${directoryAnalysis.organizationScore}/100
+
+File types:
+${directoryAnalysis.fileTypes.slice(0, 10).map(t =>
+        `- ${t.extension}: ${t.count} files (${formatBytes(t.totalSize)})`
+      ).join('\n')}
+
+Provide a brief suggestion (2-3 sentences) on how to organize these files.`;
+
+      const baseUrl = settings.ollamaBaseUrl || 'http://localhost:11434';
+      const model = settings.ollamaModel || settings.model || 'llama3.2:3b';
+
+      const response = await fetch(`${baseUrl}/api/chat`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model,
+          messages: [
+            {
+              role: 'user',
+              content: prompt,
+            },
+          ],
+          stream: false,
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data.message && data.message.content) {
+          return data.message.content;
+        }
+      }
+    } catch (error) {
+      console.error('Error getting Ollama suggestion:', error);
+    }
+    return generateFallbackSuggestion(directoryAnalysis);
+  } else {
+    // Use Anthropic for suggestions
+    if (!anthropicClient || !settings.apiKey) {
+      return generateFallbackSuggestion(directoryAnalysis);
+    }
+
+    try {
+      const prompt = `Based on this directory analysis, suggest the best organization strategy:
+
+Total files: ${directoryAnalysis.totalFiles}
+Total size: ${formatBytes(directoryAnalysis.totalSize)}
+Organization score: ${directoryAnalysis.organizationScore}/100
+
+File types:
+${directoryAnalysis.fileTypes.slice(0, 10).map(t =>
+        `- ${t.extension}: ${t.count} files (${formatBytes(t.totalSize)})`
+      ).join('\n')}
+
+Provide a brief suggestion (2-3 sentences) on how to organize these files.`;
+
+      const response = await anthropicClient.messages.create({
+        model: getModelName(settings),
+        max_tokens: 500,
+        temperature: getTemperature(settings.creativityLevel),
+        messages: [
+          {
+            role: 'user',
+            content: prompt,
+          },
+        ],
+      });
+
+      const content = response.content[0];
+      if (content.type === 'text') {
+        return content.text;
+      }
+
+      return generateFallbackSuggestion(directoryAnalysis);
+    } catch (error) {
+      console.error('Error getting AI suggestion:', error);
+      return generateFallbackSuggestion(directoryAnalysis);
+    }
+  }
+}
+
+/**
+ * Generates a fallback suggestion when AI is not available.
+ */
+function generateFallbackSuggestion(analysis: DirectoryAnalysis): string {
+  const topType = analysis.fileTypes[0];
+  if (topType && topType.percentage > 50) {
+    return `Most files are ${topType.extension} files. Consider organizing by file type to improve structure.`;
+  }
+  return `Your directory has ${analysis.totalFiles} files. Consider organizing by file type or date to improve organization.`;
+}
+
+/**
+ * Formats bytes to human-readable format.
+ */
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(2)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
+/**
+ * Gets a human-readable description for a tool execution.
+ */
+function getToolDescription(toolName: string, args: Record<string, any>): string {
+  const descriptions: Record<string, (args: Record<string, any>) => string> = {
+    'file_copy_tab': (args) =>
+      `${args.operation || 'Copy'} files from ${args.sourcePath || 'source'} to ${args.destinationPath || 'destination'}`,
+    'folder_creation_tab': (args) =>
+      `Create ${args.folderNames?.length || 0} folders${args.subfolders?.length ? ` with ${args.subfolders.length} subfolders each` : ''}`,
+    'file_creation_tab': (args) =>
+      `Create ${args.count || 0} files with extensions: ${args.extensions?.join(', ') || ''}`,
+    'find_replace_tab': (args) =>
+      `${args.replaceQuery ? 'Find and replace' : 'Find'} "${args.searchQuery || ''}" in ${args.filePattern || 'all files'}`,
+  };
+
+  const descFn = descriptions[toolName];
+  return descFn ? descFn(args) : `Execute ${toolName}`;
+}
+
+/** Max length for AI-generated chat/tab titles. */
+const CONTEXTUAL_NAME_MAX_LENGTH = 40;
+
+/** Normalizes AI title output: collapse whitespace, strip trailing punctuation, truncate. */
+function normalizeTitleOutput(raw: string): string | null {
+  const s = raw.replace(/\s+/g, ' ').trim().replace(/[.,;:!?]+$/, '');
+  const out = s.slice(0, CONTEXTUAL_NAME_MAX_LENGTH).trim();
+  return out || null;
+}
+
+/**
+ * Generates a concise 2–6 word chat title that summarizes the goal/context.
+ * Used to rename agent chats and tabs so users can quickly identify each conversation.
+ * Supports Anthropic, Ollama, and OpenRouter; returns null for other providers or on error.
+ */
+export async function generateChatTitleSummary(
+  context: string,
+  settings: AISettings
+): Promise<string | null> {
+  const trimmed = context.replace(/\s+/g, ' ').trim();
+  if (!trimmed) return null;
+
+  const prompt = `Summarize this chat goal or context in 2–6 words as a concise tab title. Reply with ONLY the title—no quotes, punctuation, or extra text.
+
+Context:
+${trimmed}`;
+
+  if (settings.provider === 'ollama') {
+    try {
+      const baseUrl = settings.ollamaBaseUrl || 'http://localhost:11434';
+      const model = settings.ollamaModel || settings.model || 'llama3.2:3b';
+      const res = await fetch(`${baseUrl}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model,
+          messages: [{ role: 'user', content: prompt }],
+          stream: false,
+        }),
+      });
+      if (!res.ok) return null;
+      const data = await res.json();
+      const text = data?.message?.content;
+      if (typeof text !== 'string') return null;
+      return normalizeTitleOutput(text) || null;
+    } catch (e) {
+      console.warn('[AI] Chat title summary (Ollama) failed:', e);
+      return null;
+    }
+  }
+
+  if (settings.provider === 'anthropic') {
+    if (!anthropicClient || !settings.apiKey) return null;
+    try {
+      const response = await anthropicClient.messages.create({
+        model: getModelName(settings),
+        max_tokens: 80,
+        temperature: 0.3,
+        messages: [{ role: 'user', content: prompt }],
+      });
+      const part = response.content[0];
+      const text = part && part.type === 'text' ? part.text : '';
+      if (!text) return null;
+      return normalizeTitleOutput(text) || null;
+    } catch (e) {
+      console.warn('[AI] Chat title summary (Anthropic) failed:', e);
+      return null;
+    }
+  }
+
+  if (settings.provider === 'openrouter') {
+    const openRouter = settings.openRouter ?? DEFAULT_OPENROUTER_SETTINGS;
+    const apiKey = openRouter.apiKey?.trim();
+    const model = openRouter.model || 'anthropic/claude-3.5-sonnet';
+    if (!apiKey) return null;
+    try {
+      const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+          'HTTP-Referer': openRouter.siteUrl || (typeof window !== 'undefined' ? window.location.origin : ''),
+          'X-Title': openRouter.siteName || 'File Pro',
+        },
+        body: JSON.stringify({
+          model,
+          messages: [{ role: 'user', content: prompt }],
+          max_tokens: 80,
+          temperature: 0.3,
+        }),
+      });
+      if (!res.ok) return null;
+      const data = await res.json();
+      const text = data?.choices?.[0]?.message?.content;
+      if (typeof text !== 'string') return null;
+      return normalizeTitleOutput(text) || null;
+    } catch (e) {
+      console.warn('[AI] Chat title summary (OpenRouter) failed:', e);
+      return null;
+    }
+  }
+
+  return null;
+}
+
+/** System instruction for prompt improvement: ask the model to output only the improved prompt. */
+const PROMPT_IMPROVEMENT_SYSTEM = `You are a prompt engineering expert. Your task is to improve the user's prompt so that an AI will give better, more relevant responses.
+
+Rules:
+- Output ONLY the improved prompt. No preamble, no explanation, no "Here is the improved prompt:", no markdown code blocks.
+- Preserve the user's intent and key details.
+- Add clarity, specificity, and structure where helpful (e.g. context, format, constraints).
+- Keep the improved prompt concise; do not over-expand.
+- If the prompt is already clear and specific, return a lightly polished version.`;
+
+/**
+ * Improves a user prompt using the configured AI provider.
+ * Used by the Prompt Optimizer quick tool to suggest a clearer, more effective prompt.
+ * Supports Ollama, Anthropic, and OpenRouter. Throws on error or unsupported provider.
+ */
+export async function improvePromptWithAI(
+  userPrompt: string,
+  settings: AISettings
+): Promise<string> {
+  const trimmed = userPrompt.replace(/\s+/g, ' ').trim();
+  if (!trimmed) {
+    throw new Error('Please enter a prompt to improve.');
+  }
+
+  const userMessage = `Improve this prompt:\n\n${trimmed}`;
+
+  if (settings.provider === 'ollama') {
+    const baseUrl = settings.ollamaBaseUrl || 'http://localhost:11434';
+    const model = settings.ollamaModel || settings.model || 'llama3.2:3b';
+    const res = await fetch(`${baseUrl}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: 'system', content: PROMPT_IMPROVEMENT_SYSTEM },
+          { role: 'user', content: userMessage },
+        ],
+        stream: false,
+      }),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Ollama request failed: ${res.status}. ${text || res.statusText}`);
+    }
+    const data = await res.json();
+    const text = data?.message?.content;
+    if (typeof text !== 'string') throw new Error('Invalid response from Ollama');
+    return text.trim();
+  }
+
+  if (settings.provider === 'anthropic') {
+    if (!anthropicClient || !settings.apiKey) {
+      throw new Error('Anthropic API key is not configured. Set it in Chat/Settings.');
+    }
+    const response = await anthropicClient.messages.create({
+      model: getModelName(settings),
+      max_tokens: 1024,
+      temperature: 0.4,
+      system: PROMPT_IMPROVEMENT_SYSTEM,
+      messages: [{ role: 'user', content: userMessage }],
+    });
+    const part = response.content[0];
+    const text = part && part.type === 'text' ? part.text : '';
+    if (!text) throw new Error('Empty response from Anthropic');
+    return text.trim();
+  }
+
+  if (settings.provider === 'openrouter') {
+    const openRouter = settings.openRouter ?? DEFAULT_OPENROUTER_SETTINGS;
+    const apiKey = openRouter.apiKey?.trim();
+    const model = openRouter.model || 'anthropic/claude-3.5-sonnet';
+    if (!apiKey) {
+      throw new Error('OpenRouter API key is not configured. Set it in Chat/Settings.');
+    }
+    const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': openRouter.siteUrl || (typeof window !== 'undefined' ? window.location.origin : ''),
+        'X-Title': openRouter.siteName || 'File Pro',
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: 'system', content: PROMPT_IMPROVEMENT_SYSTEM },
+          { role: 'user', content: userMessage },
+        ],
+        max_tokens: 1024,
+        temperature: 0.4,
+      }),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`OpenRouter request failed: ${res.status}. ${text || res.statusText}`);
+    }
+    const data = await res.json();
+    const text = data?.choices?.[0]?.message?.content;
+    if (typeof text !== 'string') throw new Error('Invalid response from OpenRouter');
+    return text.trim();
+  }
+
+  throw new Error(`Unsupported AI provider: ${settings.provider}. Use Ollama, Anthropic, or OpenRouter in Chat/Settings.`);
+}
+
+/**
+ * Tests the API key or connection by making a simple request.
+ * Supports both Anthropic and Ollama providers.
+ */
+export async function testAPIKey(
+  apiKey: string | undefined,
+  provider: 'anthropic' | 'ollama' = 'anthropic',
+  ollamaConfig?: { baseUrl?: string; model?: string }
+): Promise<{ valid: boolean; message: string }> {
+  if (provider === 'ollama') {
+    return testOllamaConnection({
+      baseUrl: ollamaConfig?.baseUrl,
+      model: ollamaConfig?.model,
+    });
+  } else {
+    // Test Anthropic API key
+    if (!apiKey) {
+      return {
+        valid: false,
+        message: 'Please enter an API key',
+      };
+    }
+
+    try {
+      const testClient = new Anthropic({ apiKey });
+      const response = await testClient.messages.create({
+        model: 'claude-3-5-haiku-20241022',
+        max_tokens: 10,
+        messages: [
+          {
+            role: 'user',
+            content: 'Say "OK"',
+          },
+        ],
+      });
+
+      return {
+        valid: true,
+        message: 'API key is valid!',
+      };
+    } catch (error: any) {
+      if (error.status === 401) {
+        return {
+          valid: false,
+          message: 'Invalid API key',
+        };
+      }
+      return {
+        valid: false,
+        message: error.message || 'Failed to test API key',
+      };
+    }
+  }
+}
+
+/**
+ * Lists available models for the specified provider.
+ */
+export async function listAvailableModels(
+  provider: 'anthropic' | 'ollama',
+  baseUrl?: string
+): Promise<string[]> {
+  if (provider === 'ollama') {
+    return listOllamaModels(baseUrl);
+  } else {
+    // Anthropic models are fixed
+    return ['claude-sonnet', 'claude-opus', 'claude-haiku'];
+  }
+}

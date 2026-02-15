@@ -1,0 +1,83 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="shieldGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1e3a8a"/>
+      <stop offset="100%" stop-color="#a855f7"/>
+    </linearGradient>
+
+    <linearGradient id="fileGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1e40af"/>
+      <stop offset="100%" stop-color="#9333ea"/>
+    </linearGradient>
+
+    <linearGradient id="textGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#2563eb"/>
+      <stop offset="100%" stop-color="#9333ea"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Shield -->
+  <path
+    d="M256 40
+       L420 110
+       V260
+       C420 350 330 420 256 460
+       C182 420 92 350 92 260
+       V110
+       Z"
+    fill="none"
+    stroke="url(#shieldGradient)"
+    stroke-width="22"
+    stroke-linejoin="round"
+  />
+
+  <!-- File shape -->
+  <path
+    d="M180 150
+       H300
+       L340 190
+       V320
+       C340 335 328 348 312 348
+       H200
+       C184 348 172 335 172 320
+       V170
+       C172 158 180 150 180 150
+       Z"
+    fill="url(#fileGradient)"
+  />
+
+  <!-- Folded corner -->
+  <path
+    d="M300 150
+       V190
+       H340
+       Z"
+    fill="#e5e7eb"
+  />
+
+  <!-- Star -->
+  <path
+    d="M256 215
+       L266 245
+       L296 256
+       L266 266
+       L256 296
+       L246 266
+       L216 256
+       L246 245
+       Z"
+    fill="#ffffff"
+  />
+
+  <!-- Text -->
+  <text
+    x="256"
+    y="500"
+    text-anchor="middle"
+    font-size="64"
+    font-family="Inter, Arial, sans-serif"
+    font-weight="600"
+    fill="url(#textGradient)">
+    File Pro
+  </text>
+</svg>

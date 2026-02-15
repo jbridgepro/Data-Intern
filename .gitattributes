@@ -1,0 +1,8 @@
+# File: .gitattributes
+# 
+# Ensure consistent line endings across platforms
+# This helps prevent Windows build failures in GitHub Actions
+
+* text=auto eol=lf
+*.{cmd,[cC][mM][dD]} text eol=crlf
+*.{bat,[bB][aA][tT]} text eol=crlf

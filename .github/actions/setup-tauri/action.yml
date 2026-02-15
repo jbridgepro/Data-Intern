@@ -1,0 +1,104 @@
+# Reusable composite action for ProjectFile Pro Tauri builds.
+# Handles: checkout, Node.js, Rust, caching, system deps, macOS signing, and npm ci.
+
+name: Setup Tauri Build Environment
+description: Shared setup for Tauri CI/CD — toolchains, caches, system deps, and optional macOS signing.
+
+inputs:
+  node-version:
+    description: Node.js version to install
+    required: false
+    default: "20"
+  enable-macos-signing:
+    description: Whether macOS signing is enabled (reads from vars.ENABLE_MACOS_SIGNING)
+    required: false
+    default: "false"
+  apple-certificate:
+    description: Base64-encoded .p12 certificate
+    required: false
+    default: ""
+  apple-certificate-password:
+    description: Certificate password
+    required: false
+    default: ""
+  keychain-password:
+    description: Temporary keychain password
+    required: false
+    default: ""
+
+outputs:
+  signing-identity:
+    description: Resolved Apple signing identity (empty if signing disabled)
+    value: ${{ steps.apple-identity.outputs.signing_identity }}
+
+runs:
+  using: composite
+  steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node-version }}
+        cache: npm
+
+    - name: Setup Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Cache Rust compilation
+      uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: src-tauri -> target
+
+    - name: Install Linux dependencies
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential \
+          curl \
+          wget \
+          file \
+          libgtk-3-dev \
+          libwebkit2gtk-4.1-dev \
+          libayatana-appindicator3-dev \
+          librsvg2-dev \
+          libssl-dev \
+          libxdo-dev \
+          libglib2.0-dev
+
+    - name: Import Apple Developer Certificate (macOS)
+      if: runner.os == 'macOS' && inputs.enable-macos-signing == 'true'
+      shell: bash
+      env:
+        APPLE_CERTIFICATE: ${{ inputs.apple-certificate }}
+        APPLE_CERTIFICATE_PASSWORD: ${{ inputs.apple-certificate-password }}
+        KEYCHAIN_PASSWORD: ${{ inputs.keychain-password }}
+      run: |
+        echo "$APPLE_CERTIFICATE" | base64 --decode > certificate.p12
+        security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+        security default-keychain -s build.keychain
+        security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+        security set-keychain-settings -t 3600 -u build.keychain
+        security import certificate.p12 -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/productbuild
+        security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
+        security find-identity -v -p codesigning build.keychain
+
+    - name: Set Apple signing identity (macOS)
+      if: runner.os == 'macOS' && inputs.enable-macos-signing == 'true'
+      id: apple-identity
+      shell: bash
+      run: |
+        IDENTITY=$(security find-identity -v -p codesigning build.keychain | grep "Developer ID Application" | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+        if [ -z "$IDENTITY" ]; then
+          echo "Developer ID Application identity not found"
+          security find-identity -v -p codesigning build.keychain
+          exit 1
+        fi
+        echo "signing_identity=$IDENTITY" >> $GITHUB_OUTPUT
+
+    - name: Install frontend dependencies
+      shell: bash
+      run: npm ci

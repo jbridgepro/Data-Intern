@@ -1,0 +1,252 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Capability for the main window",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default",
+    "fs:default",
+    {
+      "identifier": "fs:allow-read-dir",
+      "allow": [
+        {
+          "path": "$HOME"
+        },
+        {
+          "path": "$HOME/**"
+        },
+        {
+          "path": "/Volumes/**"
+        },
+        {
+          "path": "/tmp/**"
+        },
+        {
+          "path": "/private/tmp/**"
+        }
+      ]
+    },
+    {
+      "identifier": "fs:allow-read-file",
+      "allow": [
+        {
+          "path": "$HOME/**"
+        },
+        {
+          "path": "/Volumes/**"
+        },
+        {
+          "path": "/tmp/**"
+        },
+        {
+          "path": "/private/tmp/**"
+        }
+      ]
+    },
+    {
+      "identifier": "fs:allow-stat",
+      "allow": [
+        {
+          "path": "$HOME"
+        },
+        {
+          "path": "$HOME/**"
+        },
+        {
+          "path": "/Volumes/**"
+        },
+        {
+          "path": "/tmp/**"
+        },
+        {
+          "path": "/private/tmp/**"
+        }
+      ]
+    },
+    {
+      "identifier": "fs:allow-exists",
+      "allow": [
+        {
+          "path": "$HOME"
+        },
+        {
+          "path": "$HOME/**"
+        },
+        {
+          "path": "/Volumes/**"
+        },
+        {
+          "path": "/tmp/**"
+        },
+        {
+          "path": "/private/tmp/**"
+        }
+      ]
+    },
+    {
+      "identifier": "fs:allow-write-file",
+      "allow": [
+        {
+          "path": "$HOME/**"
+        },
+        {
+          "path": "/Volumes/**"
+        },
+        {
+          "path": "/tmp/**"
+        },
+        {
+          "path": "/private/tmp/**"
+        }
+      ]
+    },
+    {
+      "identifier": "fs:allow-write-text-file",
+      "allow": [
+        {
+          "path": "$HOME/**"
+        },
+        {
+          "path": "/Volumes/**"
+        },
+        {
+          "path": "/tmp/**"
+        },
+        {
+          "path": "/private/tmp/**"
+        },
+        {
+          "path": "$DESKTOP/**"
+        }
+      ]
+    },
+    {
+      "identifier": "fs:allow-desktop-write",
+      "allow": [
+        {
+          "path": "$DESKTOP/**"
+        }
+      ]
+    },
+    {
+      "identifier": "fs:allow-mkdir",
+      "allow": [
+        {
+          "path": "$HOME/**"
+        },
+        {
+          "path": "/Volumes/**"
+        },
+        {
+          "path": "/tmp/**"
+        },
+        {
+          "path": "/private/tmp/**"
+        }
+      ]
+    },
+    {
+      "identifier": "fs:allow-copy-file",
+      "allow": [
+        {
+          "path": "$HOME/**"
+        },
+        {
+          "path": "/Volumes/**"
+        },
+        {
+          "path": "/tmp/**"
+        },
+        {
+          "path": "/private/tmp/**"
+        }
+      ]
+    },
+    {
+      "identifier": "fs:allow-remove",
+      "allow": [
+        {
+          "path": "$HOME/**"
+        },
+        {
+          "path": "/Volumes/**"
+        },
+        {
+          "path": "/tmp/**"
+        },
+        {
+          "path": "/private/tmp/**"
+        }
+      ]
+    },
+    {
+      "identifier": "fs:allow-rename",
+      "allow": [
+        {
+          "path": "$HOME/**"
+        },
+        {
+          "path": "/Volumes/**"
+        },
+        {
+          "path": "/tmp/**"
+        },
+        {
+          "path": "/private/tmp/**"
+        }
+      ]
+    },
+    "shell:default",
+    {
+      "identifier": "shell:allow-execute",
+      "allow": [
+        {
+          "name": "clawdbot",
+          "cmd": "clawdbot",
+          "args": true
+        },
+        {
+          "name": "node",
+          "cmd": "node",
+          "args": true
+        },
+        {
+          "name": "npm",
+          "cmd": "npm",
+          "args": true
+        },
+        {
+          "name": "sh",
+          "cmd": "/bin/sh",
+          "args": true
+        },
+        {
+          "name": "ffmpeg",
+          "cmd": "ffmpeg",
+          "args": true
+        },
+        {
+          "name": "ffprobe",
+          "cmd": "ffprobe",
+          "args": true
+        },
+        {
+          "name": "textutil",
+          "cmd": "textutil",
+          "args": true
+        },
+        {
+          "name": "cupsfilter",
+          "cmd": "cupsfilter",
+          "args": true
+        }
+      ]
+    },
+    "dialog:default",
+    "opener:default",
+    "updater:default",
+    "process:default"
+  ]
+}

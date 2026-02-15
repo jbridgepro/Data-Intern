@@ -1,0 +1,244 @@
+# File: .github/workflows/release.yml
+# Build and attach Tauri installers to GitHub Releases on version tags (v*) or workflow_dispatch.
+# macOS: signing and notarization when ENABLE_MACOS_SIGNING and Apple secrets are set.
+# Releases are created as drafts with auto-generated changelogs for review before publishing.
+
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag (e.g. v1.0.5) to build and attach assets for"
+        required: true
+        default: "v1.0.5"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: true
+
+env:
+  CI: "false"
+
+jobs:
+  # ── Fast-fail validation ────────────────────────────────────────
+  validate:
+    name: Validate
+    runs-on: ubuntu-latest
+    outputs:
+      has-signing-key: ${{ steps.check-key.outputs.has-key }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - run: npm ci
+      - name: Type check
+        run: npx tsc --noEmit
+      - name: Build frontend
+        run: npm run build
+
+      - name: Check for signing key
+        id: check-key
+
+        run: |
+          if [ -z "$KEY" ]; then
+            echo "::notice::No TAURI_SIGNING_PRIVATE_KEY secret found. Updater signing will be skipped."
+            echo "has-key=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Reject keys that include the full file (header + payload)
+          if [[ "$KEY" == "untrusted comment"* ]]; then
+            echo "::warning::Tauri signing key includes the file header ('untrusted comment'). Please update the secret to contain ONLY the base64 key payload (the second line of the key file)."
+            echo "has-key=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Strip all whitespace and check for invalid base64 characters
+          CLEAN_KEY=$(echo "$KEY" | tr -d '[:space:]')
+          if [ ${#CLEAN_KEY} -eq 0 ]; then
+            echo "::warning::TAURI_SIGNING_PRIVATE_KEY is empty after trimming whitespace."
+            echo "has-key=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Validate base64 encoding (must be [A-Za-z0-9+/=] only)
+          if echo "$CLEAN_KEY" | grep -qE '[^A-Za-z0-9+/=]'; then
+            echo "::error::TAURI_SIGNING_PRIVATE_KEY contains invalid base64 characters. Please re-copy the key ensuring no extra spaces or special characters are included."
+            echo "has-key=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Try actual base64 decode as a final sanity check
+          if ! echo "$CLEAN_KEY" | base64 --decode > /dev/null 2>&1; then
+            echo "::error::TAURI_SIGNING_PRIVATE_KEY failed base64 decode validation. The key may be truncated or corrupted."
+            echo "has-key=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Signing key validated successfully."
+          echo "has-key=true" >> "$GITHUB_OUTPUT"
+
+  # ── Generate changelog from git history ─────────────────────────
+  changelog:
+    name: Generate Changelog
+    runs-on: ubuntu-latest
+    outputs:
+      body: ${{ steps.changelog.outputs.body }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          TAG="${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}"
+
+          # Find the previous tag
+          PREV_TAG=$(git tag --sort=-version:refname | grep -v "^${TAG}$" | head -1)
+
+          if [ -z "$PREV_TAG" ]; then
+            RANGE="HEAD"
+            HEADER="Initial release"
+          else
+            RANGE="${PREV_TAG}..HEAD"
+            HEADER="Changes since ${PREV_TAG}"
+          fi
+
+          # Build the changelog body
+          {
+            echo "body<<CHANGELOG_EOF"
+            echo "## ProjectFile Pro ${TAG}"
+            echo ""
+            echo "### ${HEADER}"
+            echo ""
+            git log --pretty=format:"- %s (%h)" ${RANGE} -- . ':!*.md' 2>/dev/null | head -50 || echo "- Release ${TAG}"
+            echo ""
+            echo ""
+            echo "### Downloads"
+            echo "| Platform | File |"
+            echo "|----------|------|"
+            echo "| **Windows** | \`.exe\` (NSIS installer) |"
+            echo "| **macOS** | \`.dmg\` (drag-to-install) |"
+            echo "| **Linux** | \`.deb\`, \`.rpm\`, \`.AppImage\` |"
+            echo ""
+            echo "---"
+            echo "Built from ${TAG}."
+            echo "CHANGELOG_EOF"
+          } >> $GITHUB_OUTPUT
+
+  # ── Multi-platform build & release ──────────────────────────────
+  build-and-release:
+    name: Build and attach (${{ matrix.platform }})
+    needs: [validate, changelog]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            platform: macos
+          - os: ubuntu-latest
+            platform: linux
+          - os: windows-latest
+            platform: windows
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Tauri build environment
+        id: apple-identity
+        uses: ./.github/actions/setup-tauri
+        with:
+          enable-macos-signing: ${{ vars.ENABLE_MACOS_SIGNING || 'false' }}
+          apple-certificate: ${{ secrets.APPLE_CERTIFICATE }}
+          apple-certificate-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          keychain-password: ${{ secrets.KEYCHAIN_PASSWORD }}
+
+
+
+      - name: Build and upload Tauri bundles (signed macOS)
+        id: signed-build
+        continue-on-error: true
+        if: (matrix.platform != 'macos' || (vars.ENABLE_MACOS_SIGNING == 'true' || vars.ENABLE_MACOS_SIGNING == '1')) && needs.validate.outputs.has-signing-key == 'true'
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_SIGNING_IDENTITY: ${{ steps.apple-identity.outputs.signing-identity }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+        with:
+          projectPath: "."
+          args: ${{ matrix.platform == 'windows' && '--bundles nsis' || (matrix.platform == 'linux' && '--bundles deb,rpm,appimage' || '') }}
+          tagName: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
+          releaseName: ProjectFile Pro ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
+          releaseBody: ${{ needs.changelog.outputs.body }}
+          releaseDraft: true
+          includeDebug: false
+
+      - name: Build and upload Tauri bundles (unsigned fallback)
+        if: needs.validate.outputs.has-signing-key != 'true' || steps.signed-build.outcome == 'failure'
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_SIGNING_IDENTITY: "-"
+        with:
+          projectPath: "."
+          args: ${{ matrix.platform == 'windows' && '--bundles nsis' || (matrix.platform == 'linux' && '--bundles deb,rpm,appimage' || '') }}
+          tagName: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
+          releaseName: ProjectFile Pro ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
+          releaseBody: |
+            ${{ needs.changelog.outputs.body }}
+
+            > **Note:** Build is unsigned due to missing or invalid signing key.
+          releaseDraft: true
+          includeDebug: false
+
+      - name: Build and upload Tauri bundles (unsigned macOS + updater)
+        if: (matrix.platform == 'macos' && !(vars.ENABLE_MACOS_SIGNING == 'true' || vars.ENABLE_MACOS_SIGNING == '1')) && needs.validate.outputs.has-signing-key == 'true'
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_SIGNING_IDENTITY: "-"
+
+        with:
+          projectPath: "."
+          tagName: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
+          releaseName: ProjectFile Pro ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
+          releaseBody: |
+            ${{ needs.changelog.outputs.body }}
+
+            > **Note:** macOS build is unsigned. You may need to right-click → Open on first launch.
+          releaseDraft: true
+          includeDebug: false
+
+      - name: Build and upload Tauri bundles (unsigned macOS - no updater)
+        if: (matrix.platform == 'macos' && !(vars.ENABLE_MACOS_SIGNING == 'true' || vars.ENABLE_MACOS_SIGNING == '1')) && needs.validate.outputs.has-signing-key != 'true'
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_SIGNING_IDENTITY: "-"
+        with:
+          projectPath: "."
+          tagName: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
+          releaseName: ProjectFile Pro ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
+          releaseBody: |
+            ${{ needs.changelog.outputs.body }}
+
+            > **Note:** macOS build is unsigned. You may need to right-click → Open on first launch.
+          releaseDraft: true
+          includeDebug: false

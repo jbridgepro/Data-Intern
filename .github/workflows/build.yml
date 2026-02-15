@@ -1,0 +1,173 @@
+# File: .github/workflows/build.yml
+# Multi-platform CI build for ProjectFile Pro (Tauri 2).
+# Runs a fast type-check gate, then builds per-platform bundles.
+# macOS: signing and notarization when ENABLE_MACOS_SIGNING and Apple secrets are set.
+
+name: CI Build
+
+on:
+  push:
+    branches:
+      - master
+    paths-ignore:
+      - "*.md"
+      - "docs/**"
+      - "LICENSE"
+      - ".gitignore"
+  pull_request:
+    branches:
+      - master
+    paths-ignore:
+      - "*.md"
+      - "docs/**"
+      - "LICENSE"
+      - ".gitignore"
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI: "false"
+
+jobs:
+  # ── Fast-fail gate ──────────────────────────────────────────────
+  lint:
+    name: Type Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - run: npm ci
+      - run: npx tsc --noEmit
+
+  # ── Multi-platform build ────────────────────────────────────────
+  build:
+    name: Build (${{ matrix.platform }})
+    needs: [lint]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            platform: macos
+          - os: ubuntu-latest
+            platform: linux
+          - os: windows-latest
+            platform: windows
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Tauri build environment
+        id: apple-identity
+        uses: ./.github/actions/setup-tauri
+        with:
+          enable-macos-signing: ${{ vars.ENABLE_MACOS_SIGNING || 'false' }}
+          apple-certificate: ${{ secrets.APPLE_CERTIFICATE }}
+          apple-certificate-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          keychain-password: ${{ secrets.KEYCHAIN_PASSWORD }}
+
+      # Windows: build NSIS only to avoid WiX download (CDN often returns 500 for wix314-binaries.zip).
+      - name: Build Tauri app (Windows)
+        if: matrix.platform == 'windows'
+
+        run: |
+
+          npm run tauri build -- --bundles nsis
+
+      - name: Build Tauri app (Linux)
+        if: matrix.platform == 'linux'
+
+        run: |
+
+          npm run tauri build -- --bundles deb,rpm,appimage
+
+      - name: Check for signing key
+        id: check-signing-key
+        shell: bash
+
+        run: |
+          if [ -n "$KEY" ]; then
+            echo "has-key=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has-key=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build Tauri app (macOS – signed)
+        if: matrix.platform == 'macos' && (vars.ENABLE_MACOS_SIGNING == 'true' || vars.ENABLE_MACOS_SIGNING == '1')
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ steps.apple-identity.outputs.signing-identity }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+        run: |
+
+          npm run tauri build
+
+      - name: Build Tauri app (macOS – unsigned)
+        if: matrix.platform == 'macos' && !(vars.ENABLE_MACOS_SIGNING == 'true' || vars.ENABLE_MACOS_SIGNING == '1')
+        env:
+          APPLE_SIGNING_IDENTITY: "-"
+
+        run: |
+
+          npm run tauri build
+
+      # ── Verification ──
+      - name: Verify macOS code signature and notarization
+        if: matrix.platform == 'macos' && success() && (vars.ENABLE_MACOS_SIGNING == 'true' || vars.ENABLE_MACOS_SIGNING == '1')
+        run: |
+          BUNDLE_DIR="src-tauri/target/release/bundle/macos"
+          APP_PATH="$BUNDLE_DIR/projectfile-pro.app"
+          if [ ! -d "$APP_PATH" ]; then
+            APP_PATH=$(find "$BUNDLE_DIR" -maxdepth 1 -name "*.app" -type d | head -1)
+          fi
+          if [ ! -d "$APP_PATH" ]; then
+            echo "App bundle not found; listing bundle dir:"
+            ls -la src-tauri/target/release/bundle/macos/ 2>/dev/null || true
+            exit 1
+          fi
+          echo "Verifying code signature for $APP_PATH"
+          codesign -dv --verbose=2 "$APP_PATH"
+          codesign --verify --deep --strict "$APP_PATH" || exit 1
+          if [ -n "$APPLE_ID" ] && [ -n "$APPLE_PASSWORD" ]; then
+            echo "Checking notarization staple..."
+            xcrun stapler validate "$APP_PATH" || true
+          fi
+
+      # ── Upload artifacts ──
+      - name: Upload Build Artifacts (Linux)
+        if: matrix.platform == 'linux' && success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: projectfile-pro-linux
+          path: |
+            src-tauri/target/release/bundle/deb/*.deb
+            src-tauri/target/release/bundle/rpm/*.rpm
+            src-tauri/target/release/bundle/appimage/*.AppImage
+
+      - name: Upload Build Artifacts (macOS)
+        if: matrix.platform == 'macos' && success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: projectfile-pro-macos
+          path: |
+            src-tauri/target/release/bundle/dmg/*.dmg
+            src-tauri/target/release/bundle/macos/*.app
+
+      - name: Upload Build Artifacts (Windows)
+        if: matrix.platform == 'windows' && success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: projectfile-pro-windows
+          path: src-tauri/target/release/bundle/nsis/*.exe
