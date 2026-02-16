@@ -75,6 +75,29 @@ export interface GenerationStats {
 }
 
 /**
+ * Calculates the total number of files to be created based on configuration
+ */
+export const getTotalCount = (config: FileConfig): number => {
+    const extensions = config.extensions.length > 0 ? config.extensions : [''];
+    const extCount = extensions.length;
+
+    if (config.creationMode === 'list') {
+        const lines = config.fileList
+            .split(/[\n,]/)
+            .map(line => line.trim())
+            .filter(line => line.length > 0);
+        return lines.length * extCount;
+    }
+
+    if (config.creationMode === 'csv') {
+        return (config.csvRows?.length || 0) * extCount;
+    }
+
+    // Pattern mode
+    return config.count * extCount;
+};
+
+/**
  * Formats date/time according to the specified format
  * @param format - The date/time format to use
  * @returns Formatted date/time string
@@ -137,9 +160,10 @@ const generateUUID = (): string => {
  * @param config - File configuration
  * @param customBaseName - Optional base name override (for List Mode)
  * @param dateStr - Pre-calculated date string
+ * @param csvRow - Optional CSV row data // Added for CSV mode
  * @returns Generated file name without extension
  */
-const generateFileNameNoExt = (
+export const generateFileNameNoExt = (
     index: number,
     config: FileConfig,
     customBaseName?: string,
@@ -328,10 +352,80 @@ export const generatePreview = async (config: FileConfig): Promise<GeneratedFile
 };
 
 /**
- * Calculates statistics from generated files
- * @param files - Array of generated files
- * @returns Statistics object
+ * Generates the full list of files for execution, merging preview files (with potential edits)
+ * with the remaining files that were not shown in preview (e.g. truncated CSV rows).
+ * 
+ * @param config - File generation configuration
+ * @param previewFiles - Current preview files (Source of Truth for the first N items)
+ * @returns GeneratedFile[] - The complete list of files to generate
  */
+export const generateExecutionList = (config: FileConfig, previewFiles: GeneratedFile[]): GeneratedFile[] => {
+    // If not CSV, and we assume preview covers everything (Pattern/List are not truncated in generatePreview currently)
+    if (config.creationMode !== 'csv') {
+        return previewFiles;
+    }
+
+    const extensions = config.extensions.length > 0 ? config.extensions : [''];
+
+    // Calculate expected total
+    const totalRows = config.csvRows?.length || 0;
+    const expectedTotal = totalRows * extensions.length;
+
+    // If preview already has everything, return it
+    if (previewFiles.length >= expectedTotal) {
+        return previewFiles;
+    }
+
+    // Generate the remaining items
+    // Assuming previewFiles contains the first X complete sets of extensions
+    // itemsPerSet = extensions.length
+
+    const rowsCovered = Math.floor(previewFiles.length / extensions.length);
+    const rows = config.csvRows || [];
+
+    // If for some reason we covered everything, just return
+    if (rowsCovered >= rows.length) {
+        return previewFiles;
+    }
+
+    const remainingRows = rows.slice(rowsCovered);
+    const newFiles: GeneratedFile[] = [];
+    const { rootPath, dateFormat, useDate } = config;
+
+    // We need dateStr. formatDate is local but we can use config to recreate or just use new Date() 
+    // ideally matching preview but milliseconds might differ slightly. 
+    // Since these are NEW files, slight time diff is acceptable if timestamps are used.
+    // However, generateFileNameNoExt takes a string. 
+    // We can just call formatDate if we export it or duplicate it.
+    // Since I can't easily export formatDate without another Replace, I'll copy the date generation logic or 
+    // just rely on generatePreview's behavior of using a fixed date string across the batch.
+    // Actually, I can just use `formatDate(dateFormat)` since it is in scope of this file!
+    const dateStr = useDate ? formatDate(dateFormat) : '';
+
+    remainingRows.forEach((row, _i) => {
+        const index = rowsCovered + _i; // Actual index in original array (0-based)
+
+        // generateFileNameNoExt expects 1-based index for numbering? 
+        // Looking at generatePreview: generateFileNameNoExt(index + 1, ...)
+        const fileNameNoExt = generateFileNameNoExt(index + 1, config, undefined, dateStr, row);
+
+        for (const ext of extensions) {
+            const fullExt = ext.startsWith('.') || ext === '' ? ext : `.${ext}`;
+            const fileName = `${fileNameNoExt}${fullExt}`;
+            const fullPath = rootPath ? `${rootPath}/${fileName}` : fileName;
+
+            newFiles.push({
+                id: `file-csv-${index}-${ext}-${Date.now()}-${Math.random()}`,
+                name: fileName,
+                path: fullPath,
+                status: 'pending'
+            });
+        }
+    });
+
+    return [...previewFiles, ...newFiles];
+};
+
 export const calculateStats = (files: GeneratedFile[]): GenerationStats => {
     return files.reduce((stats, file) => {
         stats.total++;

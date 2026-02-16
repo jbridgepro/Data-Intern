@@ -79,7 +79,14 @@ export function NetworkGraph({ data, config }: NetworkGraphProps) {
     const maxNodes = 200;
     if (nodes.length > maxNodes) {
       nodes.splice(maxNodes);
-      links.splice(links.length);
+      
+      // Filter links to ensure they only reference existing nodes
+      const nodeIds = new Set(nodes.map(n => n.id));
+      const validLinks = links.filter(l => nodeIds.has(l.source) && nodeIds.has(l.target));
+      
+      // Replace links array content
+      links.length = 0;
+      links.push(...validLinks);
     }
 
     // Create force simulation

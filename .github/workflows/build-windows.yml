@@ -1,0 +1,39 @@
+# File: .github/workflows/build-windows.yml
+# Manual workflow to build the Windows NSIS installer (.exe) only.
+# Use this to produce a Windows executable without running the full multi-platform CI.
+# Artifact: projectfile-pro-windows (contains the .exe installer).
+
+name: Build Windows
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: build-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI: "false"
+
+jobs:
+  build-windows:
+    name: Build Windows (.exe)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Tauri build environment
+        uses: ./.github/actions/setup-tauri
+        with:
+          enable-macos-signing: "false"
+
+      - name: Build Tauri app (Windows NSIS)
+        run: npm run tauri build -- --bundles nsis
+
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: projectfile-pro-windows
+          path: src-tauri/target/release/bundle/nsis/*.exe

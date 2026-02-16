@@ -75,12 +75,36 @@ To produce a macOS build that opens without “damaged” or Gatekeeper warnings
 
 ---
 
+## Getting the Windows .exe
+
+The Windows build runs only on Windows (e.g. in GitHub Actions). You cannot produce a real Windows `.exe` when building on macOS.
+
+**Option 1 – GitHub Actions (recommended from macOS)**
+
+1. **Windows-only build:** In the repo go to **Actions → Build Windows**. Click **Run workflow**, choose the branch (e.g. `master`), then **Run workflow**. When the job finishes, open the run and download the **projectfile-pro-windows** artifact (contains the NSIS `.exe` installer).
+2. **Full CI:** Push to `master` or open a PR. The **CI Build** workflow runs on Windows and uploads the same **projectfile-pro-windows** artifact; download it from the completed run.
+
+**Option 2 – Build on a Windows machine**
+
+On a Windows PC with Node.js and Rust installed, in the project root (`file-pro/`):
+
+```bash
+npm ci
+npm run build
+npm run tauri build -- --bundles nsis
+```
+
+The installer will be at: `src-tauri/target/release/bundle/nsis/*.exe`. A standalone executable (no installer) is also produced in `src-tauri/target/release/` (e.g. `projectfile-pro.exe`).
+
+---
+
 ## Workflows
 
-| Workflow        | Trigger              | Purpose                                                                 |
-|----------------|----------------------|-------------------------------------------------------------------------|
-| **build.yml**  | Push to `master`, or manual | Build on macOS, Linux, Windows; upload artifacts; optional macOS sign/notarize and verification. |
-| **release.yml**| Push tag `v*`, or manual with tag input | Build and attach installers to the GitHub Release for that tag.        |
+| Workflow           | Trigger              | Purpose                                                                 |
+|-------------------|----------------------|-------------------------------------------------------------------------|
+| **build.yml**     | Push to `master`, or manual | Build on macOS, Linux, Windows; upload artifacts; optional macOS sign/notarize and verification. |
+| **build-windows.yml** | Manual only       | Build only the Windows NSIS `.exe`; upload **projectfile-pro-windows** artifact. |
+| **release.yml**  | Push tag `v*`, or manual with tag input | Build and attach installers to the GitHub Release for that tag.        |
 
 - **build.yml** uses a matrix: `macos-latest`, `ubuntu-latest`, `windows-latest`. Each job runs `npm ci` and `npm run tauri build`, then uploads OS-specific artifacts.  
 - **release.yml** uses the same matrix and **tauri-action** to build and upload release assets. Both workflows use `CI: "false"` and the same optional macOS signing flow when `ENABLE_MACOS_SIGNING` and Apple secrets are set.

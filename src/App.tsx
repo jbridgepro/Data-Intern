@@ -35,6 +35,8 @@ import { AgentSelectionProvider } from "./features/agents/contexts/AgentSelectio
 import { ChatProvider } from "./features/chat/contexts/ChatContext";
 import { EditorProvider } from "./contexts/EditorContext";
 import { AudioTranscriptionProvider } from "./features/quick-tools/contexts/AudioTranscriptionContext";
+import { JobProvider } from "./contexts/JobContext";
+import { FindReplaceProvider } from "./features/find-replace/context/FindReplaceContext";
 import {
   applyThemePreferences,
   loadThemePreferences,
@@ -237,6 +239,8 @@ function App() {
   const shouldShowAgentSidebar = agentSidebarVisible;
 
   return (
+    <JobProvider>
+    <FindReplaceProvider>
     <AudioTranscriptionProvider>
     <AgentSelectionProvider>
       <ChatProvider>
@@ -433,6 +437,8 @@ function App() {
       </ChatProvider>
     </AgentSelectionProvider>
     </AudioTranscriptionProvider>
+    </FindReplaceProvider>
+    </JobProvider>
   );
 }
 

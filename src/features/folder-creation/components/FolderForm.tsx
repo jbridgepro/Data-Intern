@@ -169,6 +169,13 @@ export const FolderForm = ({
                   placeholder="Enter folder names, separated by newlines or commas..."
                   className="flex min-h-[300px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
                   disabled={isCreating}
+                  onKeyDown={(e) => {
+                    if ((e.metaKey || e.ctrlKey) && e.key === "ArrowUp") {
+                      e.preventDefault();
+                      e.currentTarget.scrollTop = 0;
+                      e.currentTarget.setSelectionRange(0, 0);
+                    }
+                  }}
                 />
                 <p className="text-[10px] text-muted-foreground">
                   Separate names with newlines or commas.

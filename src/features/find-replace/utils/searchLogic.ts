@@ -16,6 +16,9 @@ export interface Match {
     content: string;
     matchIndex: number;
     length: number;
+    // UTF-16 fields for correct highlighting in JS
+    matchIndexUtf16?: number;
+    lengthUtf16?: number;
     source: 'content' | 'filename' | 'folder';
 }
 

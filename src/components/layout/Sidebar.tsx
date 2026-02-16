@@ -495,7 +495,7 @@ export const Sidebar = ({
           !isExpanded ? "w-16 items-center" : "w-[260px]",
           isMinimized &&
             isHovered &&
-            "absolute left-0 top-0 shadow-2xl h-screen",
+            "absolute left-0 top-0 shadow-2xl h-full",
         )}
         onMouseEnter={() => setIsHovered(true)}
         onMouseLeave={() => {

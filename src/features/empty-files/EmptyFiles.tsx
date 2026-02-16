@@ -32,6 +32,8 @@ import {
   GeneratedFile,
   generatePreview,
   calculateStats,
+  getTotalCount,
+  generateExecutionList,
   GenerationStats,
 } from "./utils/fileGenerator";
 import { PreviewList } from "./components/PreviewList";
@@ -127,7 +129,16 @@ export const EmptyFiles = () => {
           }
           return file;
         });
-        setStats(calculateStats(updatedFiles));
+
+        // Calculate initial stats, using getTotalCount for the true total
+        const currentStats = calculateStats(updatedFiles);
+        const totalCount = getTotalCount(config);
+        setStats({
+             ...currentStats,
+             total: totalCount,
+             pending: totalCount // Reset pending to total
+        });
+        
         return updatedFiles;
       });
     });
@@ -223,43 +234,79 @@ export const EmptyFiles = () => {
     setIsGenerating(true);
     setGenerationProgress(0);
 
-    // Use current preview files (which may have edited names) instead of regenerating
-    const files = previewFiles.map((file) => {
-      // Ensure we use the edited name if it exists
+    // Apply edits to current preview files before generating full list
+    const currentPreviewWithEdits = previewFiles.map((file) => {
       const editedName = editedNames.get(file.id);
       return editedName ? { ...file, name: editedName } : file;
     });
 
-    const results = [...files];
+    // Generate full list for execution
+    const results = await generateExecutionList(config, currentPreviewWithEdits);
     const total = results.length;
+
+    // Initialize execution stats
+    const currentStats: GenerationStats = {
+        total: total,
+        success: 0,
+        error: 0,
+        exists: 0,
+        pending: total
+    };
+    setStats({...currentStats});
 
     for (let i = 0; i < results.length; i++) {
       const file = results[i];
+      let newStatus: 'success' | 'exists' | 'error' = 'success';
+      let errorMsg: string | undefined = undefined;
+
       try {
         const fullPath = await join(config.rootPath, file.name);
         const fileExists = await exists(fullPath);
 
         if (fileExists && !config.overwrite) {
-          results[i] = { ...file, status: "exists" };
+          newStatus = 'exists';
         } else {
           await writeTextFile(fullPath, "");
-          results[i] = { ...file, status: "success" };
+          newStatus = 'success';
         }
       } catch (e: any) {
         console.error(`Failed to create ${file.name}`, e);
-        const errorMessage = e?.message || "Unknown error occurred";
-        results[i] = { ...file, status: "error", errorMessage };
+        errorMsg = e?.message || "Unknown error occurred";
+        newStatus = 'error';
       }
 
-      // Update progress and UI in real-time
+      results[i] = { ...file, status: newStatus, errorMessage: errorMsg };
+      
+      // Update stats incrementally
+      currentStats.pending--;
+      currentStats[newStatus]++;
+
+      // Update progress and UI in real-time (but throttled for performance)
       const progress = ((i + 1) / total) * 100;
       setGenerationProgress(progress);
-      setPreviewFiles([...results]);
-      setStats(calculateStats(results));
-
-      // Small delay to allow UI to update (optional, can be removed for faster generation)
-      if (i % 10 === 0) {
-        await new Promise((resolve) => setTimeout(resolve, 10));
+      
+      // Update UI state every 10 items or on last item to reduce render thrashing
+      if (i % 10 === 0 || i === total - 1) {
+          setStats({...currentStats});
+          // Update preview files only if we are modifying the *previewed* portion of the list
+          // Or if we assume previewFiles should show everything. 
+          // If the list is huge, we might not want to put everything in previewFiles state?
+          // But components downstream depend on previewFiles.
+          // For now, update it (matching previous behavior but safer loop).
+          // To update only the item changed without cloning the whole array every time?
+          // React state needs new reference.
+          // [...results] is expensive for large arrays.
+          // But since we are modifying results[i] in place (it's a mutable array referencing objects),
+          // we can just pass [...results] or a slice.
+          // However, if results is 10k items, [...results] is slow.
+          // But we need to trigger re-render.
+          
+          // Optimization: Only update previewFiles if i < previewFiles.length (i.e. we are touching visible items)
+          // OR if we entered this mode expecting full list display.
+          // Given the component structure, let's just update perfectly at the end and throttle during?
+          setPreviewFiles([...results]); 
+          
+          await new Promise((resolve) => setTimeout(resolve, 1)); // Small yield
       }
     }
 
@@ -435,6 +482,13 @@ export const EmptyFiles = () => {
                     placeholder="Enter file names, separated by newlines or commas..."
                     className="flex min-h-[300px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
                     disabled={isGenerating}
+                    onKeyDown={(e) => {
+                      if ((e.metaKey || e.ctrlKey) && e.key === "ArrowUp") {
+                        e.preventDefault();
+                        e.currentTarget.scrollTop = 0;
+                        e.currentTarget.setSelectionRange(0, 0);
+                      }
+                    }}
                     />
                     <p className="text-[10px] text-muted-foreground">
                     Separate names with newlines or commas. Extensions will be appended automatically.

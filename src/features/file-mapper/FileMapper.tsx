@@ -1,11 +1,3 @@
-/**
- * File: src/features/file-mapper/FileMapper.tsx
- *
- * Frontend main component for File Mapper feature
- * Provides visual directory structure mapping with multiple visualization styles
- * Updated with Premium Glassmorphism UI and Copy/Move Page Layout Match
- */
-
 import { useState, useEffect, useRef, useMemo } from "react";
 import {
   Folder,
@@ -32,7 +24,8 @@ import {
   History,
   Settings2,
   ListFilter,
-  RotateCcw
+  RotateCcw,
+  Ban
 } from "lucide-react";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { homeDir } from "@tauri-apps/api/path";
@@ -81,12 +74,17 @@ import { usePersistentState } from "../../hooks/usePersistentState";
 import { EmptyState } from "@/components/common/EmptyState";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { fileMapperInfo } from "@/components/layout/toolInfoContent";
+import { CancellationTokenSource } from "./utils/cancellationToken";
+import { Progress } from "@/components/ui/progress";
+import { useJobs } from "@/contexts/JobContext";
 
 export const FileMapper = () => {
   // State management
   const [sourcePath, setSourcePath, resetSourcePath] = usePersistentState<string>("file-mapper-source-path", "");
   const [treeData, setTreeData] = useState<FileSystemNode | null>(null);
   const [loading, setLoading] = useState(false);
+  const [scanning, setScanning] = useState(false);
+  const [progress, setProgress] = useState<{ processed: number; total?: number }>({ processed: 0 });
   const [error, setError] = useState<string | null>(null);
   const [exportSuccess, setExportSuccess] = useState<string | null>(null);
   const [visualizationStyle, setVisualizationStyle, resetVisualizationStyle] =
@@ -108,6 +106,12 @@ export const FileMapper = () => {
     lineStyle: "unicode",
     iconStyle: "emoji",
   });
+  
+  // Scan settings
+  const [scanSettings, setScanSettings, resetScanSettings] = usePersistentState("file-mapper-scan-settings", {
+     concurrencyLimit: 50,
+     maxFiles: 100000,
+  });
 
   // Filter state
   const [filters, setFilters, resetFilters] = usePersistentState("file-mapper-filters", {
@@ -125,6 +129,9 @@ export const FileMapper = () => {
   const [searchTerm, setSearchTerm] = useState("");
   const [favoritePaths, setFavoritePaths] = useState<string[]>([]);
   const [recentPaths, setRecentPaths] = useState<string[]>([]);
+  
+  // Ref for cancellation
+  const cancellationTokenRef = useRef<CancellationTokenSource | null>(null);
 
   // Statistics
   const [statistics, setStatistics] = useState({
@@ -155,8 +162,6 @@ export const FileMapper = () => {
         }
       } catch (e) {
         console.error("Failed to get home dir", e);
-        // On error, only fallback to empty if we verified we have no path?
-        // Actually, if an error occurs getting homeDir, just leave it as is or ""
       }
     };
     init();
@@ -167,6 +172,13 @@ export const FileMapper = () => {
     
     const savedRecent = localStorage.getItem("file-mapper-recent");
     if (savedRecent) setRecentPaths(JSON.parse(savedRecent));
+    
+    return () => {
+       // Cleanup cancellation on unmount
+       if (cancellationTokenRef.current) {
+          cancellationTokenRef.current.cancel();
+       }
+    };
   }, []);
 
   // Handle folder selection
@@ -212,7 +224,17 @@ export const FileMapper = () => {
     }
 
     setLoading(true);
+    setScanning(true);
     setError(null);
+    setProgress({ processed: 0 });
+    
+    // Cancel any previous scan
+    if (cancellationTokenRef.current) {
+       cancellationTokenRef.current.cancel();
+    }
+    
+    const cts = new CancellationTokenSource();
+    cancellationTokenRef.current = cts;
 
     try {
       const scanConfig = {
@@ -234,6 +256,13 @@ export const FileMapper = () => {
           filters.maxSize < 100 * 1024 * 1024 * 1024
             ? filters.maxSize
             : undefined,
+        // New scan settings
+        concurrencyLimit: scanSettings.concurrencyLimit,
+        maxFiles: scanSettings.maxFiles,
+        cancellationToken: cts.token,
+        onProgress: (processed: number, total: number) => {
+            setProgress({ processed, total: total > 0 ? total : undefined });
+        }
       };
 
       const data = await scanDirectory(sourcePath, scanConfig);
@@ -247,22 +276,33 @@ export const FileMapper = () => {
           totalSize: getTotalSize(data),
         });
       } else {
-        setError("Failed to scan directory");
+         if (!cts.isCancelled()) {
+            setError("Failed to scan directory or no files found matching criteria");
+         }
       }
     } catch (err: any) {
-      console.error("Error generating map:", err);
-      setError(err.message || "Failed to generate map");
+      if (err.name === 'CancellationError') {
+         console.log("Scan cancelled by user");
+         // Don't set error, just stop loading
+      } else {
+         console.error("Error generating map:", err);
+         setError(err.message || "Failed to generate map");
+      }
     } finally {
       setLoading(false);
+      setScanning(false);
+      cancellationTokenRef.current = null;
     }
+  };
+  
+  const handleCancelScan = () => {
+      if (cancellationTokenRef.current) {
+          cancellationTokenRef.current.cancel();
+      }
   };
 
   // Export functionality
   const handleExport = async (format: ExportFormat) => {
-    // ... Copy of previous export logic ...
-    // Keeping brevity for this edit, assumming I should include it fully or reference.
-    // I will include the core logic but shortened for readability in this turn if tool allows,
-    // but better to keep it fully working. I'll paste the full previous export implementation.
     
     if (!treeData) {
       setError("No map data to export. Please generate a map first.");
@@ -342,7 +382,7 @@ export const FileMapper = () => {
     }
   };
 
-  // Helper functions for export (re-included)
+  // Helper functions for export
   const generateTextExport = (node: FileSystemNode, isMarkdown: boolean): string => {
     let output = "";
     if (isMarkdown) {
@@ -408,9 +448,11 @@ export const FileMapper = () => {
               resetVisualizationStyle();
               resetConfig();
               resetFilters();
+              resetScanSettings();
               setTreeData(null);
               setError(null);
               setSearchTerm("");
+              setStatistics({ totalFiles: 0, totalFolders: 0, totalSize: 0 });
             }}
             title="Reset"
           >
@@ -458,7 +500,7 @@ export const FileMapper = () => {
                      disabled={loading}
                    >
                       <FolderSearch className="h-4 w-4" />
-                    </Button>
+                   </Button>
                  </div>
                </div>
                
@@ -483,13 +525,23 @@ export const FileMapper = () => {
                  </Select>
                )}
                
-               <Button
-                 onClick={handleGenerateMap}
-                 disabled={loading || !sourcePath}
-                 className="h-9 shadow-sm bg-linear-to-r from-blue-600 to-indigo-600 text-white border-0"
-               >
-                 {loading ? "Scanning..." : "Generate"}
-               </Button>
+               {loading && cancellationTokenRef.current ? (
+                   <Button
+                     onClick={handleCancelScan}
+                     variant="destructive"
+                     className="h-9 shadow-sm"
+                   >
+                     <Ban className="mr-2 h-4 w-4" /> Cancel
+                   </Button>
+               ) : (
+                   <Button
+                     onClick={handleGenerateMap}
+                     disabled={loading || !sourcePath}
+                     className="h-9 shadow-sm bg-linear-to-r from-blue-600 to-indigo-600 text-white border-0"
+                   >
+                     {loading ? "Scanning..." : "Generate"}
+                   </Button>
+               )}
              </div>
         </div>
 
@@ -550,22 +602,53 @@ export const FileMapper = () => {
                        <div className="absolute right-0 top-full mt-2 w-72 rounded-md border bg-popover p-4 text-popover-foreground shadow-md outline-none animate-in fade-in zoom-in-95 z-50">
                           <h4 className="font-medium leading-none mb-3">Map Settings</h4>
                           <div className="space-y-3">
-                             <div className="flex items-center justify-between">
-                               <Label htmlFor="s-files" className="text-sm">Show Files</Label>
-                               <Switch id="s-files" checked={config.showFileSizes} onCheckedChange={c => setConfig({...config, showFileSizes: c})} />
+                             <div className="space-y-1">
+                                <Label className="text-xs font-semibold text-muted-foreground">Appearance</Label>
+                                <div className="flex items-center justify-between">
+                                  <Label htmlFor="s-files" className="text-sm">Show Files</Label>
+                                  <Switch id="s-files" checked={config.showFileSizes} onCheckedChange={c => setConfig({...config, showFileSizes: c})} />
+                                </div>
+                                <div className="flex items-center justify-between">
+                                  <Label htmlFor="s-counts" className="text-sm">Show Counts</Label>
+                                  <Switch id="s-counts" checked={config.showFileCounts} onCheckedChange={c => setConfig({...config, showFileCounts: c})} />
+                                </div>
+                                <div className="flex items-center justify-between">
+                                  <Label htmlFor="max-depth" className="text-sm">Max Depth: {config.maxDepth}</Label>
+                                  <Slider 
+                                    value={[config.maxDepth]} 
+                                    max={10} min={1} step={1} 
+                                    onValueChange={([v]) => setConfig({...config, maxDepth: v})}
+                                    className="w-24"
+                                  />
+                                </div>
                              </div>
-                             <div className="flex items-center justify-between">
-                               <Label htmlFor="s-counts" className="text-sm">Show Counts</Label>
-                               <Switch id="s-counts" checked={config.showFileCounts} onCheckedChange={c => setConfig({...config, showFileCounts: c})} />
-                             </div>
-                             <div className="flex items-center justify-between">
-                               <Label htmlFor="max-depth" className="text-sm">Max Depth: {config.maxDepth}</Label>
-                               <Slider 
-                                 value={[config.maxDepth]} 
-                                 max={10} min={1} step={1} 
-                                 onValueChange={([v]) => setConfig({...config, maxDepth: v})}
-                                 className="w-24"
-                               />
+                             
+                             <Separator />
+                             
+                             <div className="space-y-1">
+                                <Label className="text-xs font-semibold text-muted-foreground">Scan Limits</Label>
+                                <div className="grid gap-2">
+                                  <div className="flex items-center justify-between">
+                                    <Label htmlFor="max-files" className="text-sm">Max Files</Label>
+                                    <Input 
+                                        id="max-files"
+                                        type="number" 
+                                        className="h-7 w-20 text-xs" 
+                                        value={scanSettings.maxFiles}
+                                        onChange={e => setScanSettings({...scanSettings, maxFiles: parseInt(e.target.value) || 1000})}
+                                    />
+                                  </div>
+                                  <div className="flex items-center justify-between">
+                                    <Label htmlFor="concurrency" className="text-sm">Concurrency</Label>
+                                    <Input 
+                                        id="concurrency"
+                                        type="number" 
+                                        className="h-7 w-20 text-xs" 
+                                        value={scanSettings.concurrencyLimit}
+                                        onChange={e => setScanSettings({...scanSettings, concurrencyLimit: parseInt(e.target.value) || 10})}
+                                    />
+                                  </div>
+                                </div>
                              </div>
                           </div>
                        </div>
@@ -628,8 +711,34 @@ export const FileMapper = () => {
           
           {loading && (
              <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm">
-                <div className="w-8 h-8 border-2 border-blue-500/20 border-t-blue-500 rounded-full animate-spin mb-4" />
-                <p className="text-blue-600 font-medium text-sm animate-pulse">Scanning...</p>
+                <div className="w-80 p-6 bg-white dark:bg-slate-800 rounded-xl shadow-xl border border-slate-200 dark:border-slate-700 flex flex-col items-center">
+                    <div className="w-12 h-12 border-4 border-blue-500/20 border-t-blue-500 rounded-full animate-spin mb-4" />
+                    <h3 className="font-semibold text-lg mb-1">Scanning Directory...</h3>
+                    <p className="text-sm text-muted-foreground mb-4 text-center">
+                        {progress.total 
+                           ? `Processed ${progress.processed.toLocaleString()} of ~${progress.total.toLocaleString()} items`
+                           : `Processed ${progress.processed.toLocaleString()} items`
+                        }
+                    </p>
+                    <div className="w-full mb-4">
+                        <Progress value={progress.total ? (progress.processed / progress.total) * 100 : 100} className="h-2" />
+                        {/* Indeterminate progress if no total - wait, Progress component might expect value. If undefined or null, what does it do? 
+                            Shadcn Progress: <Progress value={33} />. 
+                            If streaming, we might lack total. 
+                            If I set value={undefined}, it might break or show empty.
+                            For now I set to 100 or I can try to animate it differently if I really want specific indeterminate state.
+                            Given I use "Processed N items" text, user knows it's working.
+                        */}
+                    </div>
+                    <Button 
+                        variant="outline" 
+                        size="sm" 
+                        onClick={handleCancelScan}
+                        className="text-red-500 hover:text-red-600 hover:bg-red-50 border-red-200"
+                    >
+                        Cancel Scan
+                    </Button>
+                </div>
              </div>
           )}
 
@@ -685,7 +794,8 @@ export const FileMapper = () => {
               tips={[
                 { label: "💡 Tip", text: "Bookmark frequently mapped directories using the star icon" },
                 { label: "⚡ Shortcut", text: "Cmd/Ctrl+1 to navigate to File Mapper" },
-                { label: "🎨 Styles", text: "Choose from Tree, Network, List, and Size Analysis views" }
+                { label: "🎨 Styles", text: "Choose from Tree, Network, List, and Size Analysis views" },
+                { label: "⚙️ Config", text: "Adjust max depth and file limits in Settings" }
               ]}
             />
           )}

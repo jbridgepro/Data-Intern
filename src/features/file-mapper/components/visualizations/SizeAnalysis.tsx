@@ -15,6 +15,7 @@ import {
   getTotalFileCount,
   getTotalFolderCount
 } from "../../utils/fileSystemScanner";
+import { TopKHeap } from "../../utils/topKHeap";
 import {
   PieChart,
   Pie,
@@ -92,12 +93,20 @@ export function SizeAnalysis({ data, config }: SizeAnalysisProps) {
     return () => document.removeEventListener("click", handleClick);
   }, [contextMenu]);
 
-  // Memoize heavy calculations
+  // Memoize heavy calculations with memory-efficient TopKHeap
   const { fileTypeStats, topFiles, topFolders, summaryStats } = useMemo(() => {
      const stats: Record<string, { count: number; totalSize: number }> = {};
-     const files: Array<{ name: string; path: string; size: number }> = [];
-     const folders: Array<{ name: string; path: string; size: number }> = [];
-     
+
+     // Use TopKHeap for efficient top-10 tracking (O(K) space instead of O(N))
+     const topFilesHeap = new TopKHeap<{ name: string; path: string; size: number }>(
+       10,
+       (item) => item.size
+     );
+     const topFoldersHeap = new TopKHeap<{ name: string; path: string; size: number }>(
+       10,
+       (item) => item.size
+     );
+
      const totalSize = getTotalSize(data);
      const totalFiles = getTotalFileCount(data);
      const totalFolders = getTotalFolderCount(data);
@@ -108,34 +117,35 @@ export function SizeAnalysis({ data, config }: SizeAnalysisProps) {
             if (!stats[ext]) stats[ext] = { count: 0, totalSize: 0 };
             stats[ext].count++;
             stats[ext].totalSize += node.size;
-            
-            files.push({ name: node.name, path: node.path, size: node.size });
+
+            // Add to heap (automatically maintains only top 10)
+            topFilesHeap.add({ name: node.name, path: node.path, size: node.size });
         } else {
             const size = getTotalSize(node);
-            folders.push({ name: node.name, path: node.path, size });
-            
+
+            // Add to heap (automatically maintains only top 10)
+            topFoldersHeap.add({ name: node.name, path: node.path, size });
+
             if (node.children) node.children.forEach(processNode);
         }
      };
 
      if (data.children) data.children.forEach(processNode);
-     
-     // Top 10 Files
-     files.sort((a,b) => b.size - a.size);
-     
-     // Top 10 Folders
-     folders.sort((a,b) => b.size - a.size);
-     
-     // Prepare Chart Data
+
+     // Get top 10 files and folders from heaps (already sorted)
+     const topFilesArray = topFilesHeap.getTop();
+     const topFoldersArray = topFoldersHeap.getTop();
+
+     // Prepare Chart Data (top 8 file types by size)
      const pieData = Object.entries(stats)
-        .map(([name, s]) => ({ name: `.${name}`, value: s.totalSize, count: s.count })) 
+        .map(([name, s]) => ({ name: `.${name}`, value: s.totalSize, count: s.count }))
         .sort((a,b) => b.value - a.value)
-        .slice(0, 8); 
-     
+        .slice(0, 8);
+
      return {
          fileTypeStats: pieData,
-         topFiles: files.slice(0, 10).map(f => ({ ...f, sizeFormatted: formatFileSize(f.size) })),
-         topFolders: folders.slice(0, 10).map(f => ({ ...f, sizeFormatted: formatFileSize(f.size) })),
+         topFiles: topFilesArray.map(f => ({ ...f, sizeFormatted: formatFileSize(f.size) })),
+         topFolders: topFoldersArray.map(f => ({ ...f, sizeFormatted: formatFileSize(f.size) })),
          summaryStats: { totalSize, totalFiles, totalFolders }
      };
   }, [data]);

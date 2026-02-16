@@ -2,22 +2,28 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { 
-  History, 
-  FolderSearch, 
-  Bookmark, 
-  BookmarkCheck, 
-  Search, 
-  X, 
-  Filter, 
+import {
+  History,
+  FolderSearch,
+  Bookmark,
+  BookmarkCheck,
+  Search,
+  X,
+  Filter,
   Settings2,
   ListFilter,
+  Info,
+  ChevronDown,
+  ChevronRight,
+  Maximize2,
+  Minimize2
 } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import { useState, useRef, useEffect } from "react";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface CopyToolbarProps {
   currentPath: string;
@@ -42,12 +48,16 @@ interface CopyToolbarProps {
   
   onSelectAll: () => void;
   onClearSelection: () => void;
+  onInvertSelection?: () => void;
   hasSelection: boolean;
   
   showHistory: boolean;
   onToggleHistory: () => void;
   
   isProcessing: boolean;
+
+  onExpandAll: () => void;
+  onCollapseAll: () => void;
 }
 
 export const CopyToolbar = ({
@@ -68,10 +78,13 @@ export const CopyToolbar = ({
   onToggleExcludeTemp,
   onSelectAll,
   onClearSelection,
+  onInvertSelection,
   hasSelection,
   showHistory,
   onToggleHistory,
-  isProcessing
+  isProcessing,
+  onExpandAll,
+  onCollapseAll
 }: CopyToolbarProps) => {
   const [showSettings, setShowSettings] = useState(false);
   const settingsRef = useRef<HTMLDivElement>(null);
@@ -109,6 +122,7 @@ export const CopyToolbar = ({
                   size="icon"
                   className="h-7 w-7"
                   onClick={() => onToggleFavorite(currentPath)}
+                  title="Bookmark this path"
                 >
                   {favoritePaths.includes(currentPath) ? (
                     <BookmarkCheck className="h-4 w-4 text-yellow-500" />
@@ -124,6 +138,7 @@ export const CopyToolbar = ({
                 className="h-7 w-7" 
                 onClick={onBrowseSource}
                 disabled={isProcessing}
+                title="Browse folder"
               >
                  <span className="sr-only">Browse</span>
                  <FolderSearch className="h-4 w-4" />
@@ -192,27 +207,68 @@ export const CopyToolbar = ({
 
           <div className="h-4 w-px bg-border/60" />
 
+          {/* New Location for Filter Mode Button */}
+          <TooltipProvider delayDuration={300}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                   variant={filterMode === "include" ? "default" : "secondary"}
+                   size="sm"
+                   className={cn(
+                     "h-7 text-[10px] px-3 gap-1.5 transition-all border shrink-0",
+                     filterMode === "include" 
+                       ? "bg-primary text-primary-foreground hover:bg-primary/90 border-primary" 
+                       : "bg-background hover:bg-muted text-muted-foreground border-border hover:text-foreground"
+                   )}
+                   onClick={onToggleFilterMode}
+                >
+                   <ListFilter className="h-3.5 w-3.5"/>
+                   <span>{filterMode === "include" ? "Include Mode" : "Exclude Mode"}</span>
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" className="max-w-xs text-xs">
+                <p className="font-semibold mb-1">{filterMode === "include" ? "Include Mode" : "Exclude Mode"}</p>
+                <p>{filterMode === "include" 
+                  ? "Only files with selected extensions will be shown." 
+                  : "Files with selected extensions will be hidden."}
+                </p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+
           {/* Quick Filters */}
           <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar mask-grad-right">
-            <Filter className="h-3.5 w-3.5 text-muted-foreground mr-1" />
-            
             {availableExtensions.length > 0 ? (
                availableExtensions.map(ext => (
-                <Badge
-                  key={ext}
-                  variant={activeFilters.includes(ext) 
-                    ? (filterMode === "exclude" ? "destructive" : "default") 
-                    : "outline"}
-                  className={cn(
-                    "cursor-pointer text-[10px] h-5 px-2 transition-colors",
-                    activeFilters.includes(ext) 
-                        ? (filterMode === "exclude" ? "hover:bg-destructive/80" : "hover:bg-primary/80")
-                        : "hover:bg-secondary"
-                  )}
-                  onClick={() => !isProcessing && onToggleFilter(ext)}
-                >
-                  {ext === "{no-ext}" ? "No Ext" : `.${ext}`}
-                </Badge>
+                <TooltipProvider key={ext} delayDuration={200}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Badge
+                        variant={activeFilters.includes(ext)
+                          ? (filterMode === "exclude" ? "destructive" : "default")
+                          : "outline"}
+                        className={cn(
+                          "cursor-pointer text-[10px] h-5 px-2 transition-colors",
+                          activeFilters.includes(ext)
+                              ? (filterMode === "exclude" ? "hover:bg-destructive/80" : "hover:bg-primary/80")
+                              : "hover:bg-secondary"
+                        )}
+                        onClick={() => !isProcessing && onToggleFilter(ext)}
+                      >
+                        {ext === "{no-ext}" ? "No Ext" : `.${ext}`}
+                      </Badge>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom" className="text-xs">
+                      {activeFilters.includes(ext)
+                        ? filterMode === "exclude"
+                          ? `Click to stop hiding .${ext} files`
+                          : `Click to stop showing only .${ext} files`
+                        : filterMode === "exclude"
+                          ? `Click to hide .${ext} files`
+                          : `Click to show only .${ext} files`}
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
               ))
             ) : (
               <span className="text-[10px] text-muted-foreground italic px-2">
@@ -224,6 +280,45 @@ export const CopyToolbar = ({
 
         {/* Right Tools */}
         <div className="flex items-center gap-3 shrink-0">
+           {/* Expand/Collapse All Buttons */}
+           <div className="flex items-center bg-muted/50 rounded-md p-0.5 border">
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost" 
+                      size="icon" 
+                      className="h-7 w-7 rounded-sm"
+                      onClick={onExpandAll}
+                      disabled={isProcessing || !currentPath}
+                    >
+                      <Maximize2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Expand All Folders</TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+              <Separator orientation="vertical" className="h-4 mx-0.5" />
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost" 
+                      size="icon" 
+                      className="h-7 w-7 rounded-sm"
+                      onClick={onCollapseAll}
+                      disabled={isProcessing || !currentPath}
+                    >
+                      <Minimize2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Collapse All Folders</TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+           </div>
+
+           <div className="h-4 w-px bg-border/60" />
+
            {/* View Settings Dropdown */}
            <div className="relative" ref={settingsRef}>
              <Button 
@@ -231,6 +326,7 @@ export const CopyToolbar = ({
                size="sm" 
                className="h-8 w-8 p-0"
                onClick={() => setShowSettings(!showSettings)}
+               title="Settings"
              >
                <Settings2 className="h-4 w-4" />
              </Button>
@@ -248,27 +344,7 @@ export const CopyToolbar = ({
                      />
                    </div>
                    
-                   <Separator />
-                   
-                   <div className="space-y-2">
-                        <div className="flex items-center justify-between">
-                           <Label className="text-sm">Filter Mode</Label>
-                            <Button
-                               variant="outline"
-                               size="sm"
-                               className="h-6 text-[10px] px-2 gap-1"
-                               onClick={onToggleFilterMode}
-                            >
-                               <ListFilter className="h-3 w-3"/>
-                               {filterMode === "exclude" ? "Exclude Selected" : "Include Selected"}
-                            </Button>
-                        </div>
-                        <p className="text-[10px] text-muted-foreground">
-                           {filterMode === "exclude" 
-                               ? "Selected extensions will be hidden from the list." 
-                               : "Only selected extensions will be shown."}
-                        </p>
-                   </div>
+                   {/* Removed Filter Mode from here as it's now in the main bar */}
                  </div>
                </div>
              )}
@@ -277,21 +353,35 @@ export const CopyToolbar = ({
           <div className="h-4 w-px bg-border/60" />
 
           <div className="flex gap-1">
-            <Button 
-              variant="secondary" 
-              size="sm" 
-              className="h-8 text-xs" 
+            <Button
+              variant="secondary"
+              size="sm"
+              className="h-8 text-xs"
               onClick={onSelectAll}
               disabled={isProcessing || !currentPath}
+              title="Select all visible files (Ctrl/Cmd+A)"
             >
               Select All
             </Button>
-            <Button 
-              variant="outline" 
-              size="sm" 
+            {onInvertSelection && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 text-xs"
+                onClick={onInvertSelection}
+                disabled={isProcessing || !currentPath}
+                title="Invert selection (select unselected, deselect selected)"
+              >
+                Invert
+              </Button>
+            )}
+            <Button
+              variant="outline"
+              size="sm"
               className="h-8 text-xs"
               onClick={onClearSelection}
               disabled={isProcessing || !hasSelection}
+              title="Clear all selections (Ctrl/Cmd+D)"
             >
               Clear
             </Button>

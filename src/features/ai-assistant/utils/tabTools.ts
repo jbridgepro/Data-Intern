@@ -9,9 +9,9 @@ import { readDir, stat } from '@tauri-apps/plugin-fs';
 import { join } from '@tauri-apps/api/path';
 import { createFolders, generatePreview, type FolderConfig, type PreviewNode } from '../../folder-creation/utils/folderUtils';
 import { generatePreview as generateFilePreview, type FileConfig } from '../../empty-files/utils/fileGenerator';
-import { writeTextFile, exists, mkdir } from '@tauri-apps/plugin-fs';
+import { writeTextFile, exists, mkdir, readTextFile } from '@tauri-apps/plugin-fs';
 import { searchFiles, type SearchOptions, type FileResult } from '../../find-replace/utils/searchLogic';
-import { replaceInFile } from '../../find-replace/utils/replaceLogic';
+// replaceInFile imported removed
 import { copyFile as tauriCopyFile, rename } from '@tauri-apps/plugin-fs';
 
 /**
@@ -54,14 +54,14 @@ export async function executeFileCopyTool(
   try {
     // Collect files based on filters
     const files: Array<{ path: string; name: string; size: number }> = [];
-    
+
     const collectFiles = async (dir: string, basePath: string) => {
       try {
         const entries = await readDir(dir);
-        
+
         for (const entry of entries) {
           const entryPath = await join(dir, entry.name);
-          
+
           if (entry.isDirectory && params.includeSubdirectories) {
             await collectFiles(entryPath, basePath);
           } else if (entry.isFile) {
@@ -71,13 +71,13 @@ export async function executeFileCopyTool(
               const ext = pattern.replace('*.', '').toLowerCase();
               return extension === ext || pattern === '*';
             });
-            
+
             // Check exclude patterns
             const isExcluded = params.excludePatterns?.some(pattern => {
               const regex = new RegExp(pattern.replace(/\*/g, '.*'), 'i');
               return regex.test(entry.name);
             });
-            
+
             if (matchesType && !isExcluded) {
               const metadata = await stat(entryPath);
               files.push({
@@ -92,24 +92,24 @@ export async function executeFileCopyTool(
         console.warn(`Error reading directory ${dir}:`, error);
       }
     };
-    
+
     await collectFiles(params.sourcePath, params.sourcePath);
-    
+
     if (files.length === 0) {
       return {
         success: false,
         error: 'No files found matching the criteria',
       };
     }
-    
+
     // Execute copy/move operation
     let completed = 0;
     const errors: string[] = [];
-    
+
     for (const file of files) {
       try {
         const targetPath = await join(params.destinationPath, file.name);
-        
+
         // Check if file exists
         const fileExists = await exists(targetPath);
         if (fileExists && !params.overwrite) {
@@ -122,20 +122,20 @@ export async function executeFileCopyTool(
           });
           continue;
         }
-        
+
         onProgress?.({
           current: completed,
           total: files.length,
           status: `${params.operation === 'copy' ? 'Copying' : 'Moving'} ${file.name}...`,
           percentage: (completed / files.length) * 100,
         });
-        
+
         if (params.operation === 'copy') {
           await tauriCopyFile(file.path, targetPath);
         } else {
           await rename(file.path, targetPath);
         }
-        
+
         completed++;
         onProgress?.({
           current: completed,
@@ -148,7 +148,7 @@ export async function executeFileCopyTool(
         console.error(`Failed to ${params.operation} ${file.name}:`, error);
       }
     }
-    
+
     return {
       success: errors.length === 0,
       data: {
@@ -190,7 +190,7 @@ export async function executeFolderCreationTool(
         error: 'Root path is required',
       };
     }
-    
+
     const config: FolderConfig = {
       rootPath: params.rootPath,
       baseName: '', // Not used when folderNames are provided directly
@@ -222,10 +222,10 @@ export async function executeFolderCreationTool(
       csvRows: [],
       csvHeaders: [],
     };
-    
+
     // Generate preview nodes with custom names
     const nodes: PreviewNode[] = [];
-    
+
     // Normalize subfolders - handle both array of strings and array of arrays
     let normalizedSubfolders: string[] = [];
     if (params.subfolders && params.subfolders.length > 0) {
@@ -240,15 +240,15 @@ export async function executeFolderCreationTool(
           .map((s: any) => String(s).trim());
       }
     }
-    
+
     params.folderNames.forEach((name, index) => {
-      const number = params.numbering 
+      const number = params.numbering
         ? String(index + 1).padStart(params.numberFormat?.length || 2, '0')
         : '';
-      const folderName = params.numbering 
+      const folderName = params.numbering
         ? `${number} - ${name}`
         : name;
-      
+
       const mainNode: PreviewNode = {
         id: `folder-${index}`,
         name: folderName,
@@ -260,14 +260,14 @@ export async function executeFolderCreationTool(
           children: [],
         })),
       };
-      
+
       nodes.push(mainNode);
     });
-    
+
     // Create folders
     let created = 0;
     const total = nodes.length;
-    
+
     await createFolders(config, nodes, (current, total, statusText) => {
       created = current;
       onProgress?.({
@@ -277,11 +277,11 @@ export async function executeFolderCreationTool(
         percentage: (current / total) * 100,
       });
     });
-    
+
     // Count total folders including subfolders
     const totalSubfolders = nodes.reduce((sum, node) => sum + (node.children?.length || 0), 0);
     const totalFoldersCreated = created + totalSubfolders;
-    
+
     return {
       success: true,
       data: {
@@ -327,7 +327,7 @@ export async function executeFileCreationTool(
         error: 'Root path is required',
       };
     }
-    
+
     const config: FileConfig = {
       rootPath: params.rootPath,
       baseName: params.baseName,
@@ -359,21 +359,21 @@ export async function executeFileCreationTool(
       csvRows: [],
       csvHeaders: [],
     };
-    
+
     // Generate file list
     const previewFiles = await generateFilePreview(config);
-    
+
     if (previewFiles.length === 0) {
       return {
         success: false,
         error: 'No files were generated. Check your configuration (baseName, extensions, count).',
       };
     }
-    
+
     let created = 0;
     const errors: string[] = [];
     const createdFiles: string[] = [];
-    
+
     // Ensure root directory exists
     try {
       const rootExists = await exists(config.rootPath);
@@ -386,12 +386,12 @@ export async function executeFileCreationTool(
         error: `Failed to access/create root directory: ${error.message}`,
       };
     }
-    
+
     for (let i = 0; i < previewFiles.length; i++) {
       const file = previewFiles[i];
       try {
         const fullPath = await join(config.rootPath, file.name);
-        
+
         const fileExists = await exists(fullPath);
         if (fileExists && !config.overwrite) {
           onProgress?.({
@@ -402,14 +402,14 @@ export async function executeFileCreationTool(
           });
           continue;
         }
-        
+
         // Create the file with empty content
         await writeTextFile(fullPath, '');
         created++;
         createdFiles.push(file.name);
-        
+
         console.log(`Successfully created file: ${fullPath}`);
-        
+
         onProgress?.({
           current: i + 1,
           total: previewFiles.length,
@@ -422,7 +422,7 @@ export async function executeFileCreationTool(
         console.error(`Failed to create ${file.name} at ${await join(config.rootPath, file.name)}:`, error);
       }
     }
-    
+
     return {
       success: created > 0,
       data: {
@@ -431,9 +431,9 @@ export async function executeFileCreationTool(
         createdFileNames: createdFiles,
         errors: errors.length > 0 ? errors : undefined,
       },
-      error: errors.length > 0 && created === 0 
-        ? `Failed to create files: ${errors.join('; ')}` 
-        : errors.length > 0 
+      error: errors.length > 0 && created === 0
+        ? `Failed to create files: ${errors.join('; ')}`
+        : errors.length > 0
           ? `Created ${created} files, but ${errors.length} failed: ${errors.join('; ')}`
           : undefined,
     };
@@ -470,7 +470,7 @@ export async function executeFindReplaceTool(
         error: 'Root path is required',
       };
     }
-    
+
     const options: SearchOptions = {
       matchCase: params.matchCase ?? false,
       useRegex: params.useRegex ?? false,
@@ -479,11 +479,11 @@ export async function executeFindReplaceTool(
       excludePattern: '',
       target: 'content', // Default to searching file content
     };
-    
+
     // Search for matches
     let scanned = 0;
     let found = 0;
-    
+
     const results = await searchFiles(
       params.rootPath,
       params.searchQuery,
@@ -500,7 +500,7 @@ export async function executeFindReplaceTool(
       },
       () => false
     );
-    
+
     if (results.length === 0) {
       return {
         success: true,
@@ -511,12 +511,12 @@ export async function executeFindReplaceTool(
         },
       };
     }
-    
+
     // If replace query is provided, perform replacement
     if (params.replaceQuery !== undefined) {
       let replaced = 0;
       const errors: string[] = [];
-      
+
       for (const result of results) {
         try {
           const replacements = result.matches.map(match => ({
@@ -525,10 +525,41 @@ export async function executeFindReplaceTool(
             newText: params.replaceQuery || '',
             matchIndex: match.matchIndex,
           }));
-          
-          await replaceInFile(result.path, replacements, true);
+
+
+          // Re-implemented replace logic locally since external module was removed
+          // and we need to be compatible with JS search results (UTF-16 indices)
+          const content = await readTextFile(result.path);
+          const lines = content.split('\n');
+
+          // Group replacements by line
+          const replacementsByLine = new Map<number, any[]>();
+          replacements.forEach(r => {
+            if (!replacementsByLine.has(r.line)) replacementsByLine.set(r.line, []);
+            replacementsByLine.get(r.line)?.push(r);
+          });
+
+          replacementsByLine.forEach((repls, lineNum) => {
+            const idx = lineNum - 1;
+            if (idx >= 0 && idx < lines.length) {
+              let line = lines[idx];
+              // Sort descending
+              repls.sort((a, b) => b.matchIndex - a.matchIndex);
+
+              repls.forEach(r => {
+                // These indices are from JS regex, so they are UTF-16
+                const before = line.substring(0, r.matchIndex);
+                const after = line.substring(r.matchIndex + r.oldText.length);
+                line = before + r.newText + after;
+              });
+              lines[idx] = line;
+            }
+          });
+
+          await writeTextFile(result.path, lines.join('\n'));
+
           replaced += replacements.length;
-          
+
           onProgress?.({
             current: replaced,
             total: results.reduce((sum, r) => sum + r.matches.length, 0),
@@ -539,7 +570,7 @@ export async function executeFindReplaceTool(
           errors.push(`${result.path}: ${error.message}`);
         }
       }
-      
+
       return {
         success: errors.length === 0,
         data: {
@@ -551,7 +582,7 @@ export async function executeFindReplaceTool(
         error: errors.length > 0 ? `${errors.length} errors occurred` : undefined,
       };
     }
-    
+
     // Return search results only
     return {
       success: true,

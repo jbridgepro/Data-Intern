@@ -11,6 +11,8 @@ import React, { useState, useEffect, useRef } from "react";
 import { FileSystemNode, moveNode, copyNode } from "../../utils/fileSystemScanner";
 import { VisualizationConfig } from "../../types";
 import { formatFileSize } from "../../utils/fileSystemScanner";
+import { useVirtualizer } from '@tanstack/react-virtual';
+import { useVirtualizedTree, getAllPaths as getAllPathsHelper } from '../../hooks/useVirtualizedTree';
 import { 
   Folder, 
   File, 
@@ -49,25 +51,22 @@ export function TreeView({ data, config, onRefresh }: TreeViewProps) {
   const [lastSelectedPath, setLastSelectedPath] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [dragOverPath, setDragOverPath] = useState<string | null>(null);
-  
-  // Helper to get all directory paths (recursive)
-  const getAllPaths = (node: FileSystemNode): Set<string> => {
-    const paths = new Set<string>();
-    const traverse = (n: FileSystemNode) => {
-      if (n.isDirectory) {
-        paths.add(n.path);
-        if (n.children) {
-          n.children.forEach(traverse);
-        }
-      }
-    };
-    traverse(node);
-    return paths;
-  };
+  const parentRef = useRef<HTMLDivElement>(null);
+
+  // Flatten the tree for virtualization
+  const flatNodes = useVirtualizedTree(data, expandedPaths);
+
+  // Virtual scrolling configuration
+  const virtualizer = useVirtualizer({
+    count: flatNodes.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => 36, // Estimated row height in pixels
+    overscan: 10, // Render 10 extra rows above/below viewport for smooth scrolling
+  });
 
   // Initialize with all expanded when data changes (default behavior)
   useEffect(() => {
-    setExpandedPaths(getAllPaths(data));
+    setExpandedPaths(getAllPathsHelper(data));
   }, [data]);
 
   // Close context menu on click outside
@@ -92,7 +91,7 @@ export function TreeView({ data, config, onRefresh }: TreeViewProps) {
   };
 
   const handleExpandAll = () => {
-    setExpandedPaths(getAllPaths(data));
+    setExpandedPaths(getAllPathsHelper(data));
   };
 
   const handleCollapseAll = () => {
@@ -288,6 +287,89 @@ export function TreeView({ data, config, onRefresh }: TreeViewProps) {
     return <File className={classNames("h-4 w-4 shrink-0", isSelected ? "text-slate-500" : "text-gray-400")} />;
   };
 
+  // New virtualized rendering function for flat nodes
+  const renderNodeVirtualized = (flatNode: { node: FileSystemNode; depth: number; hasChildren: boolean; isExpanded: boolean }) => {
+    const { node, depth, hasChildren, isExpanded } = flatNode;
+
+    const isSelected = selectedPaths.has(node.path);
+    const isDragOver = dragOverPath === node.path;
+
+    const sizeInfo =
+      config.showFileSizes && !node.isDirectory
+        ? ` (${formatFileSize(node.size)})`
+        : "";
+
+    const countInfo =
+      config.showFileCounts && node.isDirectory
+        ? ` [${node.fileCount || 0}, ${node.folderCount || 0}]`
+        : "";
+
+    // Calculate indentation based on depth
+    const indentPx = depth * 24; // 24px per level
+
+    return (
+      <div className="font-sans text-sm">
+        <div
+          style={{ paddingLeft: `${indentPx}px` }}
+          className={classNames(
+            "flex items-center py-1.5 px-2 rounded-sm cursor-pointer transition-colors group mx-1",
+            isSelected
+              ? "bg-blue-50 dark:bg-blue-900/20 border-l-2 border-blue-500 dark:border-blue-400 pl-[calc(0.5rem-2px)]"
+              : isDragOver
+                ? "bg-blue-50 dark:bg-blue-900/40 border-l-2 border-blue-400 border-dashed pl-[calc(0.5rem-2px)]"
+                : "hover:bg-slate-100 dark:hover:bg-slate-800/50 border-l-2 border-transparent pl-[calc(0.5rem-2px)]"
+          )}
+          onClick={(e) => handleNodeClick(e, node)}
+          onContextMenu={(e) => {
+             handleNodeClick(e, node);
+             handleContextMenu(e, node);
+          }}
+          draggable
+          onDragStart={(e) => handleDragStart(e, node)}
+          onDragOver={(e) => handleDragOver(e, node)}
+          onDrop={(e) => handleDrop(e, node)}
+        >
+          {/* Expand Toggle */}
+          {node.isDirectory ? (
+             <span
+              className={classNames(
+                "p-0.5 hover:bg-slate-200 dark:hover:bg-slate-700 rounded shrink-0 transition-colors mr-1 cursor-pointer",
+                !hasChildren && "opacity-50 pointer-events-none"
+              )}
+              onClick={(e) => toggleExpand(node.path, e)}
+            >
+              {isExpanded ? (
+                <ChevronDown className="h-4 w-4 text-slate-500" />
+              ) : (
+                <ChevronRight className="h-4 w-4 text-slate-500" />
+              )}
+            </span>
+          ) : (
+             <span className="w-5 mr-1" />
+          )}
+
+          {/* Icon */}
+          <span className="mr-2">{getIcon(node, isSelected)}</span>
+
+          {/* Name */}
+          <span className={classNames(
+            "truncate select-none",
+            isSelected ? "text-slate-900 dark:text-slate-100 font-medium" : "text-slate-700 dark:text-slate-300"
+          )}>
+            {node.name}
+          </span>
+
+          {/* Info Badges */}
+          <div className="ml-auto flex items-center gap-2 text-xs text-muted-foreground opacity-70">
+              {sizeInfo}
+              {countInfo}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // Old recursive rendering function (kept for reference, but not used with virtualization)
   const renderNode = (
     node: FileSystemNode,
     prefix: string = "",
@@ -437,10 +519,35 @@ export function TreeView({ data, config, onRefresh }: TreeViewProps) {
          </div>
       </div>
 
-      {/* Tree Content */}
-      <div className="flex-1 overflow-auto p-2 custom-scrollbar">
-        <div className="min-w-fit pb-10">
-          {renderNode(data, "", true, true)}
+      {/* Tree Content with Virtualization */}
+      <div ref={parentRef} className="flex-1 overflow-auto p-2 custom-scrollbar">
+        <div
+          style={{
+            height: `${virtualizer.getTotalSize()}px`,
+            width: '100%',
+            position: 'relative',
+          }}
+        >
+          {virtualizer.getVirtualItems().map((virtualRow) => {
+            const flatNode = flatNodes[virtualRow.index];
+            if (!flatNode) return null;
+
+            return (
+              <div
+                key={flatNode.node.path}
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  width: '100%',
+                  height: `${virtualRow.size}px`,
+                  transform: `translateY(${virtualRow.start}px)`,
+                }}
+              >
+                {renderNodeVirtualized(flatNode)}
+              </div>
+            );
+          })}
         </div>
       </div>
 

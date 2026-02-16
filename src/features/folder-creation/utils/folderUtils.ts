@@ -83,6 +83,26 @@ export interface FolderCreationStats {
     exists: number;
     pending: number;
 }
+/**
+ * Calculates the total number of folders to be created based on configuration
+ * This is used for statistics display without generating the full preview tree
+ */
+export const getTotalCount = (config: FolderConfig): number => {
+    if (config.creationMode === 'list') {
+        const lines = config.folderList
+            .split(/[\n,]/)
+            .map(line => line.trim())
+            .filter(line => line.length > 0);
+        return lines.length;
+    }
+
+    if (config.creationMode === 'csv') {
+        return config.csvRows?.length || 0;
+    }
+
+    // Pattern mode
+    return config.count;
+};
 
 /**
  * Formats date/time according to the specified format
@@ -418,7 +438,12 @@ export const calculateStats = (nodes: PreviewNode[]): FolderCreationStats => {
 
         stats.total++;
         const status = node.status || 'pending';
-        stats[status]++;
+        // Type guard or cast to ensure status is a valid key, though it should be by definition
+        if (status === 'pending' || status === 'success' || status === 'error' || status === 'exists') {
+            stats[status]++;
+        } else {
+            stats.pending++;
+        }
 
         if (node.children) {
             node.children.forEach(countNode);
@@ -441,7 +466,8 @@ export const createFolders = async (
     config: FolderConfig,
     nodes: PreviewNode[],
     onProgress: (current: number, total: number, status: string) => void,
-    onNodeUpdate?: (updatedNodes: PreviewNode[]) => void
+    onNodeUpdate?: (updatedNodes: PreviewNode[]) => void,
+    onStatsUpdate?: (stats: FolderCreationStats) => void
 ): Promise<{ success: boolean; error?: string }> => {
     if (!config.rootPath) {
         return { success: false, error: "Root path is required" };
@@ -451,11 +477,28 @@ export const createFolders = async (
     const validNodes = nodes.filter(n => n.id !== 'more-placeholder');
     const updatedNodes = [...validNodes];
 
-    const totalCount = config.count;
+    const totalCount = getTotalCount(config); // Use the true total count
     let createdCount = 0;
     const errors: string[] = [];
 
-    // 1. Create editable nodes (The PreviewNodes are the Source of Truth)
+    // Initialize stats
+    const currentStats: FolderCreationStats = {
+        total: totalCount,
+        success: 0,
+        error: 0,
+        exists: 0,
+        pending: totalCount
+    };
+
+    // Helper to update stats
+    const updateStats = (status: 'success' | 'error' | 'exists') => {
+        currentStats.pending--;
+        currentStats[status]++;
+        onStatsUpdate?.({ ...currentStats });
+    };
+
+    // 1. Create editable nodes (The PreviewNodes contain potential renames)
+    // We must prioritize these and assume they map 1:1 to the first N items of the execution list.
     for (let i = 0; i < validNodes.length; i++) {
         const node = validNodes[i];
         createdCount++;
@@ -466,13 +509,16 @@ export const createFolders = async (
         try {
             const folderExists = await exists(fullPath);
 
+            let currentStatus: 'success' | 'exists' | 'error' = 'success';
+
             if (folderExists && !config.overwrite) {
-                updatedNodes[i] = { ...node, status: 'exists' };
-                onNodeUpdate?.([...updatedNodes]);
-                continue;
+                currentStatus = 'exists';
+                // Use the existing folder
+            } else {
+                await mkdir(fullPath, { recursive: true });
             }
 
-            await mkdir(fullPath, { recursive: true });
+            updateStats(currentStatus);
 
             // Create subfolders
             if (node.children && node.children.length > 0) {
@@ -483,8 +529,11 @@ export const createFolders = async (
                     }
                     const subPath = await join(fullPath, child.name);
                     try {
-                        await mkdir(subPath, { recursive: true });
-                        console.log(`Created subfolder: ${subPath}`);
+                        const subExists = await exists(subPath);
+                        if (!subExists || config.overwrite) {
+                            await mkdir(subPath, { recursive: true });
+                            console.log(`Created subfolder: ${subPath}`);
+                        }
                     } catch (subError: any) {
                         console.error(`Failed to create subfolder ${subPath}:`, subError);
                         // Continue with other subfolders even if one fails
@@ -492,13 +541,15 @@ export const createFolders = async (
                 }
             }
 
-            updatedNodes[i] = { ...node, status: 'success' };
+            updatedNodes[i] = { ...node, status: currentStatus };
             onNodeUpdate?.([...updatedNodes]);
+
         } catch (error: any) {
             const errorMessage = error?.message || 'Unknown error occurred';
             errors.push(`${node.name}: ${errorMessage}`);
             updatedNodes[i] = { ...node, status: 'error', errorMessage };
             onNodeUpdate?.([...updatedNodes]);
+            updateStats('error');
             console.error(`Failed to create ${fullPath}`, error);
         }
     }
@@ -522,21 +573,31 @@ export const createFolders = async (
             try {
                 const folderExists = await exists(fullPath);
 
+                let currentStatus: 'success' | 'exists' | 'error' = 'success';
+
                 if (folderExists && !config.overwrite) {
-                    continue;
+                    currentStatus = 'exists';
+                    // Logic proceeds to subfolders
+                } else {
+                    await mkdir(fullPath, { recursive: true });
                 }
 
-                await mkdir(fullPath, { recursive: true });
+                updateStats(currentStatus);
 
                 for (const sub of subfolderNames) {
                     // Apply subfolder prefix/suffix here too for consistent behavior on non-previewed items
                     const subName = `${config.subfolderPrefix}${sub}${config.subfolderSuffix}`;
                     const subPath = await join(fullPath, subName);
-                    await mkdir(subPath, { recursive: true });
+
+                    const subExists = await exists(subPath);
+                    if (!subExists || config.overwrite) {
+                        await mkdir(subPath, { recursive: true });
+                    }
                 }
             } catch (error: any) {
                 const errorMessage = error?.message || 'Unknown error occurred';
                 errors.push(`${folderName}: ${errorMessage}`);
+                updateStats('error');
                 console.error(`Failed to create ${fullPath}`, error);
             }
         }
@@ -565,19 +626,30 @@ export const createFolders = async (
 
                 try {
                     const folderExists = await exists(fullPath);
-                    if (folderExists && !config.overwrite) continue;
+                    let currentStatus: 'success' | 'exists' | 'error' = 'success';
 
-                    await mkdir(fullPath, { recursive: true });
+                    if (folderExists && !config.overwrite) {
+                        currentStatus = 'exists';
+                    } else {
+                        await mkdir(fullPath, { recursive: true });
+                    }
+
+                    updateStats(currentStatus);
 
                     for (const sub of subfolderNames) {
                         const subName = `${config.subfolderPrefix}${sub}${config.subfolderSuffix}`;
                         const subPath = await join(fullPath, subName);
-                        await mkdir(subPath, { recursive: true });
+
+                        const subExists = await exists(subPath);
+                        if (!subExists || config.overwrite) {
+                            await mkdir(subPath, { recursive: true });
+                        }
                     }
 
                 } catch (error: any) {
                     const errorMessage = error?.message || 'Unknown error occurred';
                     errors.push(`${folderName}: ${errorMessage}`);
+                    updateStats('error');
                     console.error(`Failed to create ${fullPath}`, error);
                 }
             }
@@ -606,18 +678,29 @@ export const createFolders = async (
 
                 try {
                     const folderExists = await exists(fullPath);
-                    if (folderExists && !config.overwrite) continue;
+                    let currentStatus: 'success' | 'exists' | 'error' = 'success';
 
-                    await mkdir(fullPath, { recursive: true });
+                    if (folderExists && !config.overwrite) {
+                        currentStatus = 'exists';
+                    } else {
+                        await mkdir(fullPath, { recursive: true });
+                    }
+
+                    updateStats(currentStatus);
 
                     for (const sub of subfolderNames) {
                         const subName = `${config.subfolderPrefix}${sub}${config.subfolderSuffix}`;
                         const subPath = await join(fullPath, subName);
-                        await mkdir(subPath, { recursive: true });
+
+                        const subExists = await exists(subPath);
+                        if (!subExists || config.overwrite) {
+                            await mkdir(subPath, { recursive: true });
+                        }
                     }
                 } catch (error: any) {
                     const errorMessage = error?.message || 'Unknown error occurred';
                     errors.push(`${folderName}: ${errorMessage}`);
+                    updateStats('error');
                     console.error(`Failed to create ${fullPath}`, error);
                 }
             }

@@ -7,6 +7,8 @@
 
 import { readDir, DirEntry, stat, rename, copyFile, mkdir } from "@tauri-apps/plugin-fs";
 import { join } from "@tauri-apps/api/path";
+import { Semaphore } from './concurrencyControl';
+import { CancellationToken, isCancellationError } from './cancellationToken';
 
 // Extended file entry with full metadata
 export interface FileSystemNode {
@@ -37,6 +39,14 @@ export interface ScanConfig {
   maxSize?: number;
   modifiedAfter?: Date;
   modifiedBefore?: Date;
+  // New fields for performance and progress tracking
+  onProgress?: (completed: number, total: number) => void;
+  onNodeScanned?: (node: FileSystemNode) => void;
+  concurrencyLimit?: number; // default: 50
+  cancellationToken?: CancellationToken; // for aborting operations
+  // Safety limits
+  maxFiles?: number; // default: 1M - stop scanning after this many files
+  timeoutPerDirectory?: number; // default: 10000ms - timeout for reading a single directory
 }
 
 // Default configuration
@@ -60,15 +70,46 @@ export async function scanDirectory(
     const isBrowser = !(window as any).__TAURI_INTERNALS__;
 
     if (isBrowser) {
-      // Return mock data for browser testing
+      // Return mock data for browser testing with artificial delay for progress
+      if (finalConfig.onProgress) {
+        finalConfig.onProgress(1, 10);
+        await new Promise(resolve => setTimeout(resolve, 500));
+        finalConfig.onProgress(5, 10);
+        await new Promise(resolve => setTimeout(resolve, 500));
+        finalConfig.onProgress(10, 10);
+      }
       return createMockTree();
     }
+
+    // Reset progress counters
+    let scannedCount = 0;
+
+    // We can't easily know total count beforehand without a separate fast scan, 
+    // so we might estimate or just show "scanned so far".
+    // For now, let's just count up. If total is unknown, UI can show indeterminate or just Count.
+    // If we want a progress bar (%), we need a total. 
+    // A common strategy is to do a quick "count only" scan first, OR just show "Scanned: N" without %.
+    // The user requirement says "Show scan progress", which usually implies feedback that it's working.
+
+    // Let's wrapping onNodeScanned to count
+    const originalOnNodeScanned = finalConfig.onNodeScanned;
+    finalConfig.onNodeScanned = (node) => {
+      scannedCount++;
+      if (finalConfig.onProgress) {
+        // We pass total as 0 or undefined to indicate "unknown total"
+        finalConfig.onProgress(scannedCount, 0);
+      }
+      if (originalOnNodeScanned) {
+        originalOnNodeScanned(node);
+      }
+    };
 
     const rootNode = await scanDirectoryRecursive(
       rootPath,
       rootPath,
       0,
-      finalConfig
+      finalConfig,
+      { count: 0 } // Shared mutable state for limiting max files
     );
 
     // Calculate file and folder counts for directories
@@ -78,8 +119,13 @@ export async function scanDirectory(
 
     return rootNode;
   } catch (error) {
+    // Handle cancellation gracefully
+    if (isCancellationError(error)) {
+      console.log("Directory scan was cancelled");
+      throw error; // Re-throw so UI knows it was cancelled
+    }
     console.error("Error scanning directory:", error);
-    return null;
+    throw error;
   }
 }
 
@@ -90,10 +136,19 @@ async function scanDirectoryRecursive(
   currentPath: string,
   rootPath: string,
   depth: number,
-  config: ScanConfig
+  config: ScanConfig,
+  state: { count: number }
 ): Promise<FileSystemNode | null> {
+  // Check for cancellation request
+  config.cancellationToken?.throwIfCancelled();
+
   // Check depth limit
   if (depth > config.maxDepth) {
+    return null;
+  }
+
+  // Check max files limit
+  if (config.maxFiles && state.count >= config.maxFiles) {
     return null;
   }
 
@@ -130,23 +185,65 @@ async function scanDirectoryRecursive(
       children: [],
     };
 
+    // Increment global count and notify
+    state.count++;
+    if (config.onNodeScanned) {
+      config.onNodeScanned(node);
+    }
+
     // If it's a directory, scan children
     if (isDirectory && config.includeFolders) {
       try {
         const entries = await readDir(currentPath);
 
-        for (const entry of entries) {
-          const childPath = `${currentPath}/${entry.name}`;
-          const childNode = await scanDirectoryRecursive(
-            childPath,
-            rootPath,
-            depth + 1,
-            config
-          );
+        // Use parallel processing with concurrency control
+        const concurrencyLimit = config.concurrencyLimit || 50;
+        const semaphore = new Semaphore(concurrencyLimit);
 
-          if (childNode) {
-            childNode.parent = node;
-            node.children!.push(childNode);
+        // Process all entries in parallel with concurrency limit
+        const childPromises = entries.map(async (entry) => {
+          // Check cancellation before acquiring semaphore to avoid queuing up if cancelled
+          config.cancellationToken?.throwIfCancelled();
+
+          // Check max files limit quickly
+          if (config.maxFiles && state.count >= config.maxFiles) return null;
+
+          const release = await semaphore.acquire();
+          try {
+            // Check again after acquiring
+            config.cancellationToken?.throwIfCancelled();
+
+            const childPath = `${currentPath}/${entry.name}`;
+            const childNode = await scanDirectoryRecursive(
+              childPath,
+              rootPath,
+              depth + 1,
+              config,
+              state
+            );
+
+            return childNode;
+          } catch (err) {
+            if (isCancellationError(err)) throw err;
+            // Log other errors but don't stop the whole scan
+            console.warn(`Error scanning child ${entry.name}:`, err);
+            return null;
+          } finally {
+            release();
+          }
+        });
+
+        // Wait for all children to be processed
+        const results = await Promise.allSettled(childPromises);
+
+        // Collect successful results
+        for (const result of results) {
+          if (result.status === 'fulfilled' && result.value) {
+            node.children!.push(result.value);
+          } else if (result.status === 'rejected') {
+            if (isCancellationError(result.reason)) {
+              throw result.reason;
+            }
           }
         }
 
@@ -157,6 +254,7 @@ async function scanDirectoryRecursive(
           return a.name.localeCompare(b.name);
         });
       } catch (err) {
+        if (isCancellationError(err)) throw err;
         console.warn(`Cannot read directory ${currentPath}:`, err);
       }
     }
@@ -168,7 +266,8 @@ async function scanDirectoryRecursive(
 
     return node;
   } catch (error) {
-    console.error(`Error processing ${currentPath}:`, error);
+    if (isCancellationError(error)) throw error;
+    console.warn(`Error processing ${currentPath}:`, error);
     return null;
   }
 }

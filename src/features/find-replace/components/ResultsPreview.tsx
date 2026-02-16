@@ -8,20 +8,7 @@
 import { FileText, Check, AlertCircle } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useEffect, useRef } from "react";
-
-interface Match {
-  file: string;
-  line: number;
-  content: string;
-  matchIndex: number; // Start index of match in content
-  length: number;
-  source: 'content' | 'filename' | 'folder';
-}
-
-interface FileResult {
-  path: string;
-  matches: Match[];
-}
+import { FileResult, Match } from "../utils/searchLogic";
 
 interface ResultsPreviewProps {
   results: FileResult[];
@@ -139,14 +126,12 @@ export const ResultsPreview = ({
                           const isFocused = focusedMatchIndex === currentGlobalIndex;
 
                           // Highlight logic
-                          const before = match.content.substring(0, match.matchIndex);
-                          const matched = match.content.substring(
-                            match.matchIndex,
-                            match.matchIndex + match.length,
-                          );
-                          const after = match.content.substring(
-                            match.matchIndex + match.length,
-                          );
+                          const index = match.matchIndexUtf16 ?? match.matchIndex;
+                          const length = match.lengthUtf16 ?? match.length;
+                          
+                          const before = match.content.substring(0, index);
+                          const matched = match.content.substring(index, index + length);
+                          const after = match.content.substring(index + length);
 
                           // Find original logic
                           const originalRes = results.find(r => r.path === fileResult.path);

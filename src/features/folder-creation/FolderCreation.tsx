@@ -32,6 +32,7 @@ import {
   PreviewNode,
   updateNodeName,
   calculateStats,
+  getTotalCount,
   FolderCreationStats,
 } from "./utils/folderUtils";
 import { FolderForm } from "./components/FolderForm";
@@ -109,7 +110,16 @@ export const FolderCreation = () => {
   useEffect(() => {
     const newNodes = generatePreview(config);
     setNodes(newNodes);
-    setStats(calculateStats(newNodes));
+    
+    // Calculate stats from preview nodes, but override total with true count
+    const previewStats = calculateStats(newNodes);
+    const totalCount = getTotalCount(config);
+    
+    setStats({
+      ...previewStats,
+      total: totalCount,
+      pending: totalCount // Reset pending to total since we haven't started
+    });
   }, [config]);
 
   // Load presets from localStorage on mount
@@ -163,7 +173,9 @@ export const FolderCreation = () => {
 
     setStatus("creating");
     setErrorMessage(null);
-    const totalCount = config.count;
+    setStatus("creating");
+    setErrorMessage(null);
+    const totalCount = getTotalCount(config);
     setProgress({ current: 0, total: totalCount, status: "Starting..." });
 
     // Reset all nodes to pending status
@@ -179,7 +191,15 @@ export const FolderCreation = () => {
       };
     });
     setNodes(resetNodes);
-    setStats(calculateStats(resetNodes));
+    setNodes(resetNodes);
+    // Initialize stats with total count
+    setStats({
+      total: totalCount,
+      success: 0,
+      error: 0,
+      exists: 0,
+      pending: totalCount
+    });
 
     try {
       const result = await createFolders(
@@ -190,8 +210,11 @@ export const FolderCreation = () => {
         },
         (updatedNodes) => {
           setNodes(updatedNodes);
-          setStats(calculateStats(updatedNodes));
+          // Don't overwrite execution stats with preview stats here
         },
+        (newStats) => {
+          setStats(newStats);
+        }
       );
 
       if (result.success) {
