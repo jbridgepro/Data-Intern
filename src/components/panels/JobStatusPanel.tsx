@@ -46,7 +46,7 @@ export const JobStatusPanel = () => {
                   <Button
                     variant="ghost"
                     size="xs"
-                    className="h-6 text-xs gap-1"
+                    className="gap-1"
                     onClick={hasRunning ? pauseAll : resumeAll}
                     disabled={activeJobs.length === 0}
                   >
@@ -56,7 +56,7 @@ export const JobStatusPanel = () => {
                   <Button
                     variant="ghost"
                     size="xs"
-                    className="h-6 text-xs gap-1 text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-900/20"
+                    className="gap-1 text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-900/20"
                     onClick={cancelAll}
                     disabled={activeJobs.length === 0}
                   >
@@ -71,7 +71,7 @@ export const JobStatusPanel = () => {
                <Button
                 variant="ghost"
                 size="xs"
-                className="h-6 text-xs gap-1 text-muted-foreground"
+                className="gap-1 text-muted-foreground"
                 onClick={clearCompletedJobs}
                >
                  <Trash2 className="h-3 w-3" />
