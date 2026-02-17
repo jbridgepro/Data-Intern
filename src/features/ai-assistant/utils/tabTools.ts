@@ -221,6 +221,8 @@ export async function executeFolderCreationTool(
       csvColumnConfig: {},
       csvRows: [],
       csvHeaders: [],
+      enableFilePreCreation: false,
+      preCreationFiles: [],
     };
 
     // Generate preview nodes with custom names

@@ -7,6 +7,26 @@
 
 import { mkdir, exists } from "@tauri-apps/plugin-fs";
 import { join } from "@tauri-apps/api/path";
+import { formatDate as sharedFormatDate } from "../../../utils/dateUtils";
+
+/**
+ * Configuration for a pre-created file
+ */
+export interface PreCreationFileConfig {
+    id: string;                    // Unique ID for React keys
+    fileName: string;              // User-defined name (without extension)
+    extension: string;             // File extension (e.g., "txt", "md")
+
+    // Pattern-Based Propagation Fields
+    propagationMode: 'manual' | 'all-main-folders' | 'matching-subfolders';
+    templateDestination: string;  // The selected example (e.g., "folder-1")
+    excludedDestinations?: string[];  // User-opted-out folder IDs
+
+    // Legacy field for backward compatibility
+    destination?: 'root' | string;  // 'root' or folder node ID (deprecated, use templateDestination)
+
+    enabled: boolean;              // Allow disabling without deleting
+}
 
 export interface FolderConfig {
     rootPath: string;
@@ -29,7 +49,8 @@ export interface FolderConfig {
 
     // Date/Time
     useDate: boolean;
-    dateFormat: 'YYYY-MM-DD' | 'YYYYMMDD' | 'DD-MM-YYYY' | 'MM-DD-YYYY' | 'YYYY-MM-DD_HH-MM-SS' | 'YYYYMMDD_HHMMSS' | 'timestamp';
+    dateFormat: 'YYYY-MM-DD' | 'YYYYMMDD' | 'YY-MM-DD' | 'YYMMDD' | 'DD-MM-YYYY' | 'MM-DD-YYYY' | 'MM-DD-YY' | 'MMDDYY' | 'YYYY-MM-DD_HH-MM-SS' | 'YYYYMMDD_HHMMSS' | 'YYMMDD_HHMMSS' | 'HH-MM-SS' | 'HHMMSS' | 'timestamp' | 'custom';
+    customDateFormat?: string;
     datePosition: 'prefix' | 'suffix';
 
     // Random string generation
@@ -62,6 +83,10 @@ export interface FolderConfig {
     }>;
     csvRows: Record<string, string>[]; // Parsed CSV data (for preview/generation)
     csvHeaders: string[]; // Original headers or generated Column_X
+
+    // File Pre-Creation Configuration
+    enableFilePreCreation: boolean;
+    preCreationFiles: PreCreationFileConfig[];
 }
 
 export interface PreviewNode {
@@ -71,6 +96,12 @@ export interface PreviewNode {
     children?: PreviewNode[];
     status?: 'pending' | 'success' | 'error' | 'exists';
     errorMessage?: string;
+    isPreCreationFile?: boolean;  // Mark files from pre-creation feature
+    originalFileName?: string;    // Store original name for reference
+
+    // Pattern-based file fields
+    propagationMode?: 'manual' | 'all-main-folders' | 'matching-subfolders';
+    sourceFileId?: string;  // Link back to source PreCreationFileConfig.id
 }
 
 /**
@@ -110,24 +141,11 @@ export const getTotalCount = (config: FolderConfig): number => {
  * @param date - Optional date object (defaults to current date)
  * @returns Formatted date/time string
  */
-export const formatDate = (format: string, date: Date = new Date()): string => {
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, "0");
-    const day = String(date.getDate()).padStart(2, "0");
-    const hours = String(date.getHours()).padStart(2, "0");
-    const minutes = String(date.getMinutes()).padStart(2, "0");
-    const seconds = String(date.getSeconds()).padStart(2, "0");
-
-    switch (format) {
-        case 'YYYY-MM-DD': return `${year}-${month}-${day}`;
-        case 'YYYYMMDD': return `${year}${month}${day}`;
-        case 'DD-MM-YYYY': return `${day}-${month}-${year}`;
-        case 'MM-DD-YYYY': return `${month}-${day}-${year}`;
-        case 'YYYY-MM-DD_HH-MM-SS': return `${year}-${month}-${day}_${hours}-${minutes}-${seconds}`;
-        case 'YYYYMMDD_HHMMSS': return `${year}${month}${day}_${hours}${minutes}${seconds}`;
-        case 'timestamp': return String(date.getTime());
-        default: return `${year}-${month}-${day}`;
+export const formatDate = (format: string, date: Date = new Date(), customFormat?: string): string => {
+    if (format === 'custom' && customFormat) {
+        return sharedFormatDate(customFormat, date);
     }
+    return sharedFormatDate(format, date);
 };
 
 /**
@@ -271,6 +289,349 @@ export const generateFolderName = (
 };
 
 /**
+ * Metadata about a folder ID
+ */
+interface FolderMetadata {
+    type: 'pattern-main' | 'pattern-sub' | 'list-main' | 'list-sub' | 'csv-main' | 'csv-sub' | 'root';
+    creationMode: 'pattern' | 'list' | 'csv' | 'root';
+    isMainFolder: boolean;
+    index?: number;
+    subIndex?: number;
+    subfolderName?: string;
+}
+
+/**
+ * Analyzes a folder ID to determine its type and metadata.
+ * Returns 'root' metadata as fallback for undefined/null IDs.
+ */
+const analyzeFolderId = (folderId: string, folderNodes: PreviewNode[]): FolderMetadata => {
+    // Guard against undefined/null folderId (legacy configs without templateDestination)
+    if (!folderId || folderId === 'root') {
+        return { type: 'root', creationMode: 'root', isMainFolder: true };
+    }
+
+    // Pattern mode: folder-1, folder-2
+    const patternMainMatch = folderId.match(/^folder-(\d+)$/);
+    if (patternMainMatch) {
+        return {
+            type: 'pattern-main',
+            creationMode: 'pattern',
+            isMainFolder: true,
+            index: parseInt(patternMainMatch[1])
+        };
+    }
+
+    // Pattern subfolder: folder-1-sub-0
+    const patternSubMatch = folderId.match(/^folder-(\d+)-sub-(\d+)$/);
+    if (patternSubMatch) {
+        const subfolderName = getSubfolderNameById(folderId, folderNodes);
+        return {
+            type: 'pattern-sub',
+            creationMode: 'pattern',
+            isMainFolder: false,
+            index: parseInt(patternSubMatch[1]),
+            subIndex: parseInt(patternSubMatch[2]),
+            subfolderName
+        };
+    }
+
+    // List mode: folder-list-0
+    const listMainMatch = folderId.match(/^folder-list-(\d+)$/);
+    if (listMainMatch) {
+        return {
+            type: 'list-main',
+            creationMode: 'list',
+            isMainFolder: true,
+            index: parseInt(listMainMatch[1])
+        };
+    }
+
+    // List subfolder: folder-list-0-sub-0
+    const listSubMatch = folderId.match(/^folder-list-(\d+)-sub-(\d+)$/);
+    if (listSubMatch) {
+        const subfolderName = getSubfolderNameById(folderId, folderNodes);
+        return {
+            type: 'list-sub',
+            creationMode: 'list',
+            isMainFolder: false,
+            index: parseInt(listSubMatch[1]),
+            subIndex: parseInt(listSubMatch[2]),
+            subfolderName
+        };
+    }
+
+    // CSV mode: folder-csv-0
+    const csvMainMatch = folderId.match(/^folder-csv-(\d+)$/);
+    if (csvMainMatch) {
+        return {
+            type: 'csv-main',
+            creationMode: 'csv',
+            isMainFolder: true,
+            index: parseInt(csvMainMatch[1])
+        };
+    }
+
+    // CSV subfolder: folder-csv-0-sub-0
+    const csvSubMatch = folderId.match(/^folder-csv-(\d+)-sub-(\d+)$/);
+    if (csvSubMatch) {
+        const subfolderName = getSubfolderNameById(folderId, folderNodes);
+        return {
+            type: 'csv-sub',
+            creationMode: 'csv',
+            isMainFolder: false,
+            index: parseInt(csvSubMatch[1]),
+            subIndex: parseInt(csvSubMatch[2]),
+            subfolderName
+        };
+    }
+
+    return { type: 'root', creationMode: 'root', isMainFolder: true };
+};
+
+/**
+ * Helper to get subfolder name from folder node by ID
+ */
+const getSubfolderNameById = (folderId: string, folderNodes: PreviewNode[]): string | undefined => {
+    const findNode = (nodes: PreviewNode[]): PreviewNode | undefined => {
+        for (const node of nodes) {
+            if (node.id === folderId) return node;
+            if (node.children) {
+                const found = findNode(node.children);
+                if (found) return found;
+            }
+        }
+        return undefined;
+    };
+
+    const node = findNode(folderNodes);
+    return node?.name;
+};
+
+/**
+ * Finds all main folder IDs for a given creation mode
+ */
+const findAllMainFolders = (
+    creationMode: 'pattern' | 'list' | 'csv' | 'root',
+    folderNodes: PreviewNode[],
+    config: FolderConfig
+): string[] => {
+    if (creationMode === 'root') return ['root'];
+
+    const mainFolders: string[] = [];
+
+    if (creationMode === 'pattern') {
+        const totalCount = config.count;
+        for (let i = 1; i <= totalCount; i++) {
+            mainFolders.push(`folder-${i}`);
+        }
+    } else if (creationMode === 'list') {
+        const lines = config.folderList
+            .split(/[\n,]/)
+            .map(line => line.trim())
+            .filter(line => line.length > 0);
+
+        for (let i = 0; i < lines.length; i++) {
+            mainFolders.push(`folder-list-${i}`);
+        }
+    } else if (creationMode === 'csv') {
+        const rows = config.csvRows || [];
+        for (let i = 0; i < rows.length; i++) {
+            mainFolders.push(`folder-csv-${i}`);
+        }
+    }
+
+    return mainFolders;
+};
+
+/**
+ * Finds all subfolder IDs with matching name across all main folders
+ */
+const findMatchingSubfolders = (
+    targetSubfolderName: string,
+    creationMode: 'pattern' | 'list' | 'csv' | 'root',
+    folderNodes: PreviewNode[],
+    config: FolderConfig
+): string[] => {
+    const matchingSubfolders: string[] = [];
+
+    // Get subfolder names from config
+    const configuredSubfolders = config.subfolders
+        .split(/[\n,]/)
+        .map(s => s.trim())
+        .filter(s => s.length > 0);
+
+    // Apply prefix/suffix to match actual names
+    const actualSubfolderNames = configuredSubfolders.map(
+        sub => `${config.subfolderPrefix}${sub}${config.subfolderSuffix}`
+    );
+
+    // Find the subfolder index
+    const subIndex = actualSubfolderNames.indexOf(targetSubfolderName);
+
+    if (subIndex === -1) return [];
+
+    // Generate IDs for all matching subfolders
+    const mainFolders = findAllMainFolders(creationMode, folderNodes, config);
+
+    for (const mainFolderId of mainFolders) {
+        const subId = `${mainFolderId}-sub-${subIndex}`;
+        matchingSubfolders.push(subId);
+    }
+
+    return matchingSubfolders;
+};
+
+/**
+ * Expands a template destination into all matching destinations based on propagation mode
+ */
+export const expandDestinations = (
+    templateDestination: string,
+    propagationMode: 'manual' | 'all-main-folders' | 'matching-subfolders',
+    excludedDestinations: string[],
+    folderNodes: PreviewNode[],
+    config: FolderConfig
+): string[] => {
+    // Fallback for undefined/null templateDestination (legacy configs)
+    const safeDest = templateDestination || 'root';
+
+    // Manual mode: single destination
+    if (propagationMode === 'manual') {
+        return [safeDest];
+    }
+
+    const metadata = analyzeFolderId(safeDest, folderNodes);
+    let destinations: string[] = [];
+
+    // All Main Folders Mode
+    if (propagationMode === 'all-main-folders') {
+        if (metadata.type === 'root') {
+            destinations.push('root');
+        } else if (metadata.isMainFolder) {
+            destinations = findAllMainFolders(metadata.creationMode, folderNodes, config);
+        } else {
+            // Fallback to manual if subfolder selected
+            destinations.push(safeDest);
+        }
+    }
+
+    // Matching Subfolders Mode
+    if (propagationMode === 'matching-subfolders') {
+        if (metadata.isMainFolder) {
+            // Fallback to manual if main folder selected
+            destinations.push(safeDest);
+        } else if (metadata.subfolderName) {
+            destinations = findMatchingSubfolders(
+                metadata.subfolderName,
+                metadata.creationMode,
+                folderNodes,
+                config
+            );
+        }
+    }
+
+    // Filter out excluded destinations
+    return destinations.filter(dest => !excludedDestinations.includes(dest));
+};
+
+/**
+ * Injects pre-creation files into the folder preview tree.
+ * Supports pattern-based propagation: files can be replicated across
+ * all main folders or all matching subfolders based on propagation mode.
+ * 
+ * @param nodes - Array of folder preview nodes
+ * @param files - Array of file configurations
+ * @param config - Folder configuration (used for pattern expansion)
+ * @returns Updated array with files injected at appropriate destinations
+ */
+const injectPreCreationFiles = (
+    nodes: PreviewNode[],
+    files: PreCreationFileConfig[],
+    config: FolderConfig
+): PreviewNode[] => {
+    const enabledFiles = files.filter(f => f.enabled);
+    if (enabledFiles.length === 0) return nodes;
+
+    // Migrate legacy configs that lack propagationMode (backward compatibility)
+    const migratedFiles = enabledFiles.map(file => {
+        if (!file.propagationMode) {
+            return {
+                ...file,
+                propagationMode: 'manual' as const,
+                templateDestination: file.destination || 'root',
+                excludedDestinations: [] as string[]
+            };
+        }
+        return file;
+    });
+
+    // Expand all file destinations based on propagation mode
+    // Maps destination folder ID → list of files that should be placed there
+    const expandedFileMap = new Map<string, PreCreationFileConfig[]>();
+
+    migratedFiles.forEach(file => {
+        const destinations = expandDestinations(
+            file.templateDestination,
+            file.propagationMode,
+            file.excludedDestinations || [],
+            nodes,
+            config
+        );
+
+        destinations.forEach(dest => {
+            if (!expandedFileMap.has(dest)) {
+                expandedFileMap.set(dest, []);
+            }
+            expandedFileMap.get(dest)!.push(file);
+        });
+    });
+
+    // Recursively inject files into matching destination folders
+    const injectIntoNode = (node: PreviewNode): PreviewNode => {
+        const filesForThisNode = expandedFileMap.get(node.id) || [];
+
+        // Create file nodes with pattern metadata for visual distinction
+        const fileNodes: PreviewNode[] = filesForThisNode.map(file => ({
+            id: `file-${file.id}-${node.id}`,
+            name: `${file.fileName}.${file.extension}`,
+            type: 'file' as const,
+            status: 'pending' as const,
+            isPreCreationFile: true,
+            originalFileName: `${file.fileName}.${file.extension}`,
+            propagationMode: file.propagationMode,
+            sourceFileId: file.id
+        }));
+
+        const updatedChildren = [
+            ...(node.children || []).map(child =>
+                child.type === 'folder' ? injectIntoNode(child) : child
+            ),
+            ...fileNodes
+        ];
+
+        return {
+            ...node,
+            children: updatedChildren.length > 0 ? updatedChildren : undefined
+        };
+    };
+
+    const updatedNodes = nodes.map(node => injectIntoNode(node));
+
+    // Add root-level files (from expandedFileMap for 'root' destination)
+    const rootLevelFiles = (expandedFileMap.get('root') || []).map(file => ({
+        id: `file-${file.id}-root`,
+        name: `${file.fileName}.${file.extension}`,
+        type: 'file' as const,
+        status: 'pending' as const,
+        isPreCreationFile: true,
+        originalFileName: `${file.fileName}.${file.extension}`,
+        propagationMode: file.propagationMode,
+        sourceFileId: file.id
+    }));
+
+    return [...updatedNodes, ...rootLevelFiles];
+};
+
+/**
  * Generates a preview of folder nodes based on the configuration
  * Uses the same naming pattern logic as the file tab
  * @param config - Folder configuration
@@ -325,9 +686,17 @@ export const generatePreview = (config: FolderConfig): PreviewNode[] => {
                 name: `... (${hiddenCount} more - not editable in preview)`,
                 type: "folder"
             });
+            // Inject pre-creation files if enabled
+            if (config.enableFilePreCreation && config.preCreationFiles && config.preCreationFiles.length > 0) {
+                return injectPreCreationFiles(shownNodes, config.preCreationFiles, config);
+            }
             return shownNodes;
         }
 
+        // Inject pre-creation files if enabled
+        if (config.enableFilePreCreation && config.preCreationFiles && config.preCreationFiles.length > 0) {
+            return injectPreCreationFiles(nodes, config.preCreationFiles, config);
+        }
         return nodes;
     }
 
@@ -367,6 +736,10 @@ export const generatePreview = (config: FolderConfig): PreviewNode[] => {
             });
         }
 
+        // Inject pre-creation files if enabled
+        if (config.enableFilePreCreation && config.preCreationFiles && config.preCreationFiles.length > 0) {
+            return injectPreCreationFiles(nodes, config.preCreationFiles, config);
+        }
         return nodes;
     }
 
@@ -403,6 +776,10 @@ export const generatePreview = (config: FolderConfig): PreviewNode[] => {
         })
     }
 
+    // Inject pre-creation files if enabled
+    if (config.enableFilePreCreation && config.preCreationFiles && config.preCreationFiles.length > 0) {
+        return injectPreCreationFiles(nodes, config.preCreationFiles, config);
+    }
     return nodes;
 };
 
@@ -452,6 +829,108 @@ export const calculateStats = (nodes: PreviewNode[]): FolderCreationStats => {
 
     nodes.forEach(countNode);
     return stats;
+};
+
+/**
+ * Helper to update file node status recursively in the tree
+ */
+const updateFileNodeStatus = (
+    nodes: PreviewNode[],
+    fileId: string,
+    status: 'success' | 'exists' | 'error',
+    errorMessage?: string
+): boolean => {
+    for (const node of nodes) {
+        if (node.id === fileId) {
+            node.status = status;
+            if (errorMessage) {
+                node.errorMessage = errorMessage;
+            }
+            return true;
+        }
+        if (node.children && updateFileNodeStatus(node.children, fileId, status, errorMessage)) {
+            return true;
+        }
+    }
+    return false;
+};
+
+/**
+ * Creates pre-creation files within the folder structure
+ * @param config - Folder configuration
+ * @param nodes - Preview nodes with folders and files
+ * @param currentProgress - Current progress count (after folder creation)
+ * @param totalItems - Total items including files
+ * @param onProgress - Progress callback
+ * @param onNodeUpdate - Callback to update node status
+ * @returns Result with success status and any errors
+ */
+const createPreCreationFiles = async (
+    config: FolderConfig,
+    nodes: PreviewNode[],
+    currentProgress: number,
+    totalItems: number,
+    onProgress: (current: number, total: number, status: string) => void,
+    onNodeUpdate?: (updatedNodes: PreviewNode[]) => void
+): Promise<{ success: boolean; errors: string[] }> => {
+    const errors: string[] = [];
+    const updatedNodes = [...nodes];
+
+    // Collect all file nodes from tree
+    const fileNodes: Array<{ node: PreviewNode; folderPath: string }> = [];
+
+    const collectFiles = async (nodes: PreviewNode[], currentPath: string) => {
+        for (const node of nodes) {
+            if (node.type === 'file' && node.isPreCreationFile && node.id !== 'more-placeholder') {
+                fileNodes.push({ node, folderPath: currentPath });
+            }
+            if (node.type === 'folder' && node.children) {
+                const nodePath = await join(currentPath, node.name);
+                await collectFiles(node.children, nodePath);
+            }
+        }
+    };
+
+    await collectFiles(nodes, config.rootPath);
+
+    // Import writeTextFile dynamically
+    const { writeTextFile } = await import("@tauri-apps/plugin-fs");
+
+    // Create files sequentially
+    for (let i = 0; i < fileNodes.length; i++) {
+        const { node, folderPath } = fileNodes[i];
+        const filePath = await join(folderPath, node.name);
+
+        onProgress(
+            currentProgress + i + 1,
+            totalItems,
+            `Creating file ${node.name}...`
+        );
+
+        try {
+            const fileExists = await exists(filePath);
+            let currentStatus: 'success' | 'exists' | 'error' = 'success';
+
+            if (fileExists && !config.overwrite) {
+                currentStatus = 'exists';
+            } else {
+                await writeTextFile(filePath, "");
+                currentStatus = 'success';
+            }
+
+            // Update node status in tree
+            updateFileNodeStatus(updatedNodes, node.id, currentStatus);
+            onNodeUpdate?.(updatedNodes);
+
+        } catch (error: any) {
+            const errorMessage = error?.message || 'Unknown error';
+            errors.push(`${node.name}: ${errorMessage}`);
+            updateFileNodeStatus(updatedNodes, node.id, 'error', errorMessage);
+            onNodeUpdate?.(updatedNodes);
+        }
+    }
+
+    return { success: errors.length === 0, errors };
 };
 
 /**
@@ -704,6 +1183,23 @@ export const createFolders = async (
                     console.error(`Failed to create ${fullPath}`, error);
                 }
             }
+        }
+    }
+
+    // Create pre-creation files if enabled
+    if (config.enableFilePreCreation && config.preCreationFiles && config.preCreationFiles.length > 0) {
+        const enabledFileCount = config.preCreationFiles.filter(f => f.enabled).length;
+        const fileCreationResult = await createPreCreationFiles(
+            config,
+            updatedNodes,
+            createdCount,  // Continue progress from where folders left off
+            totalCount + enabledFileCount,
+            onProgress,
+            onNodeUpdate
+        );
+
+        if (!fileCreationResult.success) {
+            errors.push(...fileCreationResult.errors);
         }
     }
 

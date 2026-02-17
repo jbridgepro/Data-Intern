@@ -28,18 +28,19 @@ export const folderCreationInfo: ToolInfoContentType = {
 /** Content for File Creation */
 export const fileCreationInfo: ToolInfoContentType = {
   overview:
-    "Create many empty files at once. You can use a naming pattern (with numbers or dates) or provide a list of names. Supports multiple file types (e.g. .txt, .csv).",
+    "Create many empty files at once. Use patterns, lists, CSV, or Map mode with pattern-based propagation. Map mode lets you place files in specific folders and auto-propagate to all matching main folders or subfolders.",
   steps: [
-    "Select the folder where the new files should be created.",
-    "Choose pattern mode (e.g. “report” with numbers) or list mode and enter or paste your names.",
-    "Pick the file type(s) you want (e.g. .txt, .csv).",
-    "Review the preview and edit any filename by clicking it if needed.",
-    "Click the create button to generate all files.",
+    "Select the root folder where the new files will be created.",
+    "Choose a mode: Pattern, List, CSV, or Map (folder mapping).",
+    "For Map mode: Pick destination mode (Manual, Pattern Main Folders, or Pattern Subfolders).",
+    "Add files and assign each to a folder. Use propagation to apply to matching folders.",
+    "Review the propagation preview and uncheck any targets to exclude.",
+    "Click the create button to generate all files atomically.",
   ],
   examples: [
     "Create “notes_001.txt” through “notes_050.txt” for a course.",
-    "Generate a set of empty .csv files from a list of city names.",
-    "Use a date in the name (e.g. “log-2025-02-09.txt”) for daily logs.",
+    "Use Map mode: place ClientOverview.doc in 001-Client-* and auto-propagate to 002-Client-*, 003-Client-*.",
+    "Propagate to Documents subfolder in all matching main folders with one placement.",
   ],
 };
 
@@ -97,35 +98,21 @@ export const findReplaceInfo: ToolInfoContentType = {
   ],
 };
 
-/** Content for SQL Export Wizard (includes AI) */
+/** Content for SQL Export Wizard */
 export const sqlExportWizardInfo: ToolInfoContentType = {
   overview:
-    "Connect to a database, then export or import data and run queries. You can export tables to files, import from CSV or similar, and build or run SQL. Optional AI helps you write queries in plain language.",
+    "Connect to a database, then export or import data and run queries. Export tables to files, import from CSV or similar, and run SQL in the Query mode. Use Quick Tools → SQL Formatter to build or format SQL with a visual builder and natural language.",
   steps: [
     "Create or select a saved database connection and choose a database.",
-    "Pick a mode: Export (table or query to file), Import (file into table), or Query (run or design SQL).",
-    "For export: pick tables or write a query, then choose format and destination.",
+    "Pick a mode: Export (table or query to file), Import (file into table), or Query (run SQL and view results).",
+    "For export: pick tables or provide a query, then choose format and destination.",
     "For import: pick a file, map columns, then run the import.",
-    "For query: write SQL or use the builder; optionally use natural language with AI to generate SQL.",
+    "For query: enter or paste SQL in the editor, click Execute, and view results. Use the link to open SQL Formatter to build or format queries.",
   ],
-  ai: {
-    what:
-      "The AI can turn short descriptions (e.g. “show top 10 customers by revenue”) into SQL. It uses your database schema so the query fits your tables.",
-    setup:
-      "Open Settings and go to the AI / API section. Add your API key and save. Once configured, the Query panel will show an option to use natural language.",
-    examplesWithAi: [
-      "Describe what you want in plain language and get ready-to-run SQL.",
-      "Refine the generated query by asking for filters or different columns.",
-    ],
-    examplesWithoutAi: [
-      "Write and run SQL by hand in the query editor.",
-      "Use the visual query builder to add tables and conditions without typing SQL.",
-    ],
-  },
   examples: [
     "Export a large table to CSV for use in a spreadsheet.",
     "Import a CSV of contacts into a “Contacts” table with column mapping.",
-    "Run a one-off report query and export the results.",
+    "Run a one-off report query and view or export the results.",
   ],
 };
 
@@ -287,17 +274,24 @@ export const audioTranscriptionToolInfo: ToolInfoContentType = {
 /** Content for File Converter quick tool */
 export const fileConverterToolInfo: ToolInfoContentType = {
   overview:
-    "Convert video or audio files to other formats. Pick a file, choose the target format (and options if available), then run the conversion and save the new file.",
+    "Convert video, audio, image, document, and spreadsheet files between formats. Add files via drag & drop or the file picker, configure per-file output format and quality settings, and optionally customize the output filename. You can also re-encode to the same format to reduce file size or adjust quality. The tool shows an estimated output size that updates as you change settings. Spreadsheet conversions use Python3 for CSV/TSV/JSON and LibreOffice for Excel/PDF.",
   steps: [
-    "Add the file you want to convert (e.g. drag and drop or browse).",
-    "Select the output format (e.g. MP3, WAV, MP4, WebM) and any quality options.",
-    "Start the conversion; wait until it finishes.",
-    "Download or save the converted file to the location you choose.",
+    "Add files by dragging them in, clicking 'Add Files', or using the type-specific buttons (Video, Audio, Image, Doc, Sheet).",
+    "Select a file from the queue to see its preview (playback for media, thumbnail for images) and metadata (dimensions, duration, file size).",
+    "Choose the target format — pick 'Same Format' to re-encode and adjust quality or size without changing the extension.",
+    "Optionally edit the output filename in the 'Output Filename' field; leave empty to use the default (filename_converted).",
+    "Configure type-specific settings: video (quality, resolution), audio (bitrate), image (aspect ratio, max size, compression), or spreadsheet (delimiter, headers).",
+    "Review the estimated output size, which updates as you change settings (smaller, larger, or same as source).",
+    "Click 'Convert This File' for a single file, or 'Convert All' to batch-process. Use 'Show in Folder' when done to open the output location.",
   ],
   examples: [
-    "Convert a video to MP4 for easier sharing or playback.",
-    "Extract or convert audio to MP3 for a podcast or playlist.",
-    "Convert an old format to a modern one for compatibility.",
+    "Re-encode an MP4 to reduce file size: select same format, lower quality, and a smaller resolution.",
+    "Convert a video to MP4 with custom quality and resolution settings.",
+    "Batch-convert multiple audio files to MP3 at 320 kbps.",
+    "Convert PNG to WebP with aspect ratio crop (e.g. 1:1) and max dimension (e.g. 1920 px) to shrink file size.",
+    "Transform a DOCX document to PDF for sharing.",
+    "Convert an Excel spreadsheet (.xlsx) to CSV or JSON.",
+    "Re-delimit a CSV from comma to tab (TSV) or change the delimiter for European-style CSVs.",
   ],
 };
 
@@ -312,7 +306,7 @@ export const quickToolMeta: Record<
   "prompt-optimizer": { subtitle: "Enhance prompts for better AI responses", info: promptOptimizerToolInfo },
   "duplicate-finder": { subtitle: "Find and manage duplicate files", info: duplicateFinderToolInfo },
   "audio-transcription": { subtitle: "Transcribe audio files to text", info: audioTranscriptionToolInfo },
-  "file-converter": { subtitle: "Convert video and audio to different formats", info: fileConverterToolInfo },
+  "file-converter": { subtitle: "Convert video, audio, image, document, and spreadsheet files", info: fileConverterToolInfo },
 };
 
 /**

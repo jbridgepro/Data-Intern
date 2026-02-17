@@ -105,46 +105,74 @@ export const useVirtualFileTree = ({
     }, [expandedPaths, filesCache, getDirectoryContents]);
 
 
-    // Flatten the tree
+    // Flatten the tree into a virtual list with smart search behavior
     const flattenNodes = useMemo(() => {
         if (!rootPath || !filesCache.has(rootPath)) return [];
 
         const nodes: VirtualNode[] = [];
+        const activeSearchTerm = filterOptions.searchTerm?.trim().toLowerCase() || "";
+        const isSearchActive = activeSearchTerm.length > 0;
 
-        // We start with root path contents
-        // But we need to process them.
-        // We need a recursive function that adds to flat list
+        /**
+         * When search is active, checks if a directory (or its loaded descendants)
+         * contains any entries matching the current search term and filters.
+         * Returns false for unloaded directories — we can only confirm matches
+         * for directories whose contents have been cached (previously expanded).
+         * Directories whose names match the search term are handled separately
+         * in processEntries via the dirNameMatches check.
+         */
+        const hasMatchingDescendants = (dirPath: string): boolean => {
+            const children = filesCache.get(dirPath);
+            if (!children) return false; // Not loaded — can't confirm any matches
 
-        // Helper to process a list of entries at a certain level
+            return children.some(child => {
+                if (child.isDirectory) {
+                    // Directory counts as matching if its name matches the search
+                    // OR if any of its own loaded descendants match
+                    return child.name.toLowerCase().includes(activeSearchTerm) ||
+                           hasMatchingDescendants(child.path);
+                }
+                // For files, use the full filter check (extension filters + search term)
+                return isFileVisible(child, filterOptions);
+            });
+        };
+
+        /**
+         * Recursively processes entries into the flat virtual node list.
+         * When search is active: auto-expands loaded dirs and hides empty non-matching dirs.
+         */
         const processEntries = (entries: FileEntry[], level: number) => {
-            // Filter first
-            // Note: We use the centralized filter logic
             const visibleEntries = entries.filter(e => isFileVisible(e, filterOptions));
 
             for (const entry of visibleEntries) {
-                const expanded = expandedPaths.has(entry.path);
+                // When search is active, hide directories with no matching name or descendants
+                if (isSearchActive && entry.isDirectory) {
+                    const dirNameMatches = entry.name.toLowerCase().includes(activeSearchTerm);
+                    if (!dirNameMatches && !hasMatchingDescendants(entry.path)) {
+                        continue;
+                    }
+                }
+
+                // When search is active, auto-expand all loaded directories to reveal matches
+                const isExpanded = isSearchActive
+                    ? (entry.isDirectory && filesCache.has(entry.path))
+                    : expandedPaths.has(entry.path);
                 const loading = loadingPaths.has(entry.path);
-                const hasLoaded = filesCache.has(entry.path); // If it's in cache, we've loaded it.
+                const hasLoaded = filesCache.has(entry.path);
 
                 nodes.push({
                     entry,
                     level,
-                    expanded,
+                    expanded: isExpanded,
                     loading,
                     hasLoaded,
                     index: nodes.length
                 });
 
-                if (expanded && entry.isDirectory) {
+                if (isExpanded && entry.isDirectory) {
                     const children = filesCache.get(entry.path);
                     if (children) {
                         processEntries(children, level + 1);
-                    } else if (!loading) {
-                        // Expanded but no children and not loading? 
-                        // Means we might have cleared cache or initial load failed/pending
-                        // Or it's currently being fetched (handled by loading check usually).
-                        // If it's truly missing, we might show nothing or loading.
-                        // But toggleExpand sets loading BEFORE async fetch.
                     }
                 }
             }

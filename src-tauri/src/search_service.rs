@@ -1,11 +1,9 @@
-use tauri::{AppHandle, Manager, Emitter};
+use tauri::{AppHandle, Emitter};
 use serde::{Serialize, Deserialize};
 use ignore::WalkBuilder;
 use regex::RegexBuilder;
 use std::fs;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 use std::collections::HashMap;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -25,9 +23,11 @@ pub struct SearchMatch {
     pub content: String,
     pub match_index: usize,
     pub length: usize,
-    // Add UTF-16 fields for JS compatibility
+    // UTF-16 fields for correct highlighting in JS strings
     pub match_index_utf16: usize,
     pub length_utf16: usize,
+    // Source type: "content", "filename", or "folder"
+    pub source: String,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -150,32 +150,71 @@ fn run_search(
     for result in walker {
         match result {
             Ok(entry) => {
-                if !entry.file_type().map(|ft| ft.is_file()).unwrap_or(false) {
-                    continue; 
-                }
+                let is_file = entry.file_type().map(|ft| ft.is_file()).unwrap_or(false);
+                let is_dir = entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
 
                 let path = entry.path();
                 let path_str = path.to_string_lossy().to_string();
 
+                // ── Handle directory entries: search folder names ──
+                if is_dir {
+                    if target == "folder" || target == "all" {
+                        // Skip the root path itself to avoid a self-match
+                        if path_str != root_path {
+                            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                                let mut dir_matches = Vec::new();
+                                for mat in re.find_iter(name) {
+                                    let pre_match = &name[..mat.start()];
+                                    let match_str = &name[mat.start()..mat.end()];
+
+                                    dir_matches.push(SearchMatch {
+                                        line: 0,
+                                        content: name.to_string(),
+                                        match_index: mat.start(),
+                                        length: mat.end() - mat.start(),
+                                        match_index_utf16: pre_match.encode_utf16().count(),
+                                        length_utf16: match_str.encode_utf16().count(),
+                                        source: "folder".to_string(),
+                                    });
+                                }
+                                if !dir_matches.is_empty() {
+                                    match_count += dir_matches.len();
+                                    batch.push(FileResult {
+                                        path: path_str.clone(),
+                                        matches: dir_matches,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                    // Continue to let the walker descend into subdirectories
+                    continue;
+                }
+
+                // Skip non-file, non-directory entries (e.g. symlinks)
+                if !is_file {
+                    continue;
+                }
+
+                // ── Handle file entries ──
                 let mut file_matches = Vec::new();
-                
+
                 // Filename Search
                 if target == "filename" || target == "all" {
                     if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
                          if re.is_match(name) {
-                             // Find match indices
                              for mat in re.find_iter(name) {
-                                  // UTF-16 calculation for filename
                                   let pre_match = &name[..mat.start()];
                                   let match_str = &name[mat.start()..mat.end()];
-                                  
+
                                   file_matches.push(SearchMatch {
-                                      line: 0, 
+                                      line: 0,
                                       content: name.to_string(),
                                       match_index: mat.start(),
                                       length: mat.end() - mat.start(),
                                       match_index_utf16: pre_match.encode_utf16().count(),
                                       length_utf16: match_str.encode_utf16().count(),
+                                      source: "filename".to_string(),
                                   });
                              }
                          }
@@ -184,25 +223,21 @@ fn run_search(
 
                 // Content Search
                 if target == "content" || target == "all" {
-                    // Skip binary files heuristic or trust ignore crate
-                    // We'll try to read string.
-                    
                     if let Ok(content) = fs::read_to_string(path) {
                         for (i, line) in content.lines().enumerate() {
                             if re.is_match(line) {
                                 for mat in re.find_iter(line) {
-                                     // IMPORTANT: No trimming here to preserve indices
-                                     // Calculate UTF-16 indices for JS side
                                      let pre_match = &line[..mat.start()];
                                      let match_str = &line[mat.start()..mat.end()];
-                                     
+
                                      file_matches.push(SearchMatch {
                                          line: i + 1,
-                                         content: line.to_string(), // Full line
+                                         content: line.to_string(),
                                          match_index: mat.start(),
                                          length: mat.end() - mat.start(),
                                          match_index_utf16: pre_match.encode_utf16().count(),
                                          length_utf16: match_str.encode_utf16().count(),
+                                         source: "content".to_string(),
                                      });
                                 }
                             }
@@ -217,20 +252,20 @@ fn run_search(
                         matches: file_matches,
                     });
                 }
-                
+
                 scanned_count += 1;
 
-                // Emit batch
+                // Emit batch when it reaches the threshold
                 if batch.len() >= batch_size {
                     let _ = app.emit(&format!("search-results-{}", search_id), &batch);
                     batch.clear();
-                    
+
                      let _ = app.emit(&format!("search-progress-{}", search_id), SearchProgress {
                         scanned: scanned_count,
                         found: match_count,
                     });
                 }
-                
+
                 // Throttle progress updates
                 if scanned_count % 100 == 0 {
                     let _ = app.emit(&format!("search-progress-{}", search_id), SearchProgress {

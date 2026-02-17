@@ -1,0 +1,14 @@
+/**
+ * File: src/features/quick-tools/pages/AudioTranscription.css
+ *
+ * Styles for Audio Transcription page.
+ * Dynamic widths for level and progress bars use CSS variables set from JS (no inline style attribute).
+ */
+
+.audio-transcription-level-fill {
+  width: var(--audio-transcription-level-width, 0);
+}
+
+.audio-transcription-progress-fill {
+  width: var(--audio-transcription-progress-width, 0);
+}

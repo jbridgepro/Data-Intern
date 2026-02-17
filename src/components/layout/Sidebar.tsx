@@ -5,6 +5,7 @@
  * - Search/filter functionality
  * - Keyboard shortcuts display
  * - Grouped navigation sections
+ * - Favorites section with drag-to-reorder support
  * - Recent items tracking
  * - Improved animations and UX
  * - Minimized/Collapsed mode support
@@ -36,9 +37,11 @@ import {
   Pin,
   PinOff,
   Zap,
+  Star,
+  GripVertical,
 } from "lucide-react";
 import { cn } from "../../lib/utils";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, Reorder, useDragControls } from "framer-motion";
 import { Badge } from "../ui/badge";
 import { Input } from "@/components/ui/input";
 import { useAgentManager } from "../../features/agents/hooks/useAgentManager";
@@ -51,6 +54,7 @@ import {
 } from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
 import { usePersistentState } from "@/hooks/usePersistentState";
+import { useFavorites } from "@/contexts/FavoritesContext";
 
 interface SidebarProps {
   activeTab: string;
@@ -104,6 +108,108 @@ const NAV_SECTIONS = {
   },
 };
 
+/**
+ * FavoriteDraggableItem: A single favorite item that can be dragged to reorder.
+ * Uses Framer Motion's Reorder.Item for smooth drag-and-drop.
+ */
+interface FavoriteDraggableItemProps {
+  item: NavItem;
+  isActive: boolean;
+  onNavigate: () => void;
+  onRemoveFavorite: () => void;
+  isMinimized: boolean;
+  isHovered: boolean;
+}
+
+const FavoriteDraggableItem = ({
+  item,
+  isActive,
+  onNavigate,
+  onRemoveFavorite,
+  isMinimized,
+  isHovered,
+}: FavoriteDraggableItemProps) => {
+  const Icon = item.icon;
+  const dragControls = useDragControls();
+
+  return (
+    <Reorder.Item
+      value={item.id}
+      dragListener={false}
+      dragControls={dragControls}
+      className={cn(
+        "relative flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors group cursor-default select-none",
+        isActive
+          ? "text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20"
+          : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100/50 dark:hover:bg-slate-800/50",
+      )}
+      whileDrag={{
+        scale: 1.02,
+        boxShadow: "0 4px 16px rgba(0,0,0,0.12)",
+        zIndex: 50,
+      }}
+    >
+      {/* Drag handle - visible on hover */}
+      <span
+        onPointerDown={(e) => dragControls.start(e)}
+        className="cursor-grab active:cursor-grabbing p-0.5 rounded opacity-0 group-hover:opacity-60 hover:opacity-100! transition-opacity shrink-0 text-slate-400 dark:text-slate-500 touch-none"
+        title="Drag to reorder"
+        aria-label="Drag to reorder"
+      >
+        <GripVertical className="h-3.5 w-3.5" />
+      </span>
+
+      {/* Clickable navigation area */}
+      <button
+        onClick={onNavigate}
+        className="flex items-center gap-3 flex-1 min-w-0 text-left"
+        aria-label={item.label}
+      >
+        {isActive && (
+          <motion.div
+            layoutId="activeTabFavSidebar"
+            className="absolute left-0 w-1 h-6 bg-blue-600 dark:bg-blue-400 rounded-r-full"
+            initial={false}
+          />
+        )}
+
+        <Icon
+          className={cn(
+            "h-4.5 w-4.5 transition-colors shrink-0",
+            isActive
+              ? "text-blue-600 dark:text-blue-400"
+              : "text-slate-500 dark:text-slate-400 group-hover:text-slate-700 dark:group-hover:text-slate-200",
+          )}
+        />
+
+        <span className="truncate">{item.label}</span>
+      </button>
+
+      {/* Remove from favorites button */}
+      <span
+        role="button"
+        tabIndex={0}
+        onClick={(e) => {
+          e.stopPropagation();
+          onRemoveFavorite();
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            e.stopPropagation();
+            onRemoveFavorite();
+          }
+        }}
+        className="p-0.5 rounded text-amber-400 dark:text-amber-300 opacity-80 hover:opacity-100 transition-opacity shrink-0"
+        title="Remove from Favorites"
+        aria-label="Remove from Favorites"
+      >
+        <Star className="h-3.5 w-3.5" fill="currentColor" />
+      </span>
+    </Reorder.Item>
+  );
+};
+
 export const Sidebar = ({
   activeTab,
   setActiveTab,
@@ -121,16 +227,27 @@ export const Sidebar = ({
   // Search state
   const [searchQuery, setSearchQuery] = useState("");
 
-  // Persist expanded sections to localStorage
+  // Persist expanded sections to localStorage (includes "favorites" key)
   const [expandedSectionsArray, setExpandedSectionsArray] = usePersistentState<string[]>(
     "sidebar-expanded-sections",
-    Object.keys(NAV_SECTIONS).filter(
-      (key) => NAV_SECTIONS[key as keyof typeof NAV_SECTIONS].defaultExpanded,
-    ),
+    [
+      ...Object.keys(NAV_SECTIONS).filter(
+        (key) => NAV_SECTIONS[key as keyof typeof NAV_SECTIONS].defaultExpanded,
+      ),
+      "favorites", // Favorites section expanded by default
+    ],
   );
 
   // Convert array to Set for easier manipulation
   const expandedSections = useMemo(() => new Set(expandedSectionsArray), [expandedSectionsArray]);
+
+  // Favorites: shared state from FavoritesContext (persisted to localStorage)
+  const {
+    favoriteItemIds,
+    setFavoriteItemIds,
+    toggleFavorite,
+    isFavorite: isFavoriteCheck,
+  } = useFavorites();
 
   const [recentItems, setRecentItems] = useState<string[]>(() => {
     const saved = localStorage.getItem("sidebar-recent-items");
@@ -254,6 +371,26 @@ export const Sidebar = ({
       })),
     [],
   );
+
+  // All navigable items combined (used for favorites look-ups)
+  const allNavItems = useMemo(
+    () => [...navItems, ...quickToolsNavItems],
+    [quickToolsNavItems],
+  );
+
+  // Resolve favorite IDs to full NavItem objects (preserves user-defined order)
+  const favoriteNavItems = useMemo(() => {
+    return favoriteItemIds
+      .map((id) => allNavItems.find((item) => item.id === id))
+      .filter((item): item is NavItem => item !== undefined);
+  }, [favoriteItemIds, allNavItems]);
+
+  // Whether to show the Favorites section
+  const shouldShowFavorites = useMemo(() => {
+    // Don't show during search
+    if (searchQuery.trim()) return false;
+    return favoriteNavItems.length > 0;
+  }, [searchQuery, favoriteNavItems.length]);
 
   // Track recent items when active tab changes
   useEffect(() => {
@@ -406,9 +543,20 @@ export const Sidebar = ({
     setActiveTab(item.id);
   };
 
-  const renderNavItem = (item: NavItem, showTooltip: boolean) => {
+  /**
+   * Render a single navigation item with optional tooltip and favorite toggle.
+   * @param item - The navigation item to render
+   * @param showTooltip - Whether to wrap in a tooltip (used in minimized mode)
+   * @param hideFavoriteStar - If true, the star toggle is hidden (e.g. inside Favorites section)
+   */
+  const renderNavItem = (
+    item: NavItem,
+    showTooltip: boolean,
+    hideFavoriteStar = false,
+  ) => {
     const Icon = item.icon;
     const isActive = !item.isQuickTool && activeTab === item.id;
+    const isFavorited = isFavoriteCheck(item.id);
 
     const content = (
       <button
@@ -441,7 +589,7 @@ export const Sidebar = ({
 
         <Icon
           className={cn(
-            "h-5 w-5 transition-colors flex-shrink-0",
+            "h-5 w-5 transition-colors shrink-0",
             isActive
               ? "text-blue-600 dark:text-blue-400"
               : "text-slate-500 dark:text-slate-400 group-hover:text-slate-700 dark:group-hover:text-slate-200",
@@ -449,16 +597,52 @@ export const Sidebar = ({
         />
 
         {isExpanded && (
-          <div className="flex-1 text-left truncate flex items-center justify-between">
+          <div className="flex-1 text-left truncate flex items-center justify-between gap-1">
             <span className="truncate">
               {searchQuery ? highlightMatch(item.label, searchQuery) : item.label}
             </span>
-            {item.shortcut && (
-              <span className="text-[10px] text-slate-400 opacity-0 group-hover:opacity-100 transition-opacity font-mono bg-slate-100 dark:bg-slate-800 px-1 rounded border dark:border-slate-700">
-                {modifierSymbol}
-                {item.shortcut}
-              </span>
-            )}
+
+            <div className="flex items-center gap-0.5 shrink-0">
+              {/* Favorite star toggle - visible on hover or when favorited */}
+              {!hideFavoriteStar && (
+                <span
+                  role="button"
+                  tabIndex={0}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleFavorite(item.id);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      toggleFavorite(item.id);
+                    }
+                  }}
+                  className={cn(
+                    "p-0.5 rounded transition-all",
+                    isFavorited
+                      ? "text-amber-400 dark:text-amber-300 opacity-100"
+                      : "text-slate-400 opacity-0 group-hover:opacity-60 hover:opacity-100!",
+                  )}
+                  title={isFavorited ? "Remove from Favorites" : "Add to Favorites"}
+                  aria-label={isFavorited ? "Remove from Favorites" : "Add to Favorites"}
+                >
+                  <Star
+                    className="h-3.5 w-3.5"
+                    fill={isFavorited ? "currentColor" : "none"}
+                  />
+                </span>
+              )}
+
+              {/* Keyboard shortcut badge */}
+              {item.shortcut && (
+                <span className="text-[10px] text-slate-400 opacity-0 group-hover:opacity-100 transition-opacity font-mono bg-slate-100 dark:bg-slate-800 px-1 rounded border dark:border-slate-700">
+                  {modifierSymbol}
+                  {item.shortcut}
+                </span>
+              )}
+            </div>
           </div>
         )}
       </button>
@@ -650,6 +834,118 @@ export const Sidebar = ({
 
         {/* Navigation Content - Scrollable */}
         <div className="flex-1 overflow-y-auto overflow-x-hidden w-full px-2 py-2 scrollbar-none hover:scrollbar-thin">
+
+          {/* ===== Favorites Section (Expanded Mode) - Drag-to-Reorder ===== */}
+          {isExpanded && shouldShowFavorites && (
+            <div className="mb-4 space-y-1">
+              <button
+                onClick={() => toggleSection("favorites")}
+                className="w-full flex items-center gap-2 px-3 py-1.5 text-[10px] font-bold text-amber-500 dark:text-amber-400 uppercase tracking-widest hover:text-amber-600 dark:hover:text-amber-300 transition-colors group"
+              >
+                {expandedSections.has("favorites") ? (
+                  <ChevronDown className="h-2.5 w-2.5 transition-transform opacity-70" />
+                ) : (
+                  <ChevronRight className="h-2.5 w-2.5 transition-transform opacity-70" />
+                )}
+                <Star className="h-3 w-3" fill="currentColor" />
+                <span className="flex-1 text-left">Favorites</span>
+                <span className="text-[10px] opacity-40">
+                  {favoriteNavItems.length}
+                </span>
+              </button>
+
+              <AnimatePresence>
+                {expandedSections.has("favorites") && (
+                  <motion.div
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: "auto", opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    transition={{ duration: 0.2 }}
+                    className="overflow-hidden"
+                  >
+                    {/* Reorderable favorites list */}
+                    <Reorder.Group
+                      axis="y"
+                      values={favoriteItemIds}
+                      onReorder={setFavoriteItemIds}
+                      className="space-y-0.5 mt-1"
+                    >
+                      {favoriteNavItems.map((item) => (
+                        <FavoriteDraggableItem
+                          key={item.id}
+                          item={item}
+                          isActive={!item.isQuickTool && activeTab === item.id}
+                          onNavigate={() => handleNavItemClick(item)}
+                          onRemoveFavorite={() => toggleFavorite(item.id)}
+                          isMinimized={isMinimized}
+                          isHovered={isHovered}
+                        />
+                      ))}
+                    </Reorder.Group>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              <div className="h-px bg-slate-200/50 dark:bg-slate-800/50 my-2 mx-2" />
+            </div>
+          )}
+
+          {/* ===== Favorites Section (Minimized/Icon Mode) ===== */}
+          {!isExpanded && favoriteNavItems.length > 0 && (
+            <div className="space-y-2 mb-3 pb-3 border-b border-amber-200/30 dark:border-amber-800/30">
+              {favoriteNavItems.map((item) => {
+                const Icon = item.icon;
+                const isActive = !item.isQuickTool && activeTab === item.id;
+
+                return (
+                  <Tooltip key={`fav-min-${item.id}`} delayDuration={0}>
+                    <TooltipTrigger asChild>
+                      <button
+                        onClick={() => handleNavItemClick(item)}
+                        className={cn(
+                          "relative flex items-center justify-center px-0 py-3 rounded-lg text-sm font-medium transition-all duration-200 w-full",
+                          isActive
+                            ? "text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20"
+                            : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100/50 dark:hover:bg-slate-800/50",
+                        )}
+                        aria-label={item.label}
+                      >
+                        <Icon
+                          className={cn(
+                            "h-5 w-5 transition-colors shrink-0",
+                            isActive
+                              ? "text-blue-600 dark:text-blue-400"
+                              : "text-slate-500 dark:text-slate-400",
+                          )}
+                        />
+                        {/* Small star indicator in minimized mode */}
+                        <Star
+                          className="absolute top-1.5 right-1.5 h-2 w-2 text-amber-400"
+                          fill="currentColor"
+                        />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent
+                      side="right"
+                      sideOffset={10}
+                      className="flex flex-col gap-0.5"
+                    >
+                      <p className="font-medium flex items-center gap-1">
+                        <Star className="h-3 w-3 text-amber-400" fill="currentColor" />
+                        {item.label}
+                      </p>
+                      {item.description && (
+                        <p className="text-[10px] text-slate-400 max-w-[150px]">
+                          {item.description}
+                        </p>
+                      )}
+                    </TooltipContent>
+                  </Tooltip>
+                );
+              })}
+            </div>
+          )}
+
           {/* Recent Items (Expanded Only) - Smart display */}
           {isExpanded && shouldShowRecent && (
             <div className="mb-4 space-y-1">
@@ -780,7 +1076,7 @@ export const Sidebar = ({
                     : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 border-transparent",
                 )}
               >
-                <div className="relative flex-shrink-0">
+                <div className="relative shrink-0">
                   <Bot className="h-4 w-4" />
                   {hasRunningAgents && (
                     <span className="absolute -top-1 -right-1 h-2 w-2 bg-green-500 rounded-full" />

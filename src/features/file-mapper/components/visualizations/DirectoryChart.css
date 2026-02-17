@@ -1,0 +1,12 @@
+/**
+ * File: src/features/file-mapper/components/visualizations/DirectoryChart.css
+ *
+ * Styles for Directory Chart visualization.
+ * Context menu position is driven by CSS variables set from JS (no inline style attribute).
+ */
+
+.directory-chart-context-menu {
+  position: fixed;
+  top: var(--directory-chart-menu-top, 0);
+  left: var(--directory-chart-menu-left, 0);
+}

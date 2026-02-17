@@ -13,13 +13,16 @@ import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { Separator } from "../ui/separator";
 import { ScrollArea } from "../ui/scroll-area";
-import { 
-    Upload, 
-    FileSpreadsheet, 
-    ArrowUp, 
-    ArrowDown, 
+import {
+    Upload,
+    FileSpreadsheet,
+    ArrowUp,
+    ArrowDown,
     Plus,
-    Trash
+    Trash,
+    AlertCircle,
+    CheckCircle2,
+    Info
 } from "lucide-react";
 import {
   Select,
@@ -53,6 +56,8 @@ export const CsvConfigForm = <T extends CsvConfig>({ config, setConfig, isCreati
     const [selectedColumnToAdd, setSelectedColumnToAdd] = useState<string>("");
     const [rawContent, setRawContent] = useState<string>("");
     const [inputDelimiter, setInputDelimiter] = useState<string>(",");
+    const [missingColumns, setMissingColumns] = useState<string[]>([]);
+    const [mappedColumns, setMappedColumns] = useState<string[]>([]);
     
     // Simple CSV Parser
     const parseCSV = (text: string, delimiter: string = ","): Record<string, string>[] => {
@@ -112,15 +117,48 @@ export const CsvConfigForm = <T extends CsvConfig>({ config, setConfig, isCreati
          const data = parseCSV(content, delimiter);
          if (data.length > 0) {
              const headers = Object.keys(data[0]);
-             
-             setConfig({
-                 ...config,
-                 csvRows: data,
-                 csvHeaders: headers,
-                 csvDelimiter: config.csvDelimiter || "-", 
-                 csvColumnOrder: [], 
-                 csvColumnConfig: {}
-             });
+
+             // Check if there's an existing preset configuration
+             const existingColumnOrder = config.csvColumnOrder || [];
+             const existingColumnConfig = config.csvColumnConfig || {};
+
+             // If preset has column configuration, intelligently merge
+             if (existingColumnOrder.length > 0) {
+                 // Check which preset columns exist in the new CSV
+                 const availableColumns = existingColumnOrder.filter(col => headers.includes(col));
+                 const missing = existingColumnOrder.filter(col => !headers.includes(col));
+
+                 // Preserve configuration for available columns
+                 const mergedConfig: Record<string, { enabled: boolean; prefix: string; suffix: string }> = {};
+                 availableColumns.forEach(col => {
+                     mergedConfig[col] = existingColumnConfig[col] || { enabled: true, prefix: "", suffix: "" };
+                 });
+
+                 setMissingColumns(missing);
+                 setMappedColumns(availableColumns);
+
+                 setConfig({
+                     ...config,
+                     csvRows: data,
+                     csvHeaders: headers,
+                     csvDelimiter: config.csvDelimiter || "-",
+                     csvColumnOrder: availableColumns,
+                     csvColumnConfig: mergedConfig
+                 });
+             } else {
+                 // No preset config, start fresh
+                 setMissingColumns([]);
+                 setMappedColumns([]);
+
+                 setConfig({
+                     ...config,
+                     csvRows: data,
+                     csvHeaders: headers,
+                     csvDelimiter: config.csvDelimiter || "-",
+                     csvColumnOrder: [],
+                     csvColumnConfig: {}
+                 });
+             }
          }
     };
 
@@ -222,7 +260,14 @@ export const CsvConfigForm = <T extends CsvConfig>({ config, setConfig, isCreati
                                 </span>
                             </div>
                         ) : (
-                            "No CSV file loaded"
+                            <div className="text-center">
+                                <div>No CSV file loaded</div>
+                                {config.csvColumnOrder && config.csvColumnOrder.length > 0 && (
+                                    <div className="text-xs text-blue-600 dark:text-blue-400 mt-1">
+                                        Preset expects: {config.csvColumnOrder.join(", ")}
+                                    </div>
+                                )}
+                            </div>
                         )}
                     </div>
                     <div className="flex flex-col gap-2">
@@ -255,7 +300,70 @@ export const CsvConfigForm = <T extends CsvConfig>({ config, setConfig, isCreati
             {config.csvRows && config.csvRows.length > 0 && (
                 <>
                      <Separator />
-                     
+
+                     {/* Preset Mapping Status */}
+                     {(mappedColumns.length > 0 || missingColumns.length > 0) && (
+                        <motion.div
+                            initial={{ opacity: 0, y: -10 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            className="space-y-2"
+                        >
+                            {mappedColumns.length > 0 && (
+                                <div className="flex items-start gap-2 p-3 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg text-xs">
+                                    <CheckCircle2 className="h-4 w-4 text-green-600 dark:text-green-400 mt-0.5 shrink-0" />
+                                    <div className="flex-1">
+                                        <div className="font-medium text-green-700 dark:text-green-300 mb-1">
+                                            Preset Columns Mapped ({mappedColumns.length})
+                                        </div>
+                                        <div className="text-green-600 dark:text-green-400 flex flex-wrap gap-1">
+                                            {mappedColumns.map((col, i) => (
+                                                <span key={col} className="inline-flex items-center gap-1">
+                                                    <code className="px-1.5 py-0.5 bg-green-100 dark:bg-green-900/40 rounded text-[10px]">
+                                                        {col}
+                                                    </code>
+                                                    {i < mappedColumns.length - 1 && <span>,</span>}
+                                                </span>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {missingColumns.length > 0 && (
+                                <div className="flex items-start gap-2 p-3 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg text-xs">
+                                    <AlertCircle className="h-4 w-4 text-yellow-600 dark:text-yellow-400 mt-0.5 shrink-0" />
+                                    <div className="flex-1">
+                                        <div className="font-medium text-yellow-700 dark:text-yellow-300 mb-1">
+                                            Missing Preset Columns ({missingColumns.length})
+                                        </div>
+                                        <div className="text-yellow-600 dark:text-yellow-400 mb-2">
+                                            These columns from the preset were not found in the uploaded CSV:
+                                        </div>
+                                        <div className="flex flex-wrap gap-1">
+                                            {missingColumns.map((col, i) => (
+                                                <span key={col} className="inline-flex items-center gap-1">
+                                                    <code className="px-1.5 py-0.5 bg-yellow-100 dark:bg-yellow-900/40 rounded text-[10px]">
+                                                        {col}
+                                                    </code>
+                                                    {i < missingColumns.length - 1 && <span>,</span>}
+                                                </span>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {mappedColumns.length === 0 && missingColumns.length > 0 && (
+                                <div className="flex items-start gap-2 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg text-xs">
+                                    <Info className="h-4 w-4 text-blue-600 dark:text-blue-400 mt-0.5 shrink-0" />
+                                    <div className="text-blue-600 dark:text-blue-400">
+                                        None of the preset columns match the uploaded CSV. Please select columns manually or upload a compatible CSV file.
+                                    </div>
+                                </div>
+                            )}
+                        </motion.div>
+                     )}
+
                      {/* Column Configuration */}
                      <div className="space-y-4">
                         <div className="flex items-center justify-between">

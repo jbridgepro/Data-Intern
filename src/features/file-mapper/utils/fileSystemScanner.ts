@@ -779,3 +779,61 @@ export function filterTree(node: FileSystemNode, searchTerm: string): FileSystem
 
   return null;
 }
+
+/**
+ * Extract file extensions from a tree (for filter badges).
+ * Returns array sorted by frequency (most common first); uses "{no-ext}" for files without an extension.
+ */
+export function getExtensionsFromTree(node: FileSystemNode): string[] {
+  const counts = new Map<string, number>();
+  const collect = (n: FileSystemNode) => {
+    if (!n.isDirectory) {
+      const ext = n.extension ? n.extension.toLowerCase() : "{no-ext}";
+      counts.set(ext, (counts.get(ext) ?? 0) + 1);
+    }
+    n.children?.forEach(collect);
+  };
+  collect(node);
+  return Array.from(counts.entries())
+    .sort((a, b) => {
+      const byCount = b[1] - a[1];
+      if (byCount !== 0) return byCount;
+      return a[0].localeCompare(b[0]);
+    })
+    .map(([ext]) => ext);
+}
+
+/**
+ * Filter the tree by file extensions (include or exclude mode).
+ * Include mode: only files with selected extensions (and their parent folders) are shown.
+ * Exclude mode: files with selected extensions are hidden; empty folders are pruned.
+ */
+export function filterTreeByExtensions(
+  node: FileSystemNode,
+  extensions: string[],
+  mode: "include" | "exclude"
+): FileSystemNode | null {
+  if (!extensions.length) return node;
+
+  const extSet = new Set(extensions.map((e) => e.toLowerCase()));
+
+  const fileMatches = (n: FileSystemNode): boolean => {
+    if (n.isDirectory) return true;
+    const ext = n.extension ? n.extension.toLowerCase() : "{no-ext}";
+    return extSet.has(ext);
+  };
+
+  if (!node.isDirectory) {
+    const matches = mode === "include" ? fileMatches(node) : !fileMatches(node);
+    return matches ? { ...node } : null;
+  }
+
+  let filteredChildren: FileSystemNode[] = [];
+  if (node.children) {
+    filteredChildren = node.children
+      .map((child) => filterTreeByExtensions(child, extensions, mode))
+      .filter((child): child is FileSystemNode => child !== null);
+  }
+
+  return filteredChildren.length > 0 ? { ...node, children: filteredChildren } : null;
+}

@@ -164,6 +164,7 @@ export const PanelConfiguration = ({
           title="Panel Configuration"
           subtitle="Customize your workspace layout and panel visibility"
           info={panelConfigurationInfo}
+          toolId="panel-config"
         />
       </div>
 

@@ -1,6 +1,7 @@
 /**
  * File path: src/features/quick-tools/pages/SqlFormatter.tsx
- * Frontend: SQL Formatter — build, generate, and format SQL with split view and collapsible sections.
+ * Frontend: SQL Formatter — visual query builder, natural-language-to-SQL,
+ * and raw SQL beautifier. Compact two-column layout with inline block editors.
  */
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -9,36 +10,26 @@ import {
   Trash2,
   Copy,
   CheckCircle,
-  Layers,
   Sparkles,
   GripVertical,
   RefreshCw,
-  Search,
   Table2,
   Columns3,
-  Eye,
-  EyeOff,
   Blocks,
   Code2,
   Filter,
   GitMerge,
-  ListOrdered,
   Hash,
   Braces,
   Wand2,
-  Zap,
   Plus,
   X,
   ArrowUpDown,
-  Loader2,
-  Terminal,
+  ChevronDown,
+  ChevronRight,
+  Mic,
 } from "lucide-react";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -51,11 +42,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
 import {
   fetchDatabaseSchema,
@@ -65,6 +51,10 @@ import {
 } from "@/features/sql-export-wizard/utils/sqlAiService";
 import { getConnections } from "@/features/sql-export-wizard/utils/storage";
 import type { DatabaseConnection } from "@/features/sql-export-wizard/types";
+
+/* ------------------------------------------------------------------ */
+/*  Types                                                              */
+/* ------------------------------------------------------------------ */
 
 type SqlDialect = "postgresql" | "mysql" | "sqlserver" | "sqlite";
 
@@ -108,14 +98,7 @@ type ValidationIssue = {
   field?: keyof QueryBlocks | "nl";
 };
 
-type BlockId =
-  | "select"
-  | "from"
-  | "scope"
-  | "join"
-  | "where"
-  | "group"
-  | "order";
+type BlockId = "select" | "from" | "join" | "where" | "group" | "order";
 
 type RowListId = "joins" | "where" | "orderBy";
 
@@ -123,6 +106,10 @@ type RowDragTarget = {
   list: RowListId;
   id: string;
 } | null;
+
+/* ------------------------------------------------------------------ */
+/*  Constants                                                          */
+/* ------------------------------------------------------------------ */
 
 const DIALECT_LABELS: Record<SqlDialect, string> = {
   postgresql: "PostgreSQL",
@@ -143,13 +130,72 @@ const DEFAULT_BLOCKS: QueryBlocks = {
   limit: "",
 };
 
+/** Block label and styling config */
+const BLOCK_CONFIG: Record<
+  BlockId,
+  {
+    label: string;
+    icon: React.ReactNode;
+    color: string;
+    border: string;
+    bg: string;
+  }
+> = {
+  select: {
+    label: "SELECT",
+    icon: <Columns3 className="h-3.5 w-3.5" />,
+    color: "text-violet-600 dark:text-violet-400",
+    border: "border-violet-200 dark:border-violet-800/60",
+    bg: "bg-violet-50/60 dark:bg-violet-900/10",
+  },
+  from: {
+    label: "FROM",
+    icon: <Table2 className="h-3.5 w-3.5" />,
+    color: "text-blue-600 dark:text-blue-400",
+    border: "border-blue-200 dark:border-blue-800/60",
+    bg: "bg-blue-50/60 dark:bg-blue-900/10",
+  },
+  join: {
+    label: "JOIN",
+    icon: <GitMerge className="h-3.5 w-3.5" />,
+    color: "text-emerald-600 dark:text-emerald-400",
+    border: "border-emerald-200 dark:border-emerald-800/60",
+    bg: "bg-emerald-50/60 dark:bg-emerald-900/10",
+  },
+  where: {
+    label: "WHERE",
+    icon: <Filter className="h-3.5 w-3.5" />,
+    color: "text-amber-600 dark:text-amber-400",
+    border: "border-amber-200 dark:border-amber-800/60",
+    bg: "bg-amber-50/60 dark:bg-amber-900/10",
+  },
+  group: {
+    label: "GROUP BY",
+    icon: <Hash className="h-3.5 w-3.5" />,
+    color: "text-rose-600 dark:text-rose-400",
+    border: "border-rose-200 dark:border-rose-800/60",
+    bg: "bg-rose-50/60 dark:bg-rose-900/10",
+  },
+  order: {
+    label: "ORDER / LIMIT",
+    icon: <ArrowUpDown className="h-3.5 w-3.5" />,
+    color: "text-orange-600 dark:text-orange-400",
+    border: "border-orange-200 dark:border-orange-800/60",
+    bg: "bg-orange-50/60 dark:bg-orange-900/10",
+  },
+};
+
+/* ------------------------------------------------------------------ */
+/*  Helpers                                                            */
+/* ------------------------------------------------------------------ */
+
 const uniqueList = (items: string[]) =>
   Array.from(new Set(items.map((item) => item.trim()).filter(Boolean)));
 
 const sanitizeIdentifierList = (value: string) =>
   value
     .split(",")
-    .map((entry) => entry.trim())
+    .map((e) => e.trim())
     .filter(Boolean);
 
 const normalizeValueLiteral = (value: string) => {
@@ -161,6 +207,7 @@ const normalizeValueLiteral = (value: string) => {
   return `'${trimmed.replace(/'/g, "''")}'`;
 };
 
+/** Build SQL string from structured blocks with validation */
 const formatSql = (blocks: QueryBlocks, dialect: SqlDialect) => {
   const issues: ValidationIssue[] = [];
 
@@ -168,19 +215,17 @@ const formatSql = (blocks: QueryBlocks, dialect: SqlDialect) => {
     issues.push({
       id: "from-required",
       level: "error",
-      message: "FROM is required to generate a query.",
+      message: "FROM is required.",
       field: "from",
     });
   }
 
-  const selectFields = blocks.select.length
-    ? uniqueList(blocks.select)
-    : ["*"];
+  const selectFields = blocks.select.length ? uniqueList(blocks.select) : ["*"];
   if (blocks.select.length === 0) {
     issues.push({
       id: "select-empty",
       level: "warning",
-      message: "Select at least one column. Using * as fallback.",
+      message: "No columns selected — using *.",
       field: "select",
     });
   }
@@ -190,7 +235,7 @@ const formatSql = (blocks: QueryBlocks, dialect: SqlDialect) => {
       issues.push({
         id: `join-${join.id}`,
         level: "error",
-        message: "Each JOIN needs a table and an ON condition.",
+        message: "Each JOIN needs a table and ON condition.",
         field: "joins",
       });
     }
@@ -201,7 +246,7 @@ const formatSql = (blocks: QueryBlocks, dialect: SqlDialect) => {
       issues.push({
         id: `where-${condition.id}`,
         level: "warning",
-        message: "Complete each WHERE condition to include it.",
+        message: "Complete each WHERE condition.",
         field: "where",
       });
     }
@@ -212,7 +257,7 @@ const formatSql = (blocks: QueryBlocks, dialect: SqlDialect) => {
       issues.push({
         id: `order-${order.id}`,
         level: "warning",
-        message: "Order by entries need a column.",
+        message: "ORDER BY needs a column.",
         field: "orderBy",
       });
     }
@@ -222,7 +267,7 @@ const formatSql = (blocks: QueryBlocks, dialect: SqlDialect) => {
     issues.push({
       id: "limit-invalid",
       level: "error",
-      message: "Limit must be a whole number.",
+      message: "LIMIT must be a whole number.",
       field: "limit",
     });
   }
@@ -232,53 +277,39 @@ const formatSql = (blocks: QueryBlocks, dialect: SqlDialect) => {
     dialect === "sqlserver" && blocks.limit
       ? ` TOP (${blocks.limit.trim()})`
       : "";
-  const selectLine = `${selectKeyword}${topClause} ${selectFields.join(", ")}`;
+  const lines: string[] = [
+    `${selectKeyword}${topClause} ${selectFields.join(", ")}`,
+  ];
 
-  const lines: string[] = [selectLine];
-  if (blocks.from.trim()) {
-    lines.push(`FROM ${blocks.from.trim()}`);
-  }
+  if (blocks.from.trim()) lines.push(`FROM ${blocks.from.trim()}`);
 
-  const joinLines = blocks.joins
-    .filter((join) => join.table.trim() && join.on.trim())
-    .map(
-      (join) =>
-        `${join.type} JOIN ${join.table.trim()} ON ${join.on.trim()}`,
+  blocks.joins
+    .filter((j) => j.table.trim() && j.on.trim())
+    .forEach((j) =>
+      lines.push(`${j.type} JOIN ${j.table.trim()} ON ${j.on.trim()}`),
     );
-  lines.push(...joinLines);
 
-  const whereLines = blocks.where.filter(
-    (condition) => condition.field.trim() && condition.value.trim(),
+  const validWhere = blocks.where.filter(
+    (c) => c.field.trim() && c.value.trim(),
   );
-  if (whereLines.length) {
-    const clause = whereLines
-      .map((condition, index) => {
-        const valueLiteral = normalizeValueLiteral(condition.value);
-        const statement = `${condition.field.trim()} ${
-          condition.operator
-        } ${valueLiteral}`;
-        if (index === 0) return statement;
-        return `${condition.logic} ${statement}`;
+  if (validWhere.length) {
+    const clause = validWhere
+      .map((c, i) => {
+        const statement = `${c.field.trim()} ${c.operator} ${normalizeValueLiteral(c.value)}`;
+        return i === 0 ? statement : `${c.logic} ${statement}`;
       })
       .join(" ");
     lines.push(`WHERE ${clause}`);
   }
 
   const groupFields = uniqueList(blocks.groupBy);
-  if (groupFields.length) {
-    lines.push(`GROUP BY ${groupFields.join(", ")}`);
-  }
-
-  if (blocks.having.trim()) {
-    lines.push(`HAVING ${blocks.having.trim()}`);
-  }
+  if (groupFields.length) lines.push(`GROUP BY ${groupFields.join(", ")}`);
+  if (blocks.having.trim()) lines.push(`HAVING ${blocks.having.trim()}`);
 
   const orderFields = blocks.orderBy
-    .filter((order) => order.field.trim())
-    .map((order) => `${order.field.trim()} ${order.direction}`);
-  if (orderFields.length) {
-    lines.push(`ORDER BY ${orderFields.join(", ")}`);
-  }
+    .filter((o) => o.field.trim())
+    .map((o) => `${o.field.trim()} ${o.direction}`);
+  if (orderFields.length) lines.push(`ORDER BY ${orderFields.join(", ")}`);
 
   if (
     dialect !== "sqlserver" &&
@@ -288,84 +319,118 @@ const formatSql = (blocks: QueryBlocks, dialect: SqlDialect) => {
     lines.push(`LIMIT ${blocks.limit.trim()}`);
   }
 
-  const sql = `${lines.join("\n")};`;
-  return { sql, issues };
+  return { sql: `${lines.join("\n")};`, issues };
 };
 
+/** Convert blocks to plain-English description */
 const blocksToNaturalLanguage = (blocks: QueryBlocks) => {
   const parts: string[] = [];
-  if (blocks.distinct) parts.push("Select distinct");
-  else parts.push("Select");
+  parts.push(blocks.distinct ? "Select distinct" : "Select");
+  parts.push(blocks.select.length ? blocks.select.join(", ") : "all columns");
+  if (blocks.from.trim()) parts.push(`from ${blocks.from.trim()}`);
 
-  parts.push(
-    blocks.select.length ? blocks.select.join(", ") : "all columns",
-  );
-
-  if (blocks.from.trim()) {
-    parts.push(`from ${blocks.from.trim()}`);
-  }
-
-  blocks.joins.forEach((join) => {
-    if (join.table.trim() && join.on.trim()) {
+  blocks.joins.forEach((j) => {
+    if (j.table.trim() && j.on.trim())
       parts.push(
-        `${join.type.toLowerCase()} join ${join.table.trim()} on ${join.on.trim()}`,
+        `${j.type.toLowerCase()} join ${j.table.trim()} on ${j.on.trim()}`,
       );
-    }
   });
 
   const whereClauses = blocks.where.filter(
-    (condition) => condition.field.trim() && condition.value.trim(),
+    (c) => c.field.trim() && c.value.trim(),
   );
   if (whereClauses.length) {
     const clause = whereClauses
-      .map((condition, index) => {
-        const statement = `${condition.field.trim()} ${
-          condition.operator
-        } ${condition.value.trim()}`;
-        if (index === 0) return statement;
-        return `${condition.logic.toLowerCase()} ${statement}`;
+      .map((c, i) => {
+        const s = `${c.field.trim()} ${c.operator} ${c.value.trim()}`;
+        return i === 0 ? s : `${c.logic.toLowerCase()} ${s}`;
       })
       .join(" ");
     parts.push(`where ${clause}`);
   }
 
-  if (blocks.groupBy.length) {
+  if (blocks.groupBy.length)
     parts.push(`grouped by ${blocks.groupBy.join(", ")}`);
-  }
+  if (blocks.having.trim()) parts.push(`having ${blocks.having.trim()}`);
 
-  if (blocks.having.trim()) {
-    parts.push(`having ${blocks.having.trim()}`);
-  }
-
-  if (blocks.orderBy.length) {
-    const orderText = blocks.orderBy
-      .filter((order) => order.field.trim())
-      .map(
-        (order) =>
-          `${order.field.trim()} ${order.direction.toLowerCase()}`,
-      )
-      .join(", ");
-    if (orderText) parts.push(`ordered by ${orderText}`);
-  }
-
-  if (blocks.limit.trim()) {
-    parts.push(`limit ${blocks.limit.trim()}`);
-  }
+  const orderText = blocks.orderBy
+    .filter((o) => o.field.trim())
+    .map((o) => `${o.field.trim()} ${o.direction.toLowerCase()}`)
+    .join(", ");
+  if (orderText) parts.push(`ordered by ${orderText}`);
+  if (blocks.limit.trim()) parts.push(`limit ${blocks.limit.trim()}`);
 
   return `${parts.join(" ")}.`;
 };
 
-const parseNaturalLanguage = (input: string): {
-  blocks: QueryBlocks;
-  issues: ValidationIssue[];
-} => {
+/**
+ * Normalize natural-language where conditions to operator form so the main parser can handle them.
+ * E.g. "total greater than 100" -> "total > 100", "name contains john" -> "name like '%john%'".
+ */
+const normalizeWherePhrases = (whereClause: string): string => {
+  let w = whereClause;
+  const fieldOp = "([a-z0-9_.]+)";
+  w = w.replace(
+    new RegExp(
+      `\\b${fieldOp}\\s+(greater than|more than|above)\\s+([^\\s]+)`,
+      "gi",
+    ),
+    "$1 > $3",
+  );
+  w = w.replace(
+    new RegExp(`\\b${fieldOp}\\s+(less than|below)\\s+([^\\s]+)`, "gi"),
+    "$1 < $3",
+  );
+  w = w.replace(
+    new RegExp(`\\b${fieldOp}\\s+(?:is equal to|equals?)\\s+([^\\s]+)`, "gi"),
+    "$1 = $2",
+  );
+  w = w.replace(
+    new RegExp(`\\b${fieldOp}\\s+is\\s+([^\\s]+)(?=\\s|$|and|or)`, "gi"),
+    "$1 = $2",
+  );
+  w = w.replace(
+    new RegExp(
+      `\\b${fieldOp}\\s+(?:is not|doesn't equal|not equal to|unequal)\\s+([^\\s]+)`,
+      "gi",
+    ),
+    "$1 != $2",
+  );
+  w = w.replace(
+    new RegExp(`\\b${fieldOp}\\s+contains\\s+([^\\s]+)`, "gi"),
+    (_, f, v) => `${f} like '%${v}%'`,
+  );
+  w = w.replace(
+    new RegExp(`\\b${fieldOp}\\s+starts with\\s+([^\\s]+)`, "gi"),
+    (_, f, v) => `${f} like '${v}%'`,
+  );
+  w = w.replace(
+    new RegExp(`\\b${fieldOp}\\s+ends with\\s+([^\\s]+)`, "gi"),
+    (_, f, v) => `${f} like '%${v}'`,
+  );
+  return w;
+};
+
+/** Parse a plain-English description into structured blocks */
+const parseNaturalLanguage = (
+  input: string,
+): { blocks: QueryBlocks; issues: ValidationIssue[] } => {
   const issues: ValidationIssue[] = [];
   const text = input.trim();
-  if (!text) {
-    return { blocks: DEFAULT_BLOCKS, issues };
-  }
+  if (!text) return { blocks: DEFAULT_BLOCKS, issues };
 
-  const lower = text.toLowerCase();
+  let lower = text.toLowerCase();
+
+  // Normalize "top N" / "first N" / "last N" into "limit N" so the limit regex finds it
+  lower = lower.replace(
+    /\b(?:top|first)\s+(\d+)(?:\s+rows?)?(?=\s|\.|$)/gi,
+    " limit $1 ",
+  );
+  lower = lower.replace(
+    /\blast\s+(\d+)(?:\s+rows?)?(?=\s|\.|$)/gi,
+    " limit $1 ",
+  );
+
   const blocks: QueryBlocks = {
     distinct: lower.includes("distinct"),
     select: [],
@@ -383,47 +448,39 @@ const parseNaturalLanguage = (input: string): {
   );
   if (selectMatch?.[1]) {
     const raw = selectMatch[1];
-    if (raw.includes("count")) {
-      blocks.select.push("COUNT(*) AS count");
-    } else if (raw.includes("sum of")) {
-      const sumMatch = raw.match(/sum of\s+([a-z0-9_.]+)/);
-      if (sumMatch?.[1]) {
-        blocks.select.push(`SUM(${sumMatch[1]}) AS sum_${sumMatch[1]}`);
-      }
+    if (raw.includes("count")) blocks.select.push("COUNT(*) AS count");
+    else if (raw.includes("sum of")) {
+      const m = raw.match(/sum of\s+([a-z0-9_.]+)/);
+      if (m?.[1]) blocks.select.push(`SUM(${m[1]}) AS sum_${m[1]}`);
     } else if (raw.includes("average of") || raw.includes("avg of")) {
-      const avgMatch = raw.match(/(?:average of|avg of)\s+([a-z0-9_.]+)/);
-      if (avgMatch?.[1]) {
-        blocks.select.push(`AVG(${avgMatch[1]}) AS avg_${avgMatch[1]}`);
-      }
+      const m = raw.match(/(?:average of|avg of)\s+([a-z0-9_.]+)/);
+      if (m?.[1]) blocks.select.push(`AVG(${m[1]}) AS avg_${m[1]}`);
     } else {
       blocks.select = sanitizeIdentifierList(raw);
     }
   }
 
   const fromMatch = lower.match(/(?:from|in|using)\s+([a-z0-9_.]+)/);
-  if (fromMatch?.[1]) {
-    blocks.from = fromMatch[1];
-  } else {
+  if (fromMatch?.[1]) blocks.from = fromMatch[1];
+  else
     issues.push({
       id: "nl-missing-from",
       level: "error",
-      message: "Couldn't find a table name. Try adding “from <table>”.",
+      message: 'Couldn\'t find a table. Try "from <table>".',
       field: "nl",
     });
-  }
 
   const joinRegex =
     /(inner join|left join|right join|full join|join)\s+([a-z0-9_.]+)\s+on\s+([^,;.]+?)(?=\s+(?:where|group by|order by|limit|join|$))/gi;
   let joinMatch;
-  let joinIndex = 0;
+  let joinIdx = 0;
   while ((joinMatch = joinRegex.exec(lower)) !== null) {
-    const rawType = joinMatch[1];
     let type: JoinBlock["type"] = "INNER";
-    if (rawType.includes("left")) type = "LEFT";
-    if (rawType.includes("right")) type = "RIGHT";
-    if (rawType.includes("full")) type = "FULL";
+    if (joinMatch[1].includes("left")) type = "LEFT";
+    if (joinMatch[1].includes("right")) type = "RIGHT";
+    if (joinMatch[1].includes("full")) type = "FULL";
     blocks.joins.push({
-      id: `nl-join-${joinIndex++}`,
+      id: `nl-join-${joinIdx++}`,
       type,
       table: joinMatch[2],
       on: joinMatch[3],
@@ -434,29 +491,29 @@ const parseNaturalLanguage = (input: string): {
     /where\s+(.+?)(?=\s+(group by|order by|limit|$))/,
   );
   if (whereMatch?.[1]) {
-    const raw = whereMatch[1];
-    const pieces = raw.split(/\s+(and|or)\s+/);
+    const normalizedWhere = normalizeWherePhrases(whereMatch[1]);
+    const pieces = normalizedWhere.split(/\s+(and|or)\s+/);
     let logic: "AND" | "OR" = "AND";
-    let index = 0;
-    for (let i = 0; i < pieces.length; i++) {
-      const piece = pieces[i].trim();
-      if (piece === "and" || piece === "or") {
-        logic = piece.toUpperCase() as "AND" | "OR";
+    let idx = 0;
+    for (const piece of pieces) {
+      const p = piece.trim();
+      if (p === "and" || p === "or") {
+        logic = p.toUpperCase() as "AND" | "OR";
         continue;
       }
-      const operatorMatch = piece.match(
+      const opMatch = p.match(
         /([a-z0-9_.]+)\s*(=|!=|<=|>=|<|>|like|in|is)\s*(.+)/,
       );
-      if (operatorMatch) {
-        const operator =
-          operatorMatch[2].toUpperCase() === "IS"
+      if (opMatch) {
+        const op =
+          opMatch[2].toUpperCase() === "IS"
             ? "="
-            : (operatorMatch[2].toUpperCase() as WhereBlock["operator"]);
+            : (opMatch[2].toUpperCase() as WhereBlock["operator"]);
         blocks.where.push({
-          id: `nl-where-${index++}`,
-          field: operatorMatch[1],
-          operator,
-          value: operatorMatch[3].replace(/['"]/g, ""),
+          id: `nl-where-${idx++}`,
+          field: opMatch[1],
+          operator: op,
+          value: opMatch[3].replace(/['"]/g, ""),
           logic,
         });
       }
@@ -464,47 +521,34 @@ const parseNaturalLanguage = (input: string): {
   }
 
   const groupMatch = lower.match(/group by\s+(.+?)(?=\s+order by|\s+limit|$)/);
-  if (groupMatch?.[1]) {
-    blocks.groupBy = sanitizeIdentifierList(groupMatch[1]);
-  }
+  if (groupMatch?.[1]) blocks.groupBy = sanitizeIdentifierList(groupMatch[1]);
 
   const havingMatch = lower.match(/having\s+(.+?)(?=\s+order by|\s+limit|$)/);
-  if (havingMatch?.[1]) {
-    blocks.having = havingMatch[1];
-  }
+  if (havingMatch?.[1]) blocks.having = havingMatch[1];
 
   const orderMatch = lower.match(/order by\s+(.+?)(?=\s+limit|$)/);
   if (orderMatch?.[1]) {
-    const orderFields = sanitizeIdentifierList(orderMatch[1]);
-    blocks.orderBy = orderFields.map((field, index) => {
-      const lowered = field.toLowerCase();
-      const direction = lowered.endsWith(" desc") ? "DESC" : "ASC";
-      const cleanedField = field
-        .replace(/\s+desc$/i, "")
-        .replace(/\s+asc$/i, "")
-        .trim();
+    blocks.orderBy = sanitizeIdentifierList(orderMatch[1]).map((field, i) => {
+      const dir = field.toLowerCase().endsWith(" desc")
+        ? ("DESC" as const)
+        : ("ASC" as const);
       return {
-        id: `nl-order-${index}`,
-        field: cleanedField,
-        direction,
+        id: `nl-order-${i}`,
+        field: field.replace(/\s+(desc|asc)$/i, "").trim(),
+        direction: dir,
       };
     });
   }
 
   const limitMatch = lower.match(/limit\s+(\d+)/);
-  if (limitMatch?.[1]) {
-    blocks.limit = limitMatch[1];
-  }
+  if (limitMatch?.[1]) blocks.limit = limitMatch[1];
 
-  if (!blocks.select.length) {
-    blocks.select = ["*"];
-  }
-
+  if (!blocks.select.length) blocks.select = ["*"];
   if (!blocks.from) {
     issues.push({
       id: "nl-fallback",
       level: "warning",
-      message: "Using a generic table placeholder. Update FROM to continue.",
+      message: "Using placeholder table. Update FROM.",
       field: "from",
     });
     blocks.from = "your_table";
@@ -513,15 +557,121 @@ const parseNaturalLanguage = (input: string): {
   return { blocks, issues };
 };
 
+/** Improved SQL beautifier — proper keyword newlines and indentation */
+const beautifySql = (raw: string): string => {
+  if (!raw.trim()) return "";
+  const keywords = [
+    "SELECT",
+    "FROM",
+    "WHERE",
+    "AND",
+    "OR",
+    "ORDER BY",
+    "GROUP BY",
+    "HAVING",
+    "LIMIT",
+    "OFFSET",
+    "INSERT INTO",
+    "VALUES",
+    "UPDATE",
+    "SET",
+    "DELETE FROM",
+    "CREATE TABLE",
+    "ALTER TABLE",
+    "DROP TABLE",
+    "INNER JOIN",
+    "LEFT JOIN",
+    "RIGHT JOIN",
+    "FULL JOIN",
+    "CROSS JOIN",
+    "JOIN",
+    "ON",
+    "UNION ALL",
+    "UNION",
+    "EXCEPT",
+    "INTERSECT",
+    "TOP",
+    "DISTINCT",
+    "AS",
+    "IN",
+    "IS",
+    "NOT",
+    "NULL",
+    "BETWEEN",
+    "EXISTS",
+    "CASE",
+    "WHEN",
+    "THEN",
+    "ELSE",
+    "END",
+  ];
+
+  let text = raw.replace(/\s+/g, " ").trim();
+
+  // Uppercase known keywords
+  const upperRegex = new RegExp(
+    `\\b(${keywords.map((k) => k.replace(/\s+/g, "\\s+")).join("|")})\\b`,
+    "gi",
+  );
+  text = text.replace(upperRegex, (m) => m.toUpperCase());
+
+  // Line-break before major clauses
+  const majorClauses = [
+    "SELECT",
+    "FROM",
+    "WHERE",
+    "ORDER BY",
+    "GROUP BY",
+    "HAVING",
+    "LIMIT",
+    "OFFSET",
+    "INSERT INTO",
+    "VALUES",
+    "UPDATE",
+    "SET",
+    "DELETE FROM",
+    "INNER JOIN",
+    "LEFT JOIN",
+    "RIGHT JOIN",
+    "FULL JOIN",
+    "CROSS JOIN",
+    "JOIN",
+    "UNION ALL",
+    "UNION",
+    "EXCEPT",
+    "INTERSECT",
+  ];
+  const clauseRegex = new RegExp(
+    `\\b(${majorClauses.map((c) => c.replace(/\s+/g, "\\s+")).join("|")})\\b`,
+    "g",
+  );
+  text = text.replace(clauseRegex, "\n$1");
+
+  // Indent AND / OR under WHERE
+  text = text.replace(/\n(AND|OR)\b/g, "\n  $1");
+
+  // Clean up leading newline, multiple blanks
+  const lines = text
+    .split("\n")
+    .map((l) => l.trimEnd())
+    .filter((l, i) => (i === 0 ? l.trim() !== "" : true));
+  return lines.join("\n").trim();
+};
+
+/* ------------------------------------------------------------------ */
+/*  Component                                                          */
+/* ------------------------------------------------------------------ */
+
 export const SqlFormatter: React.FC = () => {
   const [mode, setMode] = useState<"builder" | "formatter">("builder");
-  const [input, setInput] = useState("");
-  const [formattedOutput, setFormattedOutput] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState(false);
-  const [nlSectionOpen, setNlSectionOpen] = useState(true);
-  const [builderToolbarExpanded, setBuilderToolbarExpanded] = useState(true);
 
+  // Formatter state
+  const [rawInput, setRawInput] = useState("");
+  const [formattedOutput, setFormattedOutput] = useState("");
+  const [formatterError, setFormatterError] = useState<string | null>(null);
+  const [copySuccess, setCopySuccess] = useState(false);
+
+  // Builder - connection & schema
   const [connections, setConnections] = useState<DatabaseConnection[]>([]);
   const [activeConnectionId, setActiveConnectionId] = useState<string>("");
   const [databaseOverride, setDatabaseOverride] = useState("");
@@ -530,11 +680,13 @@ export const SqlFormatter: React.FC = () => {
   >([]);
   const [schemaLoading, setSchemaLoading] = useState(false);
   const [schemaError, setSchemaError] = useState<string | null>(null);
+  const [showConnectionBar, setShowConnectionBar] = useState(false);
 
+  // Builder - blocks & generation
   const [dialect, setDialect] = useState<SqlDialect>("postgresql");
   const [blocks, setBlocks] = useState<QueryBlocks>(DEFAULT_BLOCKS);
   const [naturalLanguage, setNaturalLanguage] = useState(
-    "Show orders and totals from Orders where total is greater than 100, ordered by order date desc, limit 50.",
+    "Show orders and totals from Orders where total > 100, ordered by order_date desc, limit 50.",
   );
   const [syncEnabled, setSyncEnabled] = useState(true);
   const [useAiForNl, setUseAiForNl] = useState(true);
@@ -542,60 +694,65 @@ export const SqlFormatter: React.FC = () => {
   const [aiResponse, setAiResponse] = useState<SqlAiResponse | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
-
-  const [ollamaBaseUrl] = useState(() => {
-    try {
-      const saved = localStorage.getItem("ai-assistant-settings");
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        return parsed.ollamaBaseUrl || "http://localhost:11434";
-      }
-    } catch {
-      return "http://localhost:11434";
-    }
-    return "http://localhost:11434";
-  });
-  const [ollamaModel] = useState(() => {
-    try {
-      const saved = localStorage.getItem("ai-assistant-settings");
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        return parsed.ollamaModel || parsed.model || "llama3.2:3b";
-      }
-    } catch {
-      return "llama3.2:3b";
-    }
-    return "llama3.2:3b";
-  });
-
-  const [tablesInScopeInput, setTablesInScopeInput] = useState("");
-  const [blockOrder, setBlockOrder] = useState<BlockId[]>([
-    "select",
-    "from",
-    "scope",
-    "join",
-    "where",
-    "group",
-    "order",
-  ]);
-  const [blockSearch, setBlockSearch] = useState("");
   const [blockVisibility, setBlockVisibility] = useState<
     Record<BlockId, boolean>
   >({
     select: true,
     from: true,
-    scope: true,
     join: true,
     where: true,
-    group: true,
+    group: false,
     order: true,
+  });
+
+  // Ollama settings (read once)
+  const [ollamaBaseUrl] = useState(() => {
+    try {
+      const s = localStorage.getItem("ai-assistant-settings");
+      if (s) {
+        const p = JSON.parse(s);
+        return p.ollamaBaseUrl || "http://localhost:11434";
+      }
+    } catch {
+      /* */
+    }
+    return "http://localhost:11434";
+  });
+  const [ollamaModel] = useState(() => {
+    try {
+      const s = localStorage.getItem("ai-assistant-settings");
+      if (s) {
+        const p = JSON.parse(s);
+        return p.ollamaModel || p.model || "llama3.2:3b";
+      }
+    } catch {
+      /* */
+    }
+    return "llama3.2:3b";
   });
 
   const lastSyncRef = useRef<"blocks" | "nl" | null>(null);
   const nlDebounceRef = useRef<number | null>(null);
   const aiRequestRef = useRef(0);
-  const draggedBlockRef = useRef<BlockId | null>(null);
   const draggedRowRef = useRef<RowDragTarget>(null);
+
+  // Voice input: append transcribed text to Natural Language field when recognition ends
+  const {
+    isListening: isVoiceListening,
+    interimTranscript: voiceInterim,
+    toggleListening: toggleVoiceListening,
+    isSupported: isVoiceSupported,
+    error: voiceError,
+  } = useSpeechRecognition({
+    onResult: (text) =>
+      setNaturalLanguage((prev) =>
+        prev.trim() ? `${prev.trim()} ${text}` : text,
+      ),
+    lang: "en-US",
+    continuous: false,
+  });
+
+  /* ---- Derived ---------------------------------------------------- */
 
   useEffect(() => {
     const saved = getConnections();
@@ -604,7 +761,7 @@ export const SqlFormatter: React.FC = () => {
   }, []);
 
   const activeConnection = useMemo(
-    () => connections.find((conn) => conn.id === activeConnectionId) || null,
+    () => connections.find((c) => c.id === activeConnectionId) || null,
     [connections, activeConnectionId],
   );
 
@@ -625,67 +782,49 @@ export const SqlFormatter: React.FC = () => {
     [blocks, dialect],
   );
 
-  const tablesInScope = useMemo(
-    () => sanitizeIdentifierList(tablesInScopeInput),
-    [tablesInScopeInput],
+  const schemaTableOptions = useMemo(
+    () =>
+      schemaTables.map((t) => (t.schema ? `${t.schema}.${t.name}` : t.name)),
+    [schemaTables],
   );
 
-  const schemaTableOptions = useMemo(() => {
-    return schemaTables.map((table) =>
-      table.schema ? `${table.schema}.${table.name}` : table.name,
-    );
-  }, [schemaTables]);
-
   const schemaColumnOptions = useMemo(() => {
-    const scoped = new Set(tablesInScope.map((t) => t.toLowerCase()));
     const options: string[] = [];
     schemaTables.forEach((table) => {
-      const tableName = table.schema
+      const fullName = table.schema
         ? `${table.schema}.${table.name}`
         : table.name;
-      const matchesScope =
-        scoped.size === 0 ||
-        scoped.has(table.name.toLowerCase()) ||
-        scoped.has(tableName.toLowerCase());
-      if (!matchesScope) return;
-      table.columns.forEach((column) => {
-        options.push(`${table.name}.${column.name}`);
-        options.push(`${tableName}.${column.name}`);
-        options.push(column.name);
+      table.columns.forEach((col) => {
+        options.push(`${table.name}.${col.name}`);
+        options.push(`${fullName}.${col.name}`);
+        options.push(col.name);
       });
     });
     return uniqueList(options);
-  }, [schemaTables, tablesInScope]);
+  }, [schemaTables]);
 
-  const applyAiBlocks = (aiBlocks: SqlAiBlocks) => {
+  /* ---- Actions ---------------------------------------------------- */
+
+  const applyAiBlocks = (b: SqlAiBlocks) => {
     setBlocks({
-      distinct: aiBlocks.distinct,
-      select: aiBlocks.select || [],
-      from: aiBlocks.from || "",
-      joins: aiBlocks.joins || [],
-      where: aiBlocks.where || [],
-      groupBy: aiBlocks.groupBy || [],
-      having: aiBlocks.having || "",
-      orderBy: aiBlocks.orderBy || [],
-      limit: aiBlocks.limit || "",
-    });
-  };
-
-  const refreshConnections = () => {
-    const saved = getConnections();
-    setConnections(saved);
-    setActiveConnectionId((prev) => {
-      if (prev && saved.some((conn) => conn.id === prev)) return prev;
-      return saved[0]?.id || "";
+      distinct: b.distinct,
+      select: b.select || [],
+      from: b.from || "",
+      joins: b.joins || [],
+      where: b.where || [],
+      groupBy: b.groupBy || [],
+      having: b.having || "",
+      orderBy: b.orderBy || [],
+      limit: b.limit || "",
     });
   };
 
   const loadSchema = async () => {
     if (!activeConnection) {
-      setSchemaError("Select a connection to load schema.");
+      setSchemaError("Select a connection first.");
       return;
     }
-    const connection = {
+    const conn = {
       ...activeConnection,
       database:
         databaseOverride ||
@@ -695,13 +834,11 @@ export const SqlFormatter: React.FC = () => {
     setSchemaLoading(true);
     setSchemaError(null);
     try {
-      const response = await fetchDatabaseSchema(connection);
-      setSchemaTables(response.tables || []);
-    } catch (schemaErr) {
+      const res = await fetchDatabaseSchema(conn);
+      setSchemaTables(res.tables || []);
+    } catch (err) {
       setSchemaError(
-        schemaErr instanceof Error
-          ? schemaErr.message
-          : "Failed to load schema.",
+        err instanceof Error ? err.message : "Failed to load schema.",
       );
       setSchemaTables([]);
     } finally {
@@ -709,46 +846,41 @@ export const SqlFormatter: React.FC = () => {
     }
   };
 
-  const runAiGeneration = async (text: string, force: boolean = false) => {
+  const runAiGeneration = async (text: string, force = false) => {
     if (!text.trim()) return;
     if (!useAiForNl && !force) return;
-
-    const requestId = ++aiRequestRef.current;
+    const reqId = ++aiRequestRef.current;
     setAiLoading(true);
     setAiError(null);
     try {
-      const response = await generateSqlFromNaturalLanguage({
+      const res = await generateSqlFromNaturalLanguage({
         text,
         dialect,
-        tablesInScope,
+        tablesInScope: [],
         availableTables: schemaTableOptions,
         availableColumns: schemaColumnOptions,
         baseUrl: ollamaBaseUrl,
         model: ollamaModel,
       });
-      if (requestId !== aiRequestRef.current) return;
-      setAiResponse(response);
+      if (reqId !== aiRequestRef.current) return;
+      setAiResponse(res);
       setNlIssues(
-        (response.warnings || []).map((message, index) => ({
-          id: `ai-warning-${index}`,
+        (res.warnings || []).map((msg, i) => ({
+          id: `ai-warn-${i}`,
           level: "warning",
-          message,
+          message: msg,
           field: "nl",
         })),
       );
-      applyAiBlocks(response.blocks);
-    } catch (aiErr) {
-      if (requestId !== aiRequestRef.current) return;
-      setAiError(
-        aiErr instanceof Error ? aiErr.message : "AI generation failed.",
-      );
+      applyAiBlocks(res.blocks);
+    } catch (err) {
+      if (reqId !== aiRequestRef.current) return;
+      setAiError(err instanceof Error ? err.message : "AI generation failed.");
       const parsed = parseNaturalLanguage(text);
       setBlocks(parsed.blocks);
       setNlIssues(parsed.issues);
     } finally {
-      if (requestId === aiRequestRef.current) {
-        setAiLoading(false);
-      }
+      if (reqId === aiRequestRef.current) setAiLoading(false);
     }
   };
 
@@ -764,15 +896,14 @@ export const SqlFormatter: React.FC = () => {
     });
   };
 
+  // Two-way sync: NL -> blocks (debounced)
   useEffect(() => {
     if (!syncEnabled) return;
     if (lastSyncRef.current === "blocks") {
       lastSyncRef.current = null;
       return;
     }
-    if (nlDebounceRef.current) {
-      window.clearTimeout(nlDebounceRef.current);
-    }
+    if (nlDebounceRef.current) window.clearTimeout(nlDebounceRef.current);
     nlDebounceRef.current = window.setTimeout(() => {
       if (!naturalLanguage.trim()) return;
       if (useAiForNl) {
@@ -784,896 +915,211 @@ export const SqlFormatter: React.FC = () => {
         setNlIssues(parsed.issues);
         lastSyncRef.current = "nl";
       }
-    }, 450);
+    }, 500);
   }, [naturalLanguage, syncEnabled, useAiForNl]);
-
-  const handleDragStart = (blockId: BlockId) => {
-    draggedBlockRef.current = blockId;
-  };
-
-  const handleDrop = (targetId: BlockId) => {
-    const sourceId = draggedBlockRef.current;
-    if (!sourceId || sourceId === targetId) return;
-    setBlockOrder((prev) => {
-      const next = [...prev];
-      const fromIndex = next.indexOf(sourceId);
-      const toIndex = next.indexOf(targetId);
-      if (fromIndex === -1 || toIndex === -1) return prev;
-      next.splice(fromIndex, 1);
-      next.splice(toIndex, 0, sourceId);
-      return next;
-    });
-    draggedBlockRef.current = null;
-  };
 
   const handleRowDragStart = (list: RowListId, id: string) => {
     draggedRowRef.current = { list, id };
   };
-
   const handleRowDrop = (list: RowListId, targetId: string) => {
-    const source = draggedRowRef.current;
-    if (!source || source.list !== list || source.id === targetId) return;
-
+    const src = draggedRowRef.current;
+    if (!src || src.list !== list || src.id === targetId) return;
     updateBlocks((prev) => {
       const items = [...prev[list]];
-      const fromIndex = items.findIndex((item) => item.id === source.id);
-      const toIndex = items.findIndex((item) => item.id === targetId);
-      if (fromIndex === -1 || toIndex === -1) return prev;
-      const [moved] = items.splice(fromIndex, 1);
-      items.splice(toIndex, 0, moved);
-      return {
-        ...prev,
-        [list]: items,
-      };
+      const fi = items.findIndex((x) => x.id === src.id);
+      const ti = items.findIndex((x) => x.id === targetId);
+      if (fi === -1 || ti === -1) return prev;
+      const [moved] = items.splice(fi, 1);
+      items.splice(ti, 0, moved);
+      return { ...prev, [list]: items };
     });
-
     draggedRowRef.current = null;
-  };
-
-  const addTableToScope = (tableName: string) => {
-    setTablesInScopeInput((prev) => {
-      const next = uniqueList([...sanitizeIdentifierList(prev), tableName]);
-      return next.join(", ");
-    });
-  };
-
-  const formatRawSql = () => {
-    if (!input.trim()) return;
-    try {
-      let formatted = input
-        .replace(/\s+/g, " ")
-        .replace(/\s*([,;])\s*/g, "$1\n")
-        .replace(/\s*(\()\s*/g, "\n$1")
-        .replace(/\s*(\))\s*/g, "\n$1")
-        .replace(
-          /\b(SELECT|FROM|WHERE|AND|OR|ORDER BY|GROUP BY|Create|Insert|Update|Delete|In|Is|Null)\b/gi,
-          (match) => `\n${match.toUpperCase()}`,
-        )
-        .trim();
-      const lines = formatted.split("\n");
-      formatted = lines.map((line) => line.trim()).join("\n");
-      setFormattedOutput(formatted);
-      setError(null);
-      setSuccess(true);
-      setTimeout(() => setSuccess(false), 2000);
-    } catch (err) {
-      setError("Failed to format SQL");
-    }
-  };
-
-  const clear = () => {
-    setInput("");
-    setFormattedOutput("");
-    setError(null);
-    setSuccess(false);
   };
 
   const copyToClipboard = (value: string) => {
     navigator.clipboard.writeText(value);
-    setSuccess(true);
-    setTimeout(() => setSuccess(false), 2000);
+    setCopySuccess(true);
+    setTimeout(() => setCopySuccess(false), 2000);
   };
 
-  const blockLabels: Record<BlockId, string> = {
-    select: "SELECT",
-    from: "FROM",
-    scope: "TABLES IN SCOPE",
-    join: "JOIN",
-    where: "WHERE",
-    group: "GROUP BY",
-    order: "ORDER BY & LIMIT",
+  const handleFormatRawSql = () => {
+    if (!rawInput.trim()) return;
+    try {
+      setFormattedOutput(beautifySql(rawInput));
+      setFormatterError(null);
+      setCopySuccess(true);
+      setTimeout(() => setCopySuccess(false), 2000);
+    } catch {
+      setFormatterError("Failed to format SQL.");
+    }
   };
 
-  const blockConfig: Record<BlockId, { icon: React.ReactNode; color: string; bgColor: string; borderColor: string }> = {
-    select: {
-      icon: <Columns3 className="h-4 w-4" />,
-      color: "text-violet-600 dark:text-violet-400",
-      bgColor: "bg-violet-50 dark:bg-violet-900/20",
-      borderColor: "border-violet-200 dark:border-violet-800/50",
-    },
-    from: {
-      icon: <Table2 className="h-4 w-4" />,
-      color: "text-blue-600 dark:text-blue-400",
-      bgColor: "bg-blue-50 dark:bg-blue-900/20",
-      borderColor: "border-blue-200 dark:border-blue-800/50",
-    },
-    scope: {
-      icon: <Braces className="h-4 w-4" />,
-      color: "text-cyan-600 dark:text-cyan-400",
-      bgColor: "bg-cyan-50 dark:bg-cyan-900/20",
-      borderColor: "border-cyan-200 dark:border-cyan-800/50",
-    },
-    join: {
-      icon: <GitMerge className="h-4 w-4" />,
-      color: "text-emerald-600 dark:text-emerald-400",
-      bgColor: "bg-emerald-50 dark:bg-emerald-900/20",
-      borderColor: "border-emerald-200 dark:border-emerald-800/50",
-    },
-    where: {
-      icon: <Filter className="h-4 w-4" />,
-      color: "text-amber-600 dark:text-amber-400",
-      bgColor: "bg-amber-50 dark:bg-amber-900/20",
-      borderColor: "border-amber-200 dark:border-amber-800/50",
-    },
-    group: {
-      icon: <Hash className="h-4 w-4" />,
-      color: "text-rose-600 dark:text-rose-400",
-      bgColor: "bg-rose-50 dark:bg-rose-900/20",
-      borderColor: "border-rose-200 dark:border-rose-800/50",
-    },
-    order: {
-      icon: <ArrowUpDown className="h-4 w-4" />,
-      color: "text-orange-600 dark:text-orange-400",
-      bgColor: "bg-orange-50 dark:bg-orange-900/20",
-      borderColor: "border-orange-200 dark:border-orange-800/50",
-    },
-  };
+  const toggleBlock = (id: BlockId) =>
+    setBlockVisibility((prev) => ({ ...prev, [id]: !prev[id] }));
 
-  const filteredBlockOrder = useMemo(() => {
-    const query = blockSearch.trim().toLowerCase();
-    if (!query) return blockOrder;
-    return blockOrder.filter((blockId) =>
-      blockLabels[blockId].toLowerCase().includes(query),
-    );
-  }, [blockOrder, blockLabels, blockSearch]);
+  const visibleBlocks = (Object.keys(BLOCK_CONFIG) as BlockId[]).filter(
+    (id) => blockVisibility[id],
+  );
 
-  const blockRenderers: Record<BlockId, React.ReactElement> = {
-    select: (
-      <div className={cn(
-        "rounded-xl border-2 bg-white dark:bg-slate-900 p-4 space-y-3 shadow-sm transition-all duration-200 hover:shadow-md",
-        blockConfig.select.borderColor
-      )}>
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <GripVertical className="h-4 w-4 text-slate-400 cursor-grab active:cursor-grabbing" />
-            <div className={cn("flex items-center justify-center h-7 w-7 rounded-lg", blockConfig.select.bgColor)}>
-              <span className={blockConfig.select.color}>{blockConfig.select.icon}</span>
-            </div>
-            <span className={cn("text-sm font-semibold", blockConfig.select.color)}>
-              SELECT
-            </span>
-            {blocks.select.length > 0 && blocks.select[0] !== "*" && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500">
-                {blocks.select.length} {blocks.select.length === 1 ? "column" : "columns"}
-              </span>
-            )}
-          </div>
-          <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
-            <Switch
-              checked={blocks.distinct}
-              onCheckedChange={(value) =>
-                updateBlocks((prev) => ({ ...prev, distinct: value }))
-              }
-              id="distinct-toggle-formatter"
-            />
-            <Label htmlFor="distinct-toggle-formatter" className="text-xs cursor-pointer">
-              Distinct
-            </Label>
-          </div>
-        </div>
-        <Input
-          value={blocks.select.join(", ")}
-          onChange={(event) =>
-            updateBlocks((prev) => ({
-              ...prev,
-              select: sanitizeIdentifierList(event.target.value),
-            }))
-          }
-          list="sql-column-options"
-          placeholder="columns, expressions, aggregates"
-          className="transition-all duration-200 focus:ring-2 focus:ring-violet-500/20"
-        />
-        {issues
-          .filter((issue) => issue.field === "select")
-          .map((issue) => (
-            <div
-              key={issue.id}
-              className="flex items-center gap-2 text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 px-2.5 py-1.5 rounded-lg"
-            >
-              <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-              {issue.message}
-            </div>
-          ))}
-      </div>
-    ),
-    from: (
-      <div className={cn(
-        "rounded-xl border-2 bg-white dark:bg-slate-900 p-4 space-y-3 shadow-sm transition-all duration-200 hover:shadow-md",
-        blockConfig.from.borderColor
-      )}>
-        <div className="flex items-center gap-2.5">
-          <GripVertical className="h-4 w-4 text-slate-400 cursor-grab active:cursor-grabbing" />
-          <div className={cn("flex items-center justify-center h-7 w-7 rounded-lg", blockConfig.from.bgColor)}>
-            <span className={blockConfig.from.color}>{blockConfig.from.icon}</span>
-          </div>
-          <span className={cn("text-sm font-semibold", blockConfig.from.color)}>
-            FROM
-          </span>
-          {blocks.from && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 font-mono">
-              {blocks.from}
-            </span>
-          )}
-        </div>
-        <Input
-          value={blocks.from}
-          onChange={(event) =>
-            updateBlocks((prev) => ({ ...prev, from: event.target.value }))
-          }
-          list="sql-table-options"
-          placeholder="table or view (alias)"
-          className="transition-all duration-200 focus:ring-2 focus:ring-blue-500/20"
-        />
-        {issues
-          .filter((issue) => issue.field === "from")
-          .map((issue) => (
-            <div
-              key={issue.id}
-              className="flex items-center gap-2 text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 px-2.5 py-1.5 rounded-lg"
-            >
-              <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-              {issue.message}
-            </div>
-          ))}
-      </div>
-    ),
-    scope: (
-      <div className={cn(
-        "rounded-xl border-2 bg-white dark:bg-slate-900 p-4 space-y-3 shadow-sm transition-all duration-200 hover:shadow-md",
-        blockConfig.scope.borderColor
-      )}>
-        <div className="flex items-center gap-2.5">
-          <GripVertical className="h-4 w-4 text-slate-400 cursor-grab active:cursor-grabbing" />
-          <div className={cn("flex items-center justify-center h-7 w-7 rounded-lg", blockConfig.scope.bgColor)}>
-            <span className={blockConfig.scope.color}>{blockConfig.scope.icon}</span>
-          </div>
-          <span className={cn("text-sm font-semibold", blockConfig.scope.color)}>
-            TABLES IN SCOPE
-          </span>
-          {tablesInScope.length > 0 && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500">
-              {tablesInScope.length} {tablesInScope.length === 1 ? "table" : "tables"}
-            </span>
-          )}
-        </div>
-        <Input
-          value={tablesInScopeInput}
-          onChange={(event) => setTablesInScopeInput(event.target.value)}
-          list="sql-table-options"
-          placeholder="orders, users, invoices (comma-separated)"
-          className="transition-all duration-200 focus:ring-2 focus:ring-cyan-500/20"
-        />
-        {schemaError && (
-          <div className="flex items-center gap-2 text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 px-2.5 py-1.5 rounded-lg">
-            <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-            {schemaError}
-          </div>
-        )}
-        {!schemaError && schemaTableOptions.length > 0 && (
-          <div className="flex flex-wrap gap-1.5">
-            {schemaTableOptions.slice(0, 10).map((table) => (
-              <button
-                key={table}
-                type="button"
-                className="inline-flex items-center gap-1 h-7 px-2 text-xs rounded-lg border border-cyan-200 dark:border-cyan-800/50 bg-cyan-50 dark:bg-cyan-900/20 text-cyan-700 dark:text-cyan-300 hover:bg-cyan-100 dark:hover:bg-cyan-900/40 transition-colors"
-                onClick={() => addTableToScope(table)}
-              >
-                <Plus className="h-3 w-3" />
-                {table}
-              </button>
-            ))}
-          </div>
-        )}
-        {schemaTableOptions.length === 0 && !schemaError && (
-          <div className="text-xs text-slate-400 dark:text-slate-500 italic">
-            Load schema to see available tables
-          </div>
-        )}
-      </div>
-    ),
-    join: (
-      <div className={cn(
-        "rounded-xl border-2 bg-white dark:bg-slate-900 p-4 space-y-3 shadow-sm transition-all duration-200 hover:shadow-md",
-        blockConfig.join.borderColor
-      )}>
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <GripVertical className="h-4 w-4 text-slate-400 cursor-grab active:cursor-grabbing" />
-            <div className={cn("flex items-center justify-center h-7 w-7 rounded-lg", blockConfig.join.bgColor)}>
-              <span className={blockConfig.join.color}>{blockConfig.join.icon}</span>
-            </div>
-            <span className={cn("text-sm font-semibold", blockConfig.join.color)}>
-              JOIN
-            </span>
-            {blocks.joins.length > 0 && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500">
-                {blocks.joins.length} {blocks.joins.length === 1 ? "join" : "joins"}
-              </span>
-            )}
-          </div>
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-7 text-xs gap-1 border-emerald-200 dark:border-emerald-800/50 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/20"
-            onClick={() =>
-              updateBlocks((prev) => ({
-                ...prev,
-                joins: [
-                  ...prev.joins,
-                  {
-                    id: `join-${Date.now()}`,
-                    type: "LEFT",
-                    table: "",
-                    on: "",
-                  },
-                ],
-              }))
-            }
-          >
-            <Plus className="h-3.5 w-3.5" />
-            Add Join
-          </Button>
-        </div>
-        {blocks.joins.length === 0 ? (
-          <div className="text-xs text-slate-400 dark:text-slate-500 italic py-2">
-            No joins added. Click "Add Join" to join another table.
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {blocks.joins.map((join) => (
-              <div
-                key={join.id}
-                draggable
-                onDragStart={() => handleRowDragStart("joins", join.id)}
-                onDragOver={(event) => event.preventDefault()}
-                onDrop={() => handleRowDrop("joins", join.id)}
-                className="grid grid-cols-12 gap-2 items-center p-2 rounded-lg bg-slate-50/50 dark:bg-slate-800/30 border border-slate-100 dark:border-slate-800 hover:border-emerald-200 dark:hover:border-emerald-800/50 transition-colors"
-              >
-                <div className="col-span-1 flex items-center justify-center text-slate-400 cursor-grab active:cursor-grabbing">
-                  <GripVertical className="h-4 w-4" />
-                </div>
-                <select
-                  aria-label="Join type"
-                  className="col-span-2 h-8 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2 text-xs font-medium"
-                  value={join.type}
-                  onChange={(event) =>
-                    updateBlocks((prev) => ({
-                      ...prev,
-                      joins: prev.joins.map((item) =>
-                        item.id === join.id
-                          ? {
-                              ...item,
-                              type: event.target.value as JoinBlock["type"],
-                            }
-                          : item,
-                      ),
-                    }))
-                  }
-                >
-                  {["INNER", "LEFT", "RIGHT", "FULL"].map((type) => (
-                    <option key={type} value={type}>
-                      {type}
-                    </option>
-                  ))}
-                </select>
-                <Input
-                  className="col-span-3 h-8"
-                  value={join.table}
-                  onChange={(event) =>
-                    updateBlocks((prev) => ({
-                      ...prev,
-                      joins: prev.joins.map((item) =>
-                        item.id === join.id
-                          ? { ...item, table: event.target.value }
-                          : item,
-                      ),
-                    }))
-                  }
-                  list="sql-table-options"
-                  placeholder="table alias"
-                />
-                <Input
-                  className="col-span-5 h-8"
-                  value={join.on}
-                  onChange={(event) =>
-                    updateBlocks((prev) => ({
-                      ...prev,
-                      joins: prev.joins.map((item) =>
-                        item.id === join.id
-                          ? { ...item, on: event.target.value }
-                          : item,
-                      ),
-                    }))
-                  }
-                  list="sql-column-options"
-                  placeholder="join condition"
-                />
-                <button
-                  type="button"
-                  aria-label="Remove join"
-                  className="col-span-1 flex items-center justify-center h-8 w-8 rounded-md text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
-                  onClick={() =>
-                    updateBlocks((prev) => ({
-                      ...prev,
-                      joins: prev.joins.filter((item) => item.id !== join.id),
-                    }))
-                  }
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    ),
-    where: (
-      <div className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 space-y-3 shadow-sm">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <GripVertical className="h-4 w-4 text-slate-400" />
-            <span className="text-sm font-semibold text-slate-700 dark:text-slate-300">
-              WHERE
-            </span>
-          </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() =>
-              updateBlocks((prev) => ({
-                ...prev,
-                where: [
-                  ...prev.where,
-                  {
-                    id: `where-${prev.where.length + 1}`,
-                    field: "",
-                    operator: "=",
-                    value: "",
-                    logic: prev.where.length ? "AND" : "AND",
-                  },
-                ],
-              }))
-            }
-          >
-            + Add Filter
-          </Button>
-        </div>
-        <div className="space-y-2">
-          {blocks.where.map((condition, index) => (
-            <div
-              key={condition.id}
-              draggable
-              onDragStart={() => handleRowDragStart("where", condition.id)}
-              onDragOver={(event) => event.preventDefault()}
-              onDrop={() => handleRowDrop("where", condition.id)}
-              className="grid grid-cols-12 gap-2 items-center"
-            >
-              <div className="col-span-1 flex items-center justify-center text-slate-400">
-                <GripVertical className="h-4 w-4" />
-              </div>
-              {index > 0 ? (
-                <select
-                  aria-label="Condition logic (AND/OR)"
-                  className="col-span-2 h-9 rounded-md border border-slate-200 dark:border-slate-800 bg-transparent px-2 text-xs"
-                  value={condition.logic}
-                  onChange={(event) =>
-                    updateBlocks((prev) => ({
-                      ...prev,
-                      where: prev.where.map((item) =>
-                        item.id === condition.id
-                          ? {
-                              ...item,
-                              logic: event.target.value as "AND" | "OR",
-                            }
-                          : item,
-                      ),
-                    }))
-                  }
-                >
-                  {["AND", "OR"].map((logic) => (
-                    <option key={logic} value={logic}>
-                      {logic}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <div className="col-span-2 text-xs text-slate-400">
-                  WHERE
-                </div>
-              )}
-              <Input
-                className="col-span-3"
-                value={condition.field}
-                onChange={(event) =>
-                  updateBlocks((prev) => ({
-                    ...prev,
-                    where: prev.where.map((item) =>
-                      item.id === condition.id
-                        ? { ...item, field: event.target.value }
-                        : item,
-                    ),
-                  }))
-                }
-                list="sql-column-options"
-                placeholder="column"
-              />
-              <select
-                aria-label="Comparison operator"
-                className="col-span-2 h-9 rounded-md border border-slate-200 dark:border-slate-800 bg-transparent px-2 text-xs"
-                value={condition.operator}
-                onChange={(event) =>
-                  updateBlocks((prev) => ({
-                    ...prev,
-                    where: prev.where.map((item) =>
-                      item.id === condition.id
-                        ? {
-                            ...item,
-                            operator:
-                              event.target.value as WhereBlock["operator"],
-                          }
-                        : item,
-                    ),
-                  }))
-                }
-              >
-                {["=", "!=", "<", "<=", ">", ">=", "LIKE", "IN"].map(
-                  (operator) => (
-                    <option key={operator} value={operator}>
-                      {operator}
-                    </option>
-                  ),
-                )}
-              </select>
-              <Input
-                className="col-span-2"
-                value={condition.value}
-                onChange={(event) =>
-                  updateBlocks((prev) => ({
-                    ...prev,
-                    where: prev.where.map((item) =>
-                      item.id === condition.id
-                        ? { ...item, value: event.target.value }
-                        : item,
-                    ),
-                  }))
-                }
-                placeholder="value"
-              />
-              <Button
-                variant="ghost"
-                size="sm"
-                className="col-span-2"
-                onClick={() =>
-                  updateBlocks((prev) => ({
-                    ...prev,
-                    where: prev.where.filter(
-                      (item) => item.id !== condition.id,
-                    ),
-                  }))
-                }
-              >
-                Remove
-              </Button>
-            </div>
-          ))}
-        </div>
-      </div>
-    ),
-    group: (
-      <div className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 space-y-3 shadow-sm">
+  /* ---- Reusable block header -------------------------------------- */
+  const BlockHeader: React.FC<{ id: BlockId; right?: React.ReactNode }> = ({
+    id,
+    right,
+  }) => {
+    const cfg = BLOCK_CONFIG[id];
+    return (
+      <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2">
-          <GripVertical className="h-4 w-4 text-slate-400" />
-          <span className="text-sm font-semibold text-slate-700 dark:text-slate-300">
-            GROUP BY
+          <span className={cfg.color}>{cfg.icon}</span>
+          <span
+            className={cn(
+              "text-xs font-bold uppercase tracking-wide",
+              cfg.color,
+            )}
+          >
+            {cfg.label}
           </span>
         </div>
-        <div className="grid grid-cols-2 gap-3">
-          <div className="space-y-2">
-            <span className="text-sm font-semibold text-slate-700 dark:text-slate-300">
-              Columns
-            </span>
-            <Input
-              value={blocks.groupBy.join(", ")}
-              onChange={(event) =>
-                updateBlocks((prev) => ({
-                  ...prev,
-                  groupBy: sanitizeIdentifierList(event.target.value),
-                }))
-              }
-              list="sql-column-options"
-              placeholder="columns"
-            />
-          </div>
-          <div className="space-y-2">
-            <span className="text-sm font-semibold text-slate-700 dark:text-slate-300">
-              HAVING
-            </span>
-            <Input
-              value={blocks.having}
-              onChange={(event) =>
-                updateBlocks((prev) => ({
-                  ...prev,
-                  having: event.target.value,
-                }))
-              }
-              placeholder="aggregate condition"
-            />
-          </div>
-        </div>
+        {right}
       </div>
-    ),
-    order: (
-      <div className="rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 space-y-3 shadow-sm">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <GripVertical className="h-4 w-4 text-slate-400" />
-            <span className="text-sm font-semibold text-slate-700 dark:text-slate-300">
-              ORDER BY & LIMIT
-            </span>
-          </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() =>
-              updateBlocks((prev) => ({
-                ...prev,
-                orderBy: [
-                  ...prev.orderBy,
-                  {
-                    id: `order-${prev.orderBy.length + 1}`,
-                    field: "",
-                    direction: "ASC",
-                  },
-                ],
-              }))
-            }
-          >
-            + Add Sort
-          </Button>
-        </div>
-        <div className="space-y-2">
-          {blocks.orderBy.map((order) => (
-            <div
-              key={order.id}
-              draggable
-              onDragStart={() => handleRowDragStart("orderBy", order.id)}
-              onDragOver={(event) => event.preventDefault()}
-              onDrop={() => handleRowDrop("orderBy", order.id)}
-              className="grid grid-cols-12 gap-2 items-center"
-            >
-              <div className="col-span-1 flex items-center justify-center text-slate-400">
-                <GripVertical className="h-4 w-4" />
-              </div>
-              <Input
-                className="col-span-6"
-                value={order.field}
-                onChange={(event) =>
-                  updateBlocks((prev) => ({
-                    ...prev,
-                    orderBy: prev.orderBy.map((item) =>
-                      item.id === order.id
-                        ? { ...item, field: event.target.value }
-                        : item,
-                    ),
-                  }))
-                }
-                list="sql-column-options"
-                placeholder="column"
-              />
-              <select
-                aria-label="Sort direction"
-                className="col-span-3 h-9 rounded-md border border-slate-200 dark:border-slate-800 bg-transparent px-2 text-xs"
-                value={order.direction}
-                onChange={(event) =>
-                  updateBlocks((prev) => ({
-                    ...prev,
-                    orderBy: prev.orderBy.map((item) =>
-                      item.id === order.id
-                        ? {
-                            ...item,
-                            direction:
-                              event.target.value as OrderBlock["direction"],
-                          }
-                        : item,
-                    ),
-                  }))
-                }
-              >
-                {["ASC", "DESC"].map((direction) => (
-                  <option key={direction} value={direction}>
-                    {direction}
-                  </option>
-                ))}
-              </select>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="col-span-2"
-                onClick={() =>
-                  updateBlocks((prev) => ({
-                    ...prev,
-                    orderBy: prev.orderBy.filter(
-                      (item) => item.id !== order.id,
-                    ),
-                  }))
-                }
-              >
-                Remove
-              </Button>
-            </div>
-          ))}
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <div className="space-y-2">
-            <Label className="text-xs text-slate-500 dark:text-slate-400">
-              Limit
-            </Label>
-            <Input
-              value={blocks.limit}
-              onChange={(event) =>
-                updateBlocks((prev) => ({
-                  ...prev,
-                  limit: event.target.value,
-                }))
-              }
-              placeholder={dialect === "sqlserver" ? "TOP" : "LIMIT"}
-            />
-            {issues
-              .filter((issue) => issue.field === "limit")
-              .map((issue) => (
-                <p
-                  key={issue.id}
-                  className="text-xs text-red-600 dark:text-red-400"
-                >
-                  {issue.message}
-                </p>
-              ))}
-          </div>
-          <div className="space-y-2">
-            <Label className="text-xs text-slate-500 dark:text-slate-400">
-              Dialect Notes
-            </Label>
-            <div className="text-xs text-slate-500 dark:text-slate-400">
-              {dialect === "sqlserver"
-                ? "LIMIT becomes TOP() in SELECT."
-                : "LIMIT appears at the end of the query."}
-            </div>
-          </div>
-        </div>
-      </div>
-    ),
+    );
   };
+
+  /* ---- Inline validation for a field ------------------------------ */
+  const FieldIssues: React.FC<{ field: string }> = ({ field }) => {
+    const matching = issues.filter((i) => i.field === field);
+    if (!matching.length) return null;
+    return (
+      <>
+        {matching.map((i) => (
+          <div
+            key={i.id}
+            className={cn(
+              "flex items-center gap-1.5 text-[11px] mt-1",
+              i.level === "error"
+                ? "text-red-600 dark:text-red-400"
+                : "text-amber-600 dark:text-amber-400",
+            )}
+          >
+            <AlertCircle className="h-3 w-3 shrink-0" />
+            {i.message}
+          </div>
+        ))}
+      </>
+    );
+  };
+
+  /* ================================================================= */
+  /*  RENDER                                                            */
+  /* ================================================================= */
 
   return (
-    <div className="flex h-full min-h-0 flex-col p-6 overflow-hidden bg-linear-to-br from-slate-50 via-white to-slate-100 dark:from-slate-950 dark:via-slate-950 dark:to-slate-900">
-      <div className="mb-6 flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-slate-200/70 bg-white/80 p-4 shadow-sm backdrop-blur dark:border-slate-800/70 dark:bg-slate-900/70">
-        <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-100/70 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">
-            <Database className="h-6 w-6" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100">
-              SQL Formatter
-            </h1>
-            <p className="text-sm text-slate-500 dark:text-slate-400">
-              Build, generate, and format SQL queries
-            </p>
-          </div>
+    <div className="flex h-full min-h-0 flex-col overflow-hidden">
+      {/* ─── Compact Header ───────────────────────────────────────── */}
+      <div className="flex items-center justify-between gap-3 px-4 py-2.5 border-b border-slate-200/70 dark:border-slate-800/70 bg-white/80 dark:bg-slate-900/70 shrink-0">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <Database className="h-5 w-5 text-blue-600 dark:text-blue-400 shrink-0" />
+          <span className="text-base font-bold text-slate-900 dark:text-slate-100 truncate">
+            SQL Formatter
+          </span>
         </div>
-        <div className="flex items-center gap-1 rounded-xl bg-slate-100/80 p-1 dark:bg-slate-800/80 border border-slate-200/50 dark:border-slate-700/50">
+        {/* Mode tabs */}
+        <div className="flex items-center gap-0.5 rounded-lg bg-slate-100/80 dark:bg-slate-800/80 p-0.5 shrink-0">
           <button
             onClick={() => setMode("builder")}
             className={cn(
-              "flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-all duration-200",
+              "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-all",
               mode === "builder"
-                ? "bg-white text-blue-600 shadow-md dark:bg-slate-900 dark:text-blue-400"
-                : "text-slate-500 hover:text-slate-700 hover:bg-white/50 dark:text-slate-400 dark:hover:text-slate-200 dark:hover:bg-slate-800/50",
+                ? "bg-white dark:bg-slate-900 text-blue-600 dark:text-blue-400 shadow-sm"
+                : "text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200",
             )}
           >
-            <Blocks className="h-4 w-4" />
-            <span>Builder</span>
+            <Blocks className="h-3.5 w-3.5" />
+            Builder
           </button>
           <button
             onClick={() => setMode("formatter")}
             className={cn(
-              "flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition-all duration-200",
+              "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-all",
               mode === "formatter"
-                ? "bg-white text-blue-600 shadow-md dark:bg-slate-900 dark:text-blue-400"
-                : "text-slate-500 hover:text-slate-700 hover:bg-white/50 dark:text-slate-400 dark:hover:text-slate-200 dark:hover:bg-slate-800/50",
+                ? "bg-white dark:bg-slate-900 text-blue-600 dark:text-blue-400 shadow-sm"
+                : "text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200",
             )}
           >
-            <Code2 className="h-4 w-4" />
-            <span>Formatter</span>
+            <Code2 className="h-3.5 w-3.5" />
+            Formatter
           </button>
         </div>
       </div>
 
+      {/* ═══════════════════════════════════════════════════════════════ */}
+      {/*  FORMATTER MODE                                                */}
+      {/* ═══════════════════════════════════════════════════════════════ */}
       {mode === "formatter" ? (
-        /* Formatter mode: split view — input left, formatted output right; responsive stack */
-        <div className="flex-1 min-h-0 flex flex-col gap-3">
-          {/* Toolbar: primary actions surfaced for efficiency */}
-          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200/70 bg-white/80 px-3 py-2 shadow-sm dark:border-slate-800/70 dark:bg-slate-900/70">
+        <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+          {/* Toolbar */}
+          <div className="flex items-center justify-between gap-2 px-4 py-2 border-b border-slate-200/70 dark:border-slate-800/70 bg-slate-50/80 dark:bg-slate-800/40 shrink-0">
             <div className="flex items-center gap-2">
               <Button
-                onClick={formatRawSql}
-                disabled={!input.trim()}
-                className="h-8 gap-1.5 bg-blue-600 text-white hover:bg-blue-700 dark:bg-blue-600 dark:hover:bg-blue-500"
+                size="sm"
+                className="h-7 text-xs gap-1.5 bg-blue-600 hover:bg-blue-700 text-white"
+                onClick={handleFormatRawSql}
+                disabled={!rawInput.trim()}
               >
-                <Wand2 className="h-3.5 w-3.5" />
+                <Wand2 className="h-3 w-3" />
                 Format
-              </Button>
-              <Button variant="outline" size="sm" className="h-8" onClick={clear}>
-                <Trash2 className="h-3.5 w-3.5 mr-1" />
-                Clear
               </Button>
               <Button
                 variant="outline"
                 size="sm"
-                className="h-8"
-                onClick={() => copyToClipboard(input)}
-                disabled={!input}
+                className="h-7 text-xs"
+                onClick={() => {
+                  setRawInput("");
+                  setFormattedOutput("");
+                  setFormatterError(null);
+                }}
               >
-                <Copy className="h-3.5 w-3.5 mr-1" />
-                Copy input
+                <Trash2 className="h-3 w-3 mr-1" />
+                Clear
               </Button>
             </div>
             <div className="flex items-center gap-2">
-              {error && (
-                <span className="flex items-center gap-1.5 text-xs text-red-600 dark:text-red-400">
-                  <AlertCircle className="h-3.5 w-3.5" />
-                  {error}
+              {formatterError && (
+                <span className="text-[11px] text-red-600 dark:text-red-400">
+                  {formatterError}
                 </span>
               )}
-              {success && (
-                <span className="flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400">
-                  <CheckCircle className="h-3.5 w-3.5" />
-                  Formatted
+              {copySuccess && (
+                <span className="text-[11px] text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                  <CheckCircle className="h-3 w-3" />
+                  Done
                 </span>
               )}
             </div>
           </div>
-          <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-2 gap-3">
-            <div className="flex flex-col min-h-0 rounded-xl border border-slate-200/70 bg-white/80 shadow-sm dark:border-slate-800/70 dark:bg-slate-900/70 overflow-hidden">
-              <div className="shrink-0 px-3 py-2 border-b border-slate-200/70 dark:border-slate-800/70 bg-slate-50/80 dark:bg-slate-800/50 text-xs font-semibold text-slate-700 dark:text-slate-200">
-                SQL input
+          {/* Split view */}
+          <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-2 divide-x divide-slate-200/70 dark:divide-slate-800/70">
+            <div className="flex flex-col min-h-0">
+              <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 bg-slate-50/60 dark:bg-slate-800/30 border-b border-slate-200/50 dark:border-slate-800/50 shrink-0">
+                Input
               </div>
               <textarea
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                placeholder="Paste or type SQL here, e.g. SELECT * FROM users WHERE id=1"
-                className="flex-1 min-h-[120px] w-full resize-none bg-transparent p-4 font-mono text-sm leading-relaxed text-slate-800 focus:outline-none dark:text-slate-200"
+                value={rawInput}
+                onChange={(e) => setRawInput(e.target.value)}
+                placeholder="Paste or type SQL here..."
+                className="flex-1 min-h-0 w-full resize-none bg-transparent p-3 font-mono text-sm leading-relaxed text-slate-800 dark:text-slate-200 focus:outline-none"
                 spellCheck={false}
               />
             </div>
-            <div className="flex flex-col min-h-0 rounded-xl border border-slate-200/70 bg-white/80 shadow-sm dark:border-slate-800/70 dark:bg-slate-900/70 overflow-hidden">
-              <div className="shrink-0 flex items-center justify-between px-3 py-2 border-b border-slate-200/70 dark:border-slate-800/70 bg-slate-50/80 dark:bg-slate-800/50">
-                <span className="text-xs font-semibold text-slate-700 dark:text-slate-200">
-                  Formatted output
+            <div className="flex flex-col min-h-0">
+              <div className="flex items-center justify-between px-3 py-1.5 bg-slate-50/60 dark:bg-slate-800/30 border-b border-slate-200/50 dark:border-slate-800/50 shrink-0">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                  Output
                 </span>
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="h-7 text-xs"
+                  className="h-6 text-[10px]"
                   onClick={() => copyToClipboard(formattedOutput)}
                   disabled={!formattedOutput}
                 >
@@ -1681,10 +1127,10 @@ export const SqlFormatter: React.FC = () => {
                   Copy
                 </Button>
               </div>
-              <pre className="flex-1 min-h-[120px] overflow-auto p-4 font-mono text-sm leading-relaxed text-slate-800 dark:text-slate-200 whitespace-pre-wrap">
+              <pre className="flex-1 min-h-0 overflow-auto p-3 font-mono text-sm leading-relaxed text-slate-800 dark:text-slate-200 whitespace-pre-wrap">
                 {formattedOutput || (
-                  <span className="text-slate-400 dark:text-slate-500 italic">
-                    Click Format to see result here.
+                  <span className="text-slate-400 dark:text-slate-500 italic text-xs">
+                    Formatted SQL will appear here.
                   </span>
                 )}
               </pre>
@@ -1692,445 +1138,871 @@ export const SqlFormatter: React.FC = () => {
           </div>
         </div>
       ) : (
-        <div className="flex flex-col gap-3 min-h-0 flex-1 overflow-hidden">
-          {/* Builder toolbar: compact, collapsible for more editor space */}
-          <Collapsible open={builderToolbarExpanded} onOpenChange={setBuilderToolbarExpanded}>
-            <div className="rounded-xl border border-slate-200/70 bg-white/80 shadow-sm dark:border-slate-800/70 dark:bg-slate-900/70 overflow-hidden">
-              <CollapsibleTrigger asChild>
-                <button
-                  type="button"
-                  className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left hover:bg-slate-50/80 dark:hover:bg-slate-800/50 transition-colors"
-                  {...{ "aria-expanded": builderToolbarExpanded ? "true" : "false" }}
-                  title="Connection & options"
-                >
-                  <span className="text-xs font-semibold text-slate-700 dark:text-slate-200">
-                    Connection & options
-                  </span>
-                  <span className="text-[10px] text-slate-500 dark:text-slate-400">
-                    {schemaTables.length > 0
-                      ? `${schemaTables.length} tables · `
-                      : ""}
-                    {DIALECT_LABELS[dialect]}
-                    {useAiForNl ? ` · ${ollamaModel}` : " · AI off"}
-                  </span>
-                </button>
-              </CollapsibleTrigger>
-              <CollapsibleContent>
-                <div className="border-t border-slate-200/70 dark:border-slate-800/70 px-3 py-3 space-y-3">
-                  <div className="flex flex-wrap items-center gap-3">
-                    <div className="flex items-center gap-2">
-                      <Label className="text-xs text-slate-500 dark:text-slate-400 shrink-0">
-                        Connection
-                      </Label>
-                      <Select
-                        value={activeConnectionId}
-                        onValueChange={setActiveConnectionId}
-                        disabled={!connections.length}
-                      >
-                        <SelectTrigger className="w-[180px] h-8 text-xs">
-                          <SelectValue
-                            placeholder={
-                              connections.length ? "Select connection" : "No connections"
+        /* ═══════════════════════════════════════════════════════════════ */
+        /*  BUILDER MODE                                                  */
+        /* ═══════════════════════════════════════════════════════════════ */
+        <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+          {/* ── Builder toolbar ─────────────────────────────────────── */}
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2 border-b border-slate-200/70 dark:border-slate-800/70 bg-slate-50/60 dark:bg-slate-800/30 shrink-0">
+            {/* Dialect */}
+            <Select
+              value={dialect}
+              onValueChange={(v) => setDialect(v as SqlDialect)}
+            >
+              <SelectTrigger className="w-[120px] h-7 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {Object.entries(DIALECT_LABELS).map(([k, l]) => (
+                  <SelectItem key={k} value={k}>
+                    {l}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {/* Sync toggle */}
+            <div className="flex items-center gap-1.5">
+              <Switch
+                checked={syncEnabled}
+                onCheckedChange={setSyncEnabled}
+                id="sf-sync"
+                className="scale-75"
+              />
+              <Label
+                htmlFor="sf-sync"
+                className="text-[11px] text-slate-500 dark:text-slate-400 cursor-pointer"
+              >
+                Sync
+              </Label>
+            </div>
+            {/* AI toggle */}
+            <div className="flex items-center gap-1.5">
+              <Switch
+                checked={useAiForNl}
+                onCheckedChange={setUseAiForNl}
+                id="sf-ai"
+                className="scale-75"
+              />
+              <Label
+                htmlFor="sf-ai"
+                className="text-[11px] text-slate-500 dark:text-slate-400 cursor-pointer"
+              >
+                AI
+              </Label>
+            </div>
+            {/* Connection bar toggle */}
+            <button
+              type="button"
+              onClick={() => setShowConnectionBar(!showConnectionBar)}
+              className="flex items-center gap-1 text-[11px] text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+            >
+              {showConnectionBar ? (
+                <ChevronDown className="h-3 w-3" />
+              ) : (
+                <ChevronRight className="h-3 w-3" />
+              )}
+              Connection
+              {schemaTables.length > 0 && (
+                <span className="text-emerald-600 dark:text-emerald-400">
+                  ({schemaTables.length} tables)
+                </span>
+              )}
+            </button>
+            {/* Block toggles — right-aligned */}
+            <div className="flex items-center gap-1 ml-auto">
+              {(Object.keys(BLOCK_CONFIG) as BlockId[]).map((id) => {
+                const cfg = BLOCK_CONFIG[id];
+                const visible = blockVisibility[id];
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => toggleBlock(id)}
+                    title={`${visible ? "Hide" : "Show"} ${cfg.label}`}
+                    className={cn(
+                      "flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide transition-colors",
+                      visible
+                        ? cn(cfg.bg, cfg.color, "border", cfg.border)
+                        : "text-slate-400 dark:text-slate-600 bg-slate-100/50 dark:bg-slate-800/30 border border-transparent hover:border-slate-200 dark:hover:border-slate-700",
+                    )}
+                  >
+                    {cfg.icon}
+                    <span className="hidden sm:inline">
+                      {cfg.label.slice(0, 3)}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* ── Connection bar (optional) ──────────────────────────── */}
+          {showConnectionBar && (
+            <div className="flex flex-wrap items-center gap-2 px-4 py-2 border-b border-slate-200/70 dark:border-slate-800/70 bg-white/60 dark:bg-slate-900/40 shrink-0">
+              <Select
+                value={activeConnectionId}
+                onValueChange={setActiveConnectionId}
+                disabled={!connections.length}
+              >
+                <SelectTrigger className="w-[160px] h-7 text-xs">
+                  <SelectValue
+                    placeholder={
+                      connections.length ? "Connection" : "No connections"
+                    }
+                  />
+                </SelectTrigger>
+                <SelectContent>
+                  {connections.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Input
+                className="h-7 text-xs w-[120px]"
+                value={databaseOverride}
+                onChange={(e) => setDatabaseOverride(e.target.value)}
+                placeholder={activeConnection?.database || "database"}
+              />
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 text-xs"
+                onClick={loadSchema}
+                disabled={schemaLoading || !activeConnection}
+              >
+                <RefreshCw
+                  className={cn(
+                    "h-3 w-3 mr-1",
+                    schemaLoading && "animate-spin",
+                  )}
+                />
+                {schemaLoading ? "Loading" : "Schema"}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 text-xs"
+                onClick={() => {
+                  const s = getConnections();
+                  setConnections(s);
+                }}
+              >
+                Reload
+              </Button>
+              {schemaError && (
+                <span className="text-[11px] text-amber-600 dark:text-amber-400">
+                  {schemaError}
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* ── Main two-column area ──────────────────────────────── */}
+          <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-5 divide-x divide-slate-200/70 dark:divide-slate-800/70 overflow-hidden">
+            {/* LEFT: Block editors (3/5) */}
+            <div className="lg:col-span-3 flex flex-col min-h-0 overflow-y-auto overflow-x-hidden">
+              <div className="flex flex-col gap-2.5 p-3">
+                {visibleBlocks.map((blockId) => {
+                  const cfg = BLOCK_CONFIG[blockId];
+                  return (
+                    <div
+                      key={blockId}
+                      className={cn(
+                        "rounded-lg border p-3 space-y-2.5",
+                        cfg.border,
+                        cfg.bg,
+                      )}
+                    >
+                      {/* ── SELECT ── */}
+                      {blockId === "select" && (
+                        <>
+                          <BlockHeader
+                            id="select"
+                            right={
+                              <div className="flex items-center gap-1.5 text-xs">
+                                <Switch
+                                  checked={blocks.distinct}
+                                  onCheckedChange={(v) =>
+                                    updateBlocks((p) => ({ ...p, distinct: v }))
+                                  }
+                                  id="sf-distinct"
+                                  className="scale-75"
+                                />
+                                <Label
+                                  htmlFor="sf-distinct"
+                                  className="text-[11px] cursor-pointer text-slate-500 dark:text-slate-400"
+                                >
+                                  Distinct
+                                </Label>
+                              </div>
                             }
                           />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {connections.map((conn) => (
-                            <SelectItem key={conn.id} value={conn.id}>
-                              {conn.name}
-                            </SelectItem>
+                          <Input
+                            value={blocks.select.join(", ")}
+                            onChange={(e) =>
+                              updateBlocks((p) => ({
+                                ...p,
+                                select: sanitizeIdentifierList(e.target.value),
+                              }))
+                            }
+                            list="sql-column-options"
+                            placeholder="columns, expressions, aggregates..."
+                            className="h-8 text-xs"
+                          />
+                          <FieldIssues field="select" />
+                        </>
+                      )}
+
+                      {/* ── FROM ── */}
+                      {blockId === "from" && (
+                        <>
+                          <BlockHeader id="from" />
+                          <Input
+                            value={blocks.from}
+                            onChange={(e) =>
+                              updateBlocks((p) => ({
+                                ...p,
+                                from: e.target.value,
+                              }))
+                            }
+                            list="sql-table-options"
+                            placeholder="table_name alias"
+                            className="h-8 text-xs"
+                          />
+                          <FieldIssues field="from" />
+                        </>
+                      )}
+
+                      {/* ── JOIN ── */}
+                      {blockId === "join" && (
+                        <>
+                          <BlockHeader
+                            id="join"
+                            right={
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-6 text-[11px] gap-1"
+                                onClick={() =>
+                                  updateBlocks((p) => ({
+                                    ...p,
+                                    joins: [
+                                      ...p.joins,
+                                      {
+                                        id: `join-${Date.now()}`,
+                                        type: "LEFT",
+                                        table: "",
+                                        on: "",
+                                      },
+                                    ],
+                                  }))
+                                }
+                              >
+                                <Plus className="h-3 w-3" />
+                                Join
+                              </Button>
+                            }
+                          />
+                          {blocks.joins.length === 0 && (
+                            <p className="text-[11px] text-slate-400 dark:text-slate-500 italic">
+                              No joins.
+                            </p>
+                          )}
+                          {blocks.joins.map((join) => (
+                            <div
+                              key={join.id}
+                              draggable
+                              onDragStart={() =>
+                                handleRowDragStart("joins", join.id)
+                              }
+                              onDragOver={(e) => e.preventDefault()}
+                              onDrop={() => handleRowDrop("joins", join.id)}
+                              className="flex items-center gap-1.5 p-1.5 rounded-md bg-white/60 dark:bg-slate-900/40 border border-slate-200/60 dark:border-slate-800/40"
+                            >
+                              <GripVertical className="h-3.5 w-3.5 text-slate-400 cursor-grab shrink-0" />
+                              <select
+                                aria-label="Join type"
+                                className="h-7 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-1.5 text-[11px] font-medium shrink-0"
+                                value={join.type}
+                                onChange={(e) =>
+                                  updateBlocks((p) => ({
+                                    ...p,
+                                    joins: p.joins.map((j) =>
+                                      j.id === join.id
+                                        ? {
+                                            ...j,
+                                            type: e.target
+                                              .value as JoinBlock["type"],
+                                          }
+                                        : j,
+                                    ),
+                                  }))
+                                }
+                              >
+                                {["INNER", "LEFT", "RIGHT", "FULL"].map((t) => (
+                                  <option key={t} value={t}>
+                                    {t}
+                                  </option>
+                                ))}
+                              </select>
+                              <Input
+                                className="h-7 text-[11px] flex-1 min-w-0"
+                                value={join.table}
+                                onChange={(e) =>
+                                  updateBlocks((p) => ({
+                                    ...p,
+                                    joins: p.joins.map((j) =>
+                                      j.id === join.id
+                                        ? { ...j, table: e.target.value }
+                                        : j,
+                                    ),
+                                  }))
+                                }
+                                list="sql-table-options"
+                                placeholder="table"
+                              />
+                              <span className="text-[10px] text-slate-400 shrink-0">
+                                ON
+                              </span>
+                              <Input
+                                className="h-7 text-[11px] flex-2 min-w-0"
+                                value={join.on}
+                                onChange={(e) =>
+                                  updateBlocks((p) => ({
+                                    ...p,
+                                    joins: p.joins.map((j) =>
+                                      j.id === join.id
+                                        ? { ...j, on: e.target.value }
+                                        : j,
+                                    ),
+                                  }))
+                                }
+                                list="sql-column-options"
+                                placeholder="condition"
+                              />
+                              <button
+                                type="button"
+                                aria-label="Remove"
+                                className="h-6 w-6 flex items-center justify-center rounded text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 shrink-0"
+                                onClick={() =>
+                                  updateBlocks((p) => ({
+                                    ...p,
+                                    joins: p.joins.filter(
+                                      (j) => j.id !== join.id,
+                                    ),
+                                  }))
+                                }
+                              >
+                                <X className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
                           ))}
-                        </SelectContent>
-                      </Select>
+                          <FieldIssues field="joins" />
+                        </>
+                      )}
+
+                      {/* ── WHERE ── */}
+                      {blockId === "where" && (
+                        <>
+                          <BlockHeader
+                            id="where"
+                            right={
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-6 text-[11px] gap-1"
+                                onClick={() =>
+                                  updateBlocks((p) => ({
+                                    ...p,
+                                    where: [
+                                      ...p.where,
+                                      {
+                                        id: `where-${Date.now()}`,
+                                        field: "",
+                                        operator: "=",
+                                        value: "",
+                                        logic: p.where.length ? "AND" : "AND",
+                                      },
+                                    ],
+                                  }))
+                                }
+                              >
+                                <Plus className="h-3 w-3" />
+                                Filter
+                              </Button>
+                            }
+                          />
+                          {blocks.where.length === 0 && (
+                            <p className="text-[11px] text-slate-400 dark:text-slate-500 italic">
+                              No filters.
+                            </p>
+                          )}
+                          {blocks.where.map((cond, idx) => (
+                            <div
+                              key={cond.id}
+                              draggable
+                              onDragStart={() =>
+                                handleRowDragStart("where", cond.id)
+                              }
+                              onDragOver={(e) => e.preventDefault()}
+                              onDrop={() => handleRowDrop("where", cond.id)}
+                              className="flex items-center gap-1.5 p-1.5 rounded-md bg-white/60 dark:bg-slate-900/40 border border-slate-200/60 dark:border-slate-800/40"
+                            >
+                              <GripVertical className="h-3.5 w-3.5 text-slate-400 cursor-grab shrink-0" />
+                              {idx > 0 ? (
+                                <select
+                                  aria-label="Logic"
+                                  className="h-7 w-14 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-1 text-[11px] font-medium shrink-0"
+                                  value={cond.logic}
+                                  onChange={(e) =>
+                                    updateBlocks((p) => ({
+                                      ...p,
+                                      where: p.where.map((c) =>
+                                        c.id === cond.id
+                                          ? {
+                                              ...c,
+                                              logic: e.target.value as
+                                                | "AND"
+                                                | "OR",
+                                            }
+                                          : c,
+                                      ),
+                                    }))
+                                  }
+                                >
+                                  <option value="AND">AND</option>
+                                  <option value="OR">OR</option>
+                                </select>
+                              ) : (
+                                <span className="w-14 text-[10px] text-slate-400 shrink-0 text-center">
+                                  WHERE
+                                </span>
+                              )}
+                              <Input
+                                className="h-7 text-[11px] flex-1 min-w-0"
+                                value={cond.field}
+                                onChange={(e) =>
+                                  updateBlocks((p) => ({
+                                    ...p,
+                                    where: p.where.map((c) =>
+                                      c.id === cond.id
+                                        ? { ...c, field: e.target.value }
+                                        : c,
+                                    ),
+                                  }))
+                                }
+                                list="sql-column-options"
+                                placeholder="column"
+                              />
+                              <select
+                                aria-label="Operator"
+                                className="h-7 w-14 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-1 text-[11px] shrink-0"
+                                value={cond.operator}
+                                onChange={(e) =>
+                                  updateBlocks((p) => ({
+                                    ...p,
+                                    where: p.where.map((c) =>
+                                      c.id === cond.id
+                                        ? {
+                                            ...c,
+                                            operator: e.target
+                                              .value as WhereBlock["operator"],
+                                          }
+                                        : c,
+                                    ),
+                                  }))
+                                }
+                              >
+                                {[
+                                  "=",
+                                  "!=",
+                                  "<",
+                                  "<=",
+                                  ">",
+                                  ">=",
+                                  "LIKE",
+                                  "IN",
+                                ].map((op) => (
+                                  <option key={op} value={op}>
+                                    {op}
+                                  </option>
+                                ))}
+                              </select>
+                              <Input
+                                className="h-7 text-[11px] flex-1 min-w-0"
+                                value={cond.value}
+                                onChange={(e) =>
+                                  updateBlocks((p) => ({
+                                    ...p,
+                                    where: p.where.map((c) =>
+                                      c.id === cond.id
+                                        ? { ...c, value: e.target.value }
+                                        : c,
+                                    ),
+                                  }))
+                                }
+                                placeholder="value"
+                              />
+                              <button
+                                type="button"
+                                aria-label="Remove"
+                                className="h-6 w-6 flex items-center justify-center rounded text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 shrink-0"
+                                onClick={() =>
+                                  updateBlocks((p) => ({
+                                    ...p,
+                                    where: p.where.filter(
+                                      (c) => c.id !== cond.id,
+                                    ),
+                                  }))
+                                }
+                              >
+                                <X className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          ))}
+                          <FieldIssues field="where" />
+                        </>
+                      )}
+
+                      {/* ── GROUP BY ── */}
+                      {blockId === "group" && (
+                        <>
+                          <BlockHeader id="group" />
+                          <div className="grid grid-cols-2 gap-2">
+                            <Input
+                              value={blocks.groupBy.join(", ")}
+                              onChange={(e) =>
+                                updateBlocks((p) => ({
+                                  ...p,
+                                  groupBy: sanitizeIdentifierList(
+                                    e.target.value,
+                                  ),
+                                }))
+                              }
+                              list="sql-column-options"
+                              placeholder="columns"
+                              className="h-8 text-xs"
+                            />
+                            <Input
+                              value={blocks.having}
+                              onChange={(e) =>
+                                updateBlocks((p) => ({
+                                  ...p,
+                                  having: e.target.value,
+                                }))
+                              }
+                              placeholder="HAVING condition"
+                              className="h-8 text-xs"
+                            />
+                          </div>
+                        </>
+                      )}
+
+                      {/* ── ORDER / LIMIT ── */}
+                      {blockId === "order" && (
+                        <>
+                          <BlockHeader
+                            id="order"
+                            right={
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-6 text-[11px] gap-1"
+                                onClick={() =>
+                                  updateBlocks((p) => ({
+                                    ...p,
+                                    orderBy: [
+                                      ...p.orderBy,
+                                      {
+                                        id: `order-${Date.now()}`,
+                                        field: "",
+                                        direction: "ASC",
+                                      },
+                                    ],
+                                  }))
+                                }
+                              >
+                                <Plus className="h-3 w-3" />
+                                Sort
+                              </Button>
+                            }
+                          />
+                          {blocks.orderBy.map((order) => (
+                            <div
+                              key={order.id}
+                              draggable
+                              onDragStart={() =>
+                                handleRowDragStart("orderBy", order.id)
+                              }
+                              onDragOver={(e) => e.preventDefault()}
+                              onDrop={() => handleRowDrop("orderBy", order.id)}
+                              className="flex items-center gap-1.5 p-1.5 rounded-md bg-white/60 dark:bg-slate-900/40 border border-slate-200/60 dark:border-slate-800/40"
+                            >
+                              <GripVertical className="h-3.5 w-3.5 text-slate-400 cursor-grab shrink-0" />
+                              <Input
+                                className="h-7 text-[11px] flex-1 min-w-0"
+                                value={order.field}
+                                onChange={(e) =>
+                                  updateBlocks((p) => ({
+                                    ...p,
+                                    orderBy: p.orderBy.map((o) =>
+                                      o.id === order.id
+                                        ? { ...o, field: e.target.value }
+                                        : o,
+                                    ),
+                                  }))
+                                }
+                                list="sql-column-options"
+                                placeholder="column"
+                              />
+                              <select
+                                aria-label="Direction"
+                                className="h-7 w-16 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-1 text-[11px] shrink-0"
+                                value={order.direction}
+                                onChange={(e) =>
+                                  updateBlocks((p) => ({
+                                    ...p,
+                                    orderBy: p.orderBy.map((o) =>
+                                      o.id === order.id
+                                        ? {
+                                            ...o,
+                                            direction: e.target
+                                              .value as OrderBlock["direction"],
+                                          }
+                                        : o,
+                                    ),
+                                  }))
+                                }
+                              >
+                                <option value="ASC">ASC</option>
+                                <option value="DESC">DESC</option>
+                              </select>
+                              <button
+                                type="button"
+                                aria-label="Remove"
+                                className="h-6 w-6 flex items-center justify-center rounded text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 shrink-0"
+                                onClick={() =>
+                                  updateBlocks((p) => ({
+                                    ...p,
+                                    orderBy: p.orderBy.filter(
+                                      (o) => o.id !== order.id,
+                                    ),
+                                  }))
+                                }
+                              >
+                                <X className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          ))}
+                          <FieldIssues field="orderBy" />
+                          <div className="flex items-center gap-2 pt-1">
+                            <Label className="text-[11px] text-slate-500 dark:text-slate-400 shrink-0">
+                              {dialect === "sqlserver" ? "TOP" : "LIMIT"}
+                            </Label>
+                            <Input
+                              value={blocks.limit}
+                              onChange={(e) =>
+                                updateBlocks((p) => ({
+                                  ...p,
+                                  limit: e.target.value,
+                                }))
+                              }
+                              placeholder="e.g. 100"
+                              className="h-7 text-xs w-24"
+                            />
+                            <FieldIssues field="limit" />
+                          </div>
+                        </>
+                      )}
                     </div>
-                    <div className="flex items-center gap-2">
-                      <Label className="text-xs text-slate-500 dark:text-slate-400 shrink-0">
-                        Database
-                      </Label>
-                      <Input
-                        className="h-8 text-xs w-[140px]"
-                        value={databaseOverride}
-                        onChange={(event) => setDatabaseOverride(event.target.value)}
-                        placeholder={
-                          activeConnection?.database ||
-                          activeConnection?.defaultDatabase ||
-                          "default"
-                        }
-                      />
-                    </div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={loadSchema}
-                      disabled={schemaLoading || !activeConnection}
-                      className="h-8"
-                    >
-                      <RefreshCw
+                  );
+                })}
+
+                {visibleBlocks.length === 0 && (
+                  <div className="text-center py-8 text-sm text-slate-400 dark:text-slate-500">
+                    All blocks are hidden. Use the toggle pills above to show
+                    clauses.
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* RIGHT: NL + SQL Output (2/5) */}
+            <div className="lg:col-span-2 flex flex-col min-h-0 overflow-hidden">
+              {/* Natural Language — text or voice */}
+              <div className="border-b border-slate-200/70 dark:border-slate-800/70 p-3 space-y-2 shrink-0">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5">
+                    <Sparkles className="h-3.5 w-3.5 text-slate-500 dark:text-slate-400" />
+                    <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                      Natural Language
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    {isVoiceSupported && (
+                      <Button
+                        size="sm"
+                        variant={isVoiceListening ? "destructive" : "outline"}
                         className={cn(
-                          "h-3.5 w-3.5 mr-1",
-                          schemaLoading && "animate-spin",
+                          "h-6 gap-1 text-[11px]",
+                          isVoiceListening && "animate-pulse",
                         )}
-                      />
-                      {schemaLoading ? "Loading…" : "Schema"}
-                    </Button>
-                    <Button variant="outline" size="sm" className="h-8" onClick={refreshConnections}>
-                      Reload
-                    </Button>
+                        onClick={toggleVoiceListening}
+                        title={
+                          isVoiceListening ? "Stop listening" : "Voice input"
+                        }
+                        aria-label={
+                          isVoiceListening
+                            ? "Stop voice input"
+                            : "Start voice input"
+                        }
+                      >
+                        <Mic className="h-3 w-3" />
+                        {isVoiceListening ? "Stop" : "Voice"}
+                      </Button>
+                    )}
                     <Button
-                      variant="outline"
                       size="sm"
-                      className="h-8"
+                      variant="outline"
+                      className="h-6 text-[11px]"
+                      disabled={aiLoading}
+                      onClick={() => runAiGeneration(naturalLanguage, true)}
+                    >
+                      {aiLoading ? "Generating…" : "Generate"}
+                    </Button>
+                  </div>
+                </div>
+                <Textarea
+                  value={naturalLanguage}
+                  onChange={(e) => setNaturalLanguage(e.target.value)}
+                  placeholder="e.g. Show id and name from users where status is active, order by name, limit 20"
+                  className="min-h-[60px] max-h-[100px] text-xs resize-none"
+                />
+                {/* Live voice transcript while speaking */}
+                {isVoiceListening && voiceInterim && (
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 italic">
+                    Listening: {voiceInterim}
+                  </p>
+                )}
+                {voiceError && (
+                  <p className="text-[11px] text-red-600 dark:text-red-400">
+                    {voiceError}
+                  </p>
+                )}
+                {/* Example phrases — click to insert */}
+                <div className="flex flex-wrap gap-1">
+                  <span className="text-[10px] text-slate-400 dark:text-slate-500 mr-1 self-center">
+                    Try:
+                  </span>
+                  {[
+                    "Show all from users limit 10",
+                    "Select name, email from users where status equals active",
+                    "Orders where total greater than 100 order by date desc",
+                  ].map((phrase) => (
+                    <button
+                      key={phrase}
+                      type="button"
+                      className="text-[10px] px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700"
                       onClick={() =>
-                        window.dispatchEvent(
-                          new CustomEvent("filepro:navigate", {
-                            detail: { tab: "sql-export" },
-                          }),
+                        setNaturalLanguage((prev) =>
+                          prev.trim() ? `${prev}; ${phrase}` : phrase,
                         )
                       }
                     >
-                      Manage
-                    </Button>
-                    <div className="flex items-center gap-2 ml-auto">
-                      <Label className="text-xs text-slate-500 dark:text-slate-400">
-                        Dialect
-                      </Label>
-                      <Select
-                        value={dialect}
-                        onValueChange={(value) => setDialect(value as SqlDialect)}
-                      >
-                        <SelectTrigger className="w-[130px] h-8 text-xs">
-                          <SelectValue placeholder="Dialect" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {Object.entries(DIALECT_LABELS).map(([key, label]) => (
-                            <SelectItem key={key} value={key}>
-                              {label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <Switch
-                        checked={syncEnabled}
-                        onCheckedChange={setSyncEnabled}
-                        id="sync-toggle-formatter"
-                      />
-                      <Label htmlFor="sync-toggle-formatter" className="text-xs">
-                        Sync
-                      </Label>
-                      <Switch
-                        checked={useAiForNl}
-                        onCheckedChange={setUseAiForNl}
-                        id="ai-toggle-formatter"
-                      />
-                      <Label htmlFor="ai-toggle-formatter" className="text-xs">
-                        AI
-                      </Label>
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2 text-[10px] text-slate-500 dark:text-slate-400">
-                    <span className="rounded-full border border-slate-200/70 px-2 py-0.5 dark:border-slate-700/70">
-                      {schemaTables.length > 0
-                        ? `Schema: ${schemaTables.length} tables`
-                        : "Schema: not loaded"}
-                    </span>
-                    <span className="rounded-full border border-slate-200/70 px-2 py-0.5 dark:border-slate-700/70">
-                      {DIALECT_LABELS[dialect]}
-                    </span>
-                    <span className="rounded-full border border-slate-200/70 px-2 py-0.5 dark:border-slate-700/70">
-                      {useAiForNl ? ollamaModel : "AI off"}
-                    </span>
-                    {schemaError && (
-                      <span className="text-amber-600 dark:text-amber-400">
-                        {schemaError}
-                      </span>
-                    )}
-                  </div>
+                      {phrase}
+                    </button>
+                  ))}
                 </div>
-              </CollapsibleContent>
-            </div>
-          </Collapsible>
-
-          <div className="flex-1 min-h-0 overflow-hidden rounded-2xl border border-slate-200/70 bg-white/70 p-4 shadow-sm backdrop-blur dark:border-slate-800/70 dark:bg-slate-900/50">
-            <div className="grid grid-cols-12 gap-4 min-h-0 h-full">
-              {/* Left Column - Independent Scroll Container */}
-              <div className="col-span-7 flex h-full flex-col min-h-0 overflow-hidden">
-                {/* Sticky Block Palette Header */}
-                <div className="shrink-0 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3 shadow-sm mb-3">
-                  {/* Header Row */}
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-2">
-                      <Layers className="h-4 w-4 text-slate-500 dark:text-slate-400" />
-                      <span className="text-sm font-semibold text-slate-700 dark:text-slate-300">
-                        Block Palette
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <span className="text-[10px] text-slate-400 dark:text-slate-500">
-                        Drag to reorder
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Search + Schema Counts Row */}
-                  <div className="flex items-center gap-2 mb-2">
-                    <div className="relative flex-1">
-                      <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
-                      <Input
-                        value={blockSearch}
-                        onChange={(event) => setBlockSearch(event.target.value)}
-                        placeholder="Search blocks..."
-                        className="h-7 text-xs pl-8 pr-2"
-                      />
-                    </div>
-                    <div className="flex items-center gap-1.5 text-[10px] text-slate-500 dark:text-slate-400">
-                      <div className="flex items-center gap-1 rounded-md border border-slate-200/70 dark:border-slate-700/70 px-1.5 py-0.5 bg-slate-50/50 dark:bg-slate-800/50">
-                        <Table2 className="h-3 w-3" />
-                        <span>{schemaTables.length}</span>
-                      </div>
-                      <div className="flex items-center gap-1 rounded-md border border-slate-200/70 dark:border-slate-700/70 px-1.5 py-0.5 bg-slate-50/50 dark:bg-slate-800/50">
-                        <Columns3 className="h-3 w-3" />
-                        <span>{schemaColumnOptions.length}</span>
-                      </div>
-                      <div className="flex items-center gap-1 rounded-md border border-slate-200/70 dark:border-slate-700/70 px-1.5 py-0.5 bg-slate-50/50 dark:bg-slate-800/50">
-                        <Eye className="h-3 w-3" />
-                        <span>{blockOrder.filter((id) => blockVisibility[id]).length}/{blockOrder.length}</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Compact Mini Map */}
-                  <div className="flex items-center gap-1 p-1.5 rounded-md bg-slate-50/80 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-700/50">
-                    {blockOrder.map((blockId) => {
-                      const isVisible = blockVisibility[blockId];
-                      const matchesSearch = !blockSearch.trim() || blockLabels[blockId].toLowerCase().includes(blockSearch.toLowerCase());
-                      return (
-                        <button
-                          key={`minimap-${blockId}`}
-                          type="button"
-                          onClick={() =>
-                            setBlockVisibility((prev) => ({
-                              ...prev,
-                              [blockId]: !prev[blockId],
-                            }))
-                          }
-                          title={`${blockLabels[blockId]} - Click to ${isVisible ? 'hide' : 'show'}`}
-                          className={cn(
-                            "flex items-center gap-1 rounded px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wider transition-all duration-150",
-                            !matchesSearch && "opacity-30",
-                            isVisible
-                              ? "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300 shadow-sm"
-                              : "bg-slate-200/60 text-slate-400 dark:bg-slate-700/40 dark:text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-700",
-                          )}
-                        >
-                          {isVisible ? (
-                            <Eye className="h-2.5 w-2.5" />
-                          ) : (
-                            <EyeOff className="h-2.5 w-2.5" />
-                          )}
-                          <span>{blockLabels[blockId].replace(/ & | /g, '').slice(0, 3)}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {/* Scrollable Blocks Container */}
-                <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden pr-1 scrollbar-thin scrollbar-thumb-slate-300 dark:scrollbar-thumb-slate-600 scrollbar-track-transparent">
-                  <div className="flex flex-col gap-3">
-                    {filteredBlockOrder.map((blockId) => (
-                      <div
-                        key={`palette-${blockId}`}
-                        draggable
-                        onDragStart={() => handleDragStart(blockId)}
-                        onDragOver={(event) => event.preventDefault()}
-                        onDrop={() => handleDrop(blockId)}
-                        className="flex items-center justify-between rounded-md border border-slate-200 dark:border-slate-800 px-3 py-2 bg-slate-50/60 dark:bg-slate-950/40 cursor-move hover:bg-slate-100/60 dark:hover:bg-slate-900/60 transition-colors"
-                      >
-                        <div className="flex items-center gap-2">
-                          <GripVertical className="h-4 w-4 text-slate-400" />
-                          <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">
-                            {blockLabels[blockId]}
-                          </span>
-                        </div>
-                        <Switch
-                          checked={blockVisibility[blockId]}
-                          onCheckedChange={(value) =>
-                            setBlockVisibility((prev) => ({
-                              ...prev,
-                              [blockId]: value,
-                            }))
-                          }
-                        />
-                      </div>
-                    ))}
-                  </div>
-
-                  {/* Visible Block Editors */}
-                  <div className="flex flex-col gap-3 mt-3">
-                    {blockOrder
-                      .filter((blockId) => blockVisibility[blockId])
-                      .map((blockId) => (
-                        <div
-                          key={blockId}
-                          draggable
-                          onDragStart={() => handleDragStart(blockId)}
-                          onDragOver={(event) => event.preventDefault()}
-                          onDrop={() => handleDrop(blockId)}
-                        >
-                          {blockRenderers[blockId]}
-                        </div>
-                      ))}
-                  </div>
-                </div>
+                {aiError && (
+                  <p className="text-[11px] text-red-600 dark:text-red-400">
+                    {aiError}
+                  </p>
+                )}
+                {nlIssues.length > 0 &&
+                  nlIssues.map((i) => (
+                    <p
+                      key={i.id}
+                      className="text-[11px] text-amber-600 dark:text-amber-400"
+                    >
+                      {i.message}
+                    </p>
+                  ))}
+                {aiResponse && (
+                  <p className="text-[10px] text-slate-400">
+                    Confidence: {Math.round(aiResponse.confidence * 100)}%
+                  </p>
+                )}
               </div>
 
-              {/* Right Column: Final SQL first (primary output), then Natural Language (collapsible) */}
-              <div className="col-span-5 flex h-full flex-col min-h-0 overflow-hidden pl-1">
-                <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden scrollbar-thin scrollbar-thumb-slate-300 dark:scrollbar-thumb-slate-600 scrollbar-track-transparent flex flex-col gap-3">
-                  {/* Final SQL — primary output, always visible and prominent */}
-                  <div className="rounded-xl border-2 border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 space-y-3 shadow-sm flex flex-col min-h-[220px]">
-                    <div className="flex items-center justify-between shrink-0">
-                      <span className="text-sm font-semibold text-slate-800 dark:text-slate-100">
-                        Final SQL ({DIALECT_LABELS[dialect]})
-                      </span>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-8"
-                        onClick={() => copyToClipboard(sql)}
-                      >
-                        <Copy className="h-3.5 w-3.5 mr-1" />
-                        Copy SQL
-                      </Button>
-                    </div>
-                    <pre
-                      className={cn(
-                        "flex-1 min-h-0 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-950 text-slate-100 text-sm p-3 overflow-auto font-mono",
-                        issues.some((issue) => issue.level === "error") &&
-                          "border-red-500/70",
-                      )}
-                    >
-                      {sql}
-                    </pre>
-                    <div className="flex flex-col gap-1.5 text-xs shrink-0">
-                      {issues.map((issue) => (
-                        <div
-                          key={issue.id}
+              {/* SQL Output — takes remaining space */}
+              <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+                <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-slate-200/70 dark:border-slate-800/70 bg-slate-50/60 dark:bg-slate-800/30 shrink-0">
+                  <span className="text-xs font-semibold text-slate-800 dark:text-slate-100">
+                    SQL{" "}
+                    <span className="font-normal text-slate-500 dark:text-slate-400">
+                      ({DIALECT_LABELS[dialect]})
+                    </span>
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-6 text-[11px] gap-1"
+                    onClick={() => copyToClipboard(sql)}
+                  >
+                    <Copy className="h-3 w-3" />
+                    Copy
+                  </Button>
+                </div>
+                <pre
+                  className={cn(
+                    "flex-1 min-h-0 overflow-auto p-3 font-mono text-sm leading-relaxed bg-slate-950 text-slate-100",
+                    issues.some((i) => i.level === "error") &&
+                      "ring-1 ring-inset ring-red-500/40",
+                  )}
+                >
+                  {sql}
+                </pre>
+                {/* Validation summary */}
+                <div className="px-3 py-1.5 border-t border-slate-200/70 dark:border-slate-800/70 shrink-0">
+                  {issues.length > 0 ? (
+                    <div className="flex flex-col gap-0.5">
+                      {issues.map((i) => (
+                        <span
+                          key={i.id}
                           className={cn(
-                            "flex items-center gap-2",
-                            issue.level === "error"
+                            "text-[11px]",
+                            i.level === "error"
                               ? "text-red-600 dark:text-red-400"
                               : "text-amber-600 dark:text-amber-400",
                           )}
                         >
-                          {issue.level === "error" ? "Error:" : "Warning:"}{" "}
-                          {issue.message}
-                        </div>
+                          {i.level === "error" ? "Error" : "Warning"}:{" "}
+                          {i.message}
+                        </span>
                       ))}
-                      {issues.length === 0 && (
-                        <div className="text-emerald-600 dark:text-emerald-400 flex items-center gap-2">
-                          <CheckCircle className="h-3.5 w-3.5" />
-                          Query looks valid.
-                        </div>
-                      )}
                     </div>
-                  </div>
-
-                  {/* Natural Language — collapsible for progressive disclosure */}
-                  <Collapsible open={nlSectionOpen} onOpenChange={setNlSectionOpen}>
-                    <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm overflow-hidden">
-                      <CollapsibleTrigger asChild>
-                        <button
-                          type="button"
-                          className="flex w-full items-center justify-between gap-2 px-4 py-2.5 text-left hover:bg-slate-50/80 dark:hover:bg-slate-800/50 transition-colors"
-                          {...{ "aria-expanded": nlSectionOpen ? "true" : "false" }}
-                          title="Natural Language"
-                        >
-                          <div className="flex items-center gap-2">
-                            <Sparkles className="h-4 w-4 text-slate-500 dark:text-slate-400" />
-                            <span className="text-sm font-semibold text-slate-700 dark:text-slate-300">
-                              Natural Language
-                            </span>
-                          </div>
-                          <span className="text-xs text-slate-500 dark:text-slate-400">
-                            {aiResponse
-                              ? `${Math.round(aiResponse.confidence * 100)}% confidence`
-                              : "Describe query in plain English"}
-                          </span>
-                        </button>
-                      </CollapsibleTrigger>
-                      <CollapsibleContent>
-                        <div className="border-t border-slate-200 dark:border-slate-800 p-4 space-y-3">
-                          <Textarea
-                            value={naturalLanguage}
-                            onChange={(event) => setNaturalLanguage(event.target.value)}
-                            placeholder="Describe your query in plain English..."
-                            className="min-h-[100px] text-sm resize-none w-full"
-                          />
-                          <div className="flex justify-end">
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              disabled={aiLoading}
-                              onClick={() => runAiGeneration(naturalLanguage, true)}
-                            >
-                              {aiLoading ? "Generating…" : "Generate SQL"}
-                            </Button>
-                          </div>
-                          <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
-                            {aiResponse && (
-                              <span>
-                                Confidence: {Math.round(aiResponse.confidence * 100)}%
-                              </span>
-                            )}
-                            {aiLoading && <span>AI analysis in progress…</span>}
-                          </div>
-                          {aiError && (
-                            <div className="rounded-md border border-red-200 dark:border-red-800 bg-red-50/80 dark:bg-red-900/20 p-2 text-xs text-red-700 dark:text-red-300">
-                              {aiError}
-                            </div>
-                          )}
-                          {nlIssues.length > 0 && (
-                            <div className="rounded-md border border-amber-200 dark:border-amber-800 bg-amber-50/80 dark:bg-amber-900/20 p-2 text-xs text-amber-700 dark:text-amber-300">
-                              {nlIssues.map((issue) => (
-                                <div key={issue.id}>{issue.message}</div>
-                              ))}
-                            </div>
-                          )}
-                          {aiResponse?.trace && aiResponse.trace.length > 0 && (
-                            <div className="rounded-md border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/30 p-2 text-xs text-slate-600 dark:text-slate-300 space-y-1">
-                              {aiResponse.trace.map((step, index) => (
-                                <div key={`${step}-${index}`}>{step}</div>
-                              ))}
-                            </div>
-                          )}
-                          {aiResponse?.sourceMap && aiResponse.sourceMap.length > 0 && (
-                            <div className="rounded-md border border-slate-200 dark:border-slate-800 bg-white/70 dark:bg-slate-950/20 p-2 text-xs text-slate-600 dark:text-slate-300 space-y-1">
-                              {aiResponse.sourceMap.map((item, index) => (
-                                <div key={`${item.source}-${index}`}>
-                                  <span className="font-semibold">{item.source}</span> →{" "}
-                                  {item.target}
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      </CollapsibleContent>
-                    </div>
-                  </Collapsible>
+                  ) : (
+                    <span className="text-[11px] text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                      <CheckCircle className="h-3 w-3" />
+                      Valid query
+                    </span>
+                  )}
                 </div>
               </div>
             </div>
           </div>
 
+          {/* Datalists for autocomplete */}
           <datalist id="sql-table-options">
-            {schemaTableOptions.map((option) => (
-              <option key={option} value={option} />
+            {schemaTableOptions.map((o) => (
+              <option key={o} value={o} />
             ))}
           </datalist>
           <datalist id="sql-column-options">
-            {schemaColumnOptions.map((option) => (
-              <option key={option} value={option} />
+            {schemaColumnOptions.map((o) => (
+              <option key={o} value={o} />
             ))}
           </datalist>
         </div>

@@ -37,6 +37,7 @@ import { EditorProvider } from "./contexts/EditorContext";
 import { AudioTranscriptionProvider } from "./features/quick-tools/contexts/AudioTranscriptionContext";
 import { JobProvider } from "./contexts/JobContext";
 import { FindReplaceProvider } from "./features/find-replace/context/FindReplaceContext";
+import { FavoritesProvider } from "./contexts/FavoritesContext";
 import {
   applyThemePreferences,
   loadThemePreferences,
@@ -51,7 +52,9 @@ function App() {
   );
 
   // When navigating to Settings with a section (e.g. from "Open AI Settings" link), scroll to that section
-  const [pendingSettingsSection, setPendingSettingsSection] = useState<string | null>(null);
+  const [pendingSettingsSection, setPendingSettingsSection] = useState<
+    string | null
+  >(null);
 
   // Panel configuration hook - manages UI visibility, layout, and panel sizes
   const {
@@ -157,7 +160,9 @@ function App() {
 
   // Handle custom navigation events (e.g. from Tool Info "Open AI Settings" link)
   useEffect(() => {
-    const handleNavigation = (e: CustomEvent<{ tab?: string; section?: string }>) => {
+    const handleNavigation = (
+      e: CustomEvent<{ tab?: string; section?: string }>,
+    ) => {
       if (e.detail?.tab) {
         setActiveTab(e.detail.tab);
         if (e.detail.tab === "settings" && e.detail.section) {
@@ -240,204 +245,248 @@ function App() {
 
   return (
     <JobProvider>
-    <FindReplaceProvider>
-    <AudioTranscriptionProvider>
-    <AgentSelectionProvider>
-      <ChatProvider>
-        <EditorProvider>
-          <div className="flex h-screen flex-col bg-background font-sans text-foreground overflow-hidden">
-            {/* Auto-update checker */}
-            <UpdateChecker />
-            {/* Title Bar */}
-            <TitleBar
-              isVisible={configuration.layout.showTitleBar}
-              onSettingsClick={() => setActiveTab("settings")}
-            />
-
-            <div className="flex flex-1 overflow-hidden min-h-0">
-              {/* Main Content Area */}
-              <div className="flex flex-1 overflow-hidden min-h-0 relative">
-                {/* Main Sidebar - Resizable */}
-                {configuration.visibility.sidebar && (
-                  <ResizablePanel
-                    size={configuration.panelSizes.sidebar.size}
-                    minSize={configuration.panelSizes.sidebar.minSize}
-                    maxSize={configuration.panelSizes.sidebar.maxSize}
-                    isMinimized={configuration.panelSizes.sidebar.isMinimized}
-                    onSizeChange={(size) => setPanelSize("sidebar", size)}
-                    // Frontend: keep ResizablePanel minimized state in sync with panel configuration
-                    // Use the boolean value provided by the resizable panel instead of always toggling.
-                    onMinimizeChange={(minimized) =>
-                      setPanelMinimized("sidebar", minimized)
-                    }
-                    direction="right"
-                    className="z-50 overflow-visible"
-                    renderChildrenWhenMinimized={true}
-                  >
-                    <Sidebar
-                      activeTab={activeTab}
-                      setActiveTab={setActiveTab}
-                      themeMode={themeMode}
-                      toggleTheme={toggleTheme}
-                      agentSidebarOpen={agentSidebarOpen}
-                      onToggleAgentSidebar={handleToggleAgentSidebar}
-                      isMinimized={configuration.panelSizes.sidebar.isMinimized}
-                      // Frontend: explicit toggle so sidebar hover/auto-hide tracks configuration correctly
-                      onToggleMinimize={() =>
-                        setPanelMinimized(
-                          "sidebar",
-                          !configuration.panelSizes.sidebar.isMinimized,
-                        )
-                      }
+      <FindReplaceProvider>
+        <FavoritesProvider>
+          <AudioTranscriptionProvider>
+            <AgentSelectionProvider>
+              <ChatProvider>
+                <EditorProvider>
+                  <div className="flex h-screen flex-col bg-background font-sans text-foreground overflow-hidden">
+                    {/* Auto-update checker */}
+                    <UpdateChecker />
+                    {/* Title Bar */}
+                    <TitleBar
+                      isVisible={configuration.layout.showTitleBar}
+                      onSettingsClick={() => setActiveTab("settings")}
                     />
-                  </ResizablePanel>
-                )}
 
-                {/* Agent Sidebar - Left Position - Resizable; render when minimized so AgentSidebar shows its collapsed UI */}
-                {configuration.layout.agentSidebarPosition === "left" &&
-                  shouldShowAgentSidebar && (
-                    <ResizablePanel
-                      size={configuration.panelSizes.agents.size}
-                      minSize={configuration.panelSizes.agents.minSize}
-                      maxSize={configuration.panelSizes.agents.maxSize}
-                      isMinimized={configuration.panelSizes.agents.isMinimized}
-                      onSizeChange={(size) => setPanelSize("agents", size)}
-                      onMinimizeChange={() => togglePanelMinimized("agents")}
-                      direction="right"
-                      className="shrink-0"
-                      renderChildrenWhenMinimized={true}
-                    >
-                      <AgentSidebar
-                        isOpen={true}
-                        onClose={handleToggleAgentSidebar}
-                        position="left"
-                        isMinimized={
-                          configuration.panelSizes.agents.isMinimized
-                        }
-                        onToggleMinimize={() => togglePanelMinimized("agents")}
-                      />
-                    </ResizablePanel>
-                  )}
+                    <div className="flex flex-1 overflow-hidden min-h-0">
+                      {/* Main Content Area */}
+                      <div className="flex flex-1 overflow-hidden min-h-0 relative">
+                        {/* Main Sidebar - Resizable */}
+                        {configuration.visibility.sidebar && (
+                          <ResizablePanel
+                            size={configuration.panelSizes.sidebar.size}
+                            minSize={configuration.panelSizes.sidebar.minSize}
+                            maxSize={configuration.panelSizes.sidebar.maxSize}
+                            isMinimized={
+                              configuration.panelSizes.sidebar.isMinimized
+                            }
+                            onSizeChange={(size) =>
+                              setPanelSize("sidebar", size)
+                            }
+                            // Frontend: keep ResizablePanel minimized state in sync with panel configuration
+                            // Use the boolean value provided by the resizable panel instead of always toggling.
+                            onMinimizeChange={(minimized) =>
+                              setPanelMinimized("sidebar", minimized)
+                            }
+                            direction="right"
+                            className="z-50 overflow-visible"
+                            renderChildrenWhenMinimized={true}
+                          >
+                            <Sidebar
+                              activeTab={activeTab}
+                              setActiveTab={setActiveTab}
+                              themeMode={themeMode}
+                              toggleTheme={toggleTheme}
+                              agentSidebarOpen={agentSidebarOpen}
+                              onToggleAgentSidebar={handleToggleAgentSidebar}
+                              isMinimized={
+                                configuration.panelSizes.sidebar.isMinimized
+                              }
+                              // Frontend: explicit toggle so sidebar hover/auto-hide tracks configuration correctly
+                              onToggleMinimize={() =>
+                                setPanelMinimized(
+                                  "sidebar",
+                                  !configuration.panelSizes.sidebar.isMinimized,
+                                )
+                              }
+                            />
+                          </ResizablePanel>
+                        )}
 
-                {/* Main View Area */}
-                <main className="flex-1 overflow-hidden relative flex flex-col min-h-0 h-full">
-                  <MainLayout>{renderContent()}</MainLayout>
-                </main>
+                        {/* Agent Sidebar - Left Position - Resizable; render when minimized so AgentSidebar shows its collapsed UI */}
+                        {configuration.layout.agentSidebarPosition === "left" &&
+                          shouldShowAgentSidebar && (
+                            <ResizablePanel
+                              size={configuration.panelSizes.agents.size}
+                              minSize={configuration.panelSizes.agents.minSize}
+                              maxSize={configuration.panelSizes.agents.maxSize}
+                              isMinimized={
+                                configuration.panelSizes.agents.isMinimized
+                              }
+                              onSizeChange={(size) =>
+                                setPanelSize("agents", size)
+                              }
+                              onMinimizeChange={() =>
+                                togglePanelMinimized("agents")
+                              }
+                              direction="right"
+                              className="shrink-0"
+                              renderChildrenWhenMinimized={true}
+                            >
+                              <AgentSidebar
+                                isOpen={true}
+                                onClose={handleToggleAgentSidebar}
+                                position="left"
+                                isMinimized={
+                                  configuration.panelSizes.agents.isMinimized
+                                }
+                                onToggleMinimize={() =>
+                                  togglePanelMinimized("agents")
+                                }
+                              />
+                            </ResizablePanel>
+                          )}
 
-                {/* Chat Panel (Right Side) - Resizable; render when minimized so ChatPanel shows its collapsed UI */}
-                {configuration.visibility.chat && (
-                  <ResizablePanel
-                    size={configuration.panelSizes.chat.size}
-                    minSize={configuration.panelSizes.chat.minSize}
-                    maxSize={configuration.panelSizes.chat.maxSize}
-                    isMinimized={configuration.panelSizes.chat.isMinimized}
-                    onSizeChange={(size) => setPanelSize("chat", size)}
-                    onMinimizeChange={() => togglePanelMinimized("chat")}
-                    direction="left"
-                    className="shrink-0"
-                    renderChildrenWhenMinimized={true}
-                  >
-                    <ChatPanel
-                      isVisible={configuration.visibility.chat}
-                      onClose={() => setPanelVisibility("chat", false)}
-                      isMinimized={configuration.panelSizes.chat.isMinimized}
-                      onToggleMinimize={() => togglePanelMinimized("chat")}
-                    />
-                  </ResizablePanel>
-                )}
+                        {/* Main View Area */}
+                        <main className="flex-1 overflow-hidden relative flex flex-col min-h-0 h-full">
+                          <MainLayout>{renderContent()}</MainLayout>
+                        </main>
 
-                {/* Agent Sidebar - Right Position - Resizable; render when minimized so AgentSidebar shows its collapsed UI */}
-                {configuration.layout.agentSidebarPosition === "right" &&
-                  shouldShowAgentSidebar && (
-                    <ResizablePanel
-                      size={configuration.panelSizes.agents.size}
-                      minSize={configuration.panelSizes.agents.minSize}
-                      maxSize={configuration.panelSizes.agents.maxSize}
-                      isMinimized={configuration.panelSizes.agents.isMinimized}
-                      onSizeChange={(size) => setPanelSize("agents", size)}
-                      onMinimizeChange={() => togglePanelMinimized("agents")}
-                      direction="left"
-                      className="shrink-0"
-                      renderChildrenWhenMinimized={true}
-                    >
-                      <AgentSidebar
-                        isOpen={true}
-                        onClose={handleToggleAgentSidebar}
-                        position="right"
-                        isMinimized={
-                          configuration.panelSizes.agents.isMinimized
-                        }
-                        onToggleMinimize={() => togglePanelMinimized("agents")}
-                      />
-                    </ResizablePanel>
-                  )}
-              </div>
-            </div>
+                        {/* Chat Panel (Right Side) - Resizable; render when minimized so ChatPanel shows its collapsed UI */}
+                        {configuration.visibility.chat && (
+                          <ResizablePanel
+                            size={configuration.panelSizes.chat.size}
+                            minSize={configuration.panelSizes.chat.minSize}
+                            maxSize={configuration.panelSizes.chat.maxSize}
+                            isMinimized={
+                              configuration.panelSizes.chat.isMinimized
+                            }
+                            onSizeChange={(size) => setPanelSize("chat", size)}
+                            onMinimizeChange={() =>
+                              togglePanelMinimized("chat")
+                            }
+                            direction="left"
+                            className="shrink-0"
+                            renderChildrenWhenMinimized={true}
+                          >
+                            <ChatPanel
+                              isVisible={configuration.visibility.chat}
+                              onClose={() => setPanelVisibility("chat", false)}
+                              isMinimized={
+                                configuration.panelSizes.chat.isMinimized
+                              }
+                              onToggleMinimize={() =>
+                                togglePanelMinimized("chat")
+                              }
+                            />
+                          </ResizablePanel>
+                        )}
 
-            {/* Bottom Panel - Resizable; render when minimized so BottomPanel shows its collapsed UI */}
-            {configuration.visibility.panel && (
-              <ResizablePanel
-                size={configuration.panelSizes.panel.size}
-                minSize={configuration.panelSizes.panel.minSize}
-                maxSize={configuration.panelSizes.panel.maxSize}
-                isMinimized={configuration.panelSizes.panel.isMinimized}
-                onSizeChange={(size) => setPanelSize("panel", size)}
-                onMinimizeChange={() => togglePanelMinimized("panel")}
-                direction="top"
-                className="border-t border-slate-200/50 dark:border-slate-800/50"
-                minimizedSize={40}
-                renderChildrenWhenMinimized={true}
-              >
-                <BottomPanel
-                  isVisible={configuration.visibility.panel}
-                  onClose={() => setPanelVisibility("panel", false)}
-                  isMinimized={configuration.panelSizes.panel.isMinimized}
-                  onToggleMinimize={() => togglePanelMinimized("panel")}
-                />
-              </ResizablePanel>
-            )}
+                        {/* Agent Sidebar - Right Position - Resizable; render when minimized so AgentSidebar shows its collapsed UI */}
+                        {configuration.layout.agentSidebarPosition ===
+                          "right" &&
+                          shouldShowAgentSidebar && (
+                            <ResizablePanel
+                              size={configuration.panelSizes.agents.size}
+                              minSize={configuration.panelSizes.agents.minSize}
+                              maxSize={configuration.panelSizes.agents.maxSize}
+                              isMinimized={
+                                configuration.panelSizes.agents.isMinimized
+                              }
+                              onSizeChange={(size) =>
+                                setPanelSize("agents", size)
+                              }
+                              onMinimizeChange={() =>
+                                togglePanelMinimized("agents")
+                              }
+                              direction="left"
+                              className="shrink-0"
+                              renderChildrenWhenMinimized={true}
+                            >
+                              <AgentSidebar
+                                isOpen={true}
+                                onClose={handleToggleAgentSidebar}
+                                position="right"
+                                isMinimized={
+                                  configuration.panelSizes.agents.isMinimized
+                                }
+                                onToggleMinimize={() =>
+                                  togglePanelMinimized("agents")
+                                }
+                              />
+                            </ResizablePanel>
+                          )}
+                      </div>
+                    </div>
 
-            {/* Status Bar */}
-            <StatusBar isVisible={configuration.layout.showStatusBar} />
+                    {/* Bottom Panel - Resizable; render when minimized so BottomPanel shows its collapsed UI */}
+                    {configuration.visibility.panel && (
+                      <ResizablePanel
+                        size={configuration.panelSizes.panel.size}
+                        minSize={configuration.panelSizes.panel.minSize}
+                        maxSize={configuration.panelSizes.panel.maxSize}
+                        isMinimized={configuration.panelSizes.panel.isMinimized}
+                        onSizeChange={(size) => setPanelSize("panel", size)}
+                        onMinimizeChange={() => togglePanelMinimized("panel")}
+                        direction="top"
+                        className="border-t border-slate-200/50 dark:border-slate-800/50"
+                        minimizedSize={40}
+                        renderChildrenWhenMinimized={true}
+                      >
+                        <BottomPanel
+                          isVisible={configuration.visibility.panel}
+                          onClose={() => setPanelVisibility("panel", false)}
+                          isMinimized={
+                            configuration.panelSizes.panel.isMinimized
+                          }
+                          onToggleMinimize={() => togglePanelMinimized("panel")}
+                        />
+                      </ResizablePanel>
+                    )}
 
-            {/* Agent Sidebar - Bottom Position - Resizable; render when minimized so AgentSidebar shows its collapsed UI */}
-            {configuration.layout.agentSidebarPosition === "bottom" &&
-              shouldShowAgentSidebar && (
-                <ResizablePanel
-                  size={configuration.panelSizes.agents.size}
-                  minSize={configuration.panelSizes.agents.minSize}
-                  maxSize={configuration.panelSizes.agents.maxSize}
-                  isMinimized={configuration.panelSizes.agents.isMinimized}
-                  onSizeChange={(size) => setPanelSize("agents", size)}
-                  onMinimizeChange={() => togglePanelMinimized("agents")}
-                  direction="top"
-                  className="shrink-0 border-t border-slate-200/50 dark:border-slate-800/50"
-                  minimizedSize={40}
-                  renderChildrenWhenMinimized={true}
-                >
-                  <AgentSidebar
-                    isOpen={true}
-                    onClose={handleToggleAgentSidebar}
-                    position="bottom"
-                    isMinimized={configuration.panelSizes.agents.isMinimized}
-                    onToggleMinimize={() => togglePanelMinimized("agents")}
-                  />
-                </ResizablePanel>
-              )}
+                    {/* Status Bar */}
+                    <StatusBar isVisible={configuration.layout.showStatusBar} />
 
-            {/* Floating Action Button for Agents (Mobile/Collapsed) */}
-            {!shouldShowAgentSidebar && configuration.visibility.agents && (
-              <AgentFloatingButton
-                onClick={handleToggleAgentSidebar}
-                isOpen={agentSidebarOpen}
-              />
-            )}
-          </div>
-        </EditorProvider>
-      </ChatProvider>
-    </AgentSelectionProvider>
-    </AudioTranscriptionProvider>
-    </FindReplaceProvider>
+                    {/* Agent Sidebar - Bottom Position - Resizable; render when minimized so AgentSidebar shows its collapsed UI */}
+                    {configuration.layout.agentSidebarPosition === "bottom" &&
+                      shouldShowAgentSidebar && (
+                        <ResizablePanel
+                          size={configuration.panelSizes.agents.size}
+                          minSize={configuration.panelSizes.agents.minSize}
+                          maxSize={configuration.panelSizes.agents.maxSize}
+                          isMinimized={
+                            configuration.panelSizes.agents.isMinimized
+                          }
+                          onSizeChange={(size) => setPanelSize("agents", size)}
+                          onMinimizeChange={() =>
+                            togglePanelMinimized("agents")
+                          }
+                          direction="top"
+                          className="shrink-0 border-t border-slate-200/50 dark:border-slate-800/50"
+                          minimizedSize={40}
+                          renderChildrenWhenMinimized={true}
+                        >
+                          <AgentSidebar
+                            isOpen={true}
+                            onClose={handleToggleAgentSidebar}
+                            position="bottom"
+                            isMinimized={
+                              configuration.panelSizes.agents.isMinimized
+                            }
+                            onToggleMinimize={() =>
+                              togglePanelMinimized("agents")
+                            }
+                          />
+                        </ResizablePanel>
+                      )}
+
+                    {/* Floating Action Button for Agents (Mobile/Collapsed) */}
+                    {!shouldShowAgentSidebar &&
+                      configuration.visibility.agents && (
+                        <AgentFloatingButton
+                          onClick={handleToggleAgentSidebar}
+                          isOpen={agentSidebarOpen}
+                        />
+                      )}
+                  </div>
+                </EditorProvider>
+              </ChatProvider>
+            </AgentSelectionProvider>
+          </AudioTranscriptionProvider>
+        </FavoritesProvider>
+      </FindReplaceProvider>
     </JobProvider>
   );
 }

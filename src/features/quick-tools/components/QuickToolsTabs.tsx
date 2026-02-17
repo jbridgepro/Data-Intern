@@ -13,7 +13,6 @@ import { UnitConverter } from "../pages/UnitConverter";
 
 import { PromptOptimizer } from "../pages/PromptOptimizer";
 
-
 import { DuplicateFinder } from "../pages/DuplicateFinder";
 import { AudioTranscription } from "../pages/AudioTranscription";
 import { CalculatorTool } from "../pages/Calculator";
@@ -60,7 +59,8 @@ export const QuickToolsTabs = () => {
       if (savedTabs) {
         const parsed = normalizeTabs(JSON.parse(savedTabs));
         const savedActive = localStorage.getItem("quick-tools-active-tab-id");
-        if (savedActive && parsed.some((t) => t.id === savedActive)) return savedActive;
+        if (savedActive && parsed.some((t) => t.id === savedActive))
+          return savedActive;
         if (parsed.length > 0) return parsed[0].id;
       }
     } catch {}
@@ -120,8 +120,8 @@ export const QuickToolsTabs = () => {
         prev.map((tab) =>
           tab.id === tabId
             ? { ...tab, type: "tool", toolId, name: toolName }
-            : tab
-        )
+            : tab,
+        ),
       );
     },
     [],
@@ -129,7 +129,7 @@ export const QuickToolsTabs = () => {
 
   const activeTab = tabs.find((t) => t.id === activeTabId);
   const pageMeta = getQuickToolPageMeta(
-    activeTab ?? { type: "hub", name: "Tools Hub" }
+    activeTab ?? { type: "hub", name: "Tools Hub" },
   );
 
   /** Open a tool (e.g. from sidebar or session); opens in a new tab so the hub stays intact. */
@@ -178,7 +178,6 @@ export const QuickToolsTabs = () => {
 
   const renderTool = (toolId: string) => {
     switch (toolId) {
-
       case "sql-formatter":
         return <SqlFormatter />;
       case "unit-converter":
@@ -186,7 +185,6 @@ export const QuickToolsTabs = () => {
 
       case "prompt-optimizer":
         return <PromptOptimizer />;
-
 
       case "duplicate-finder":
         return <DuplicateFinder />;
@@ -208,6 +206,11 @@ export const QuickToolsTabs = () => {
         title={pageMeta.title}
         subtitle={pageMeta.subtitle}
         info={pageMeta.info}
+        toolId={
+          activeTab?.type === "tool" && activeTab.toolId
+            ? `quick-tool:${activeTab.toolId}`
+            : "quick-tools"
+        }
       />
       {/* Tab Bar */}
       <div className="flex items-center gap-1.5 px-3 py-2 border-b border-slate-200/60 dark:border-slate-800/60 bg-card/30 backdrop-blur-sm">
@@ -220,15 +223,25 @@ export const QuickToolsTabs = () => {
                 "group relative px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-all duration-200 cursor-pointer min-w-[120px] max-w-[180px]",
                 activeTabId === tab.id
                   ? "bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 shadow-sm border border-blue-200/50 dark:border-blue-800/50"
-                  : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/50"
+                  : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/50",
               )}
             >
               {tab.type === "hub" ? (
-                <LayoutGrid className={cn("h-3.5 w-3.5 shrink-0", activeTabId === tab.id ? "text-blue-500" : "text-slate-400")} />
+                <LayoutGrid
+                  className={cn(
+                    "h-3.5 w-3.5 shrink-0",
+                    activeTabId === tab.id ? "text-blue-500" : "text-slate-400",
+                  )}
+                />
               ) : (
-                <Zap className={cn("h-3.5 w-3.5 shrink-0", activeTabId === tab.id ? "text-blue-500" : "text-slate-400")} />
+                <Zap
+                  className={cn(
+                    "h-3.5 w-3.5 shrink-0",
+                    activeTabId === tab.id ? "text-blue-500" : "text-slate-400",
+                  )}
+                />
               )}
-              
+
               <span className="truncate flex-1">{tab.name}</span>
 
               {tabs.length > 1 && tab.id !== HUB_TAB_ID && (
@@ -238,9 +251,9 @@ export const QuickToolsTabs = () => {
                   onClick={(e) => closeTab(tab.id, e)}
                   className={cn(
                     "p-0.5 rounded transition-all shrink-0",
-                     activeTabId === tab.id
+                    activeTabId === tab.id
                       ? "opacity-60 hover:opacity-100 hover:bg-blue-200/50 dark:hover:bg-blue-800/50"
-                      : "opacity-0 group-hover:opacity-60 hover:opacity-100 hover:bg-slate-200 dark:hover:bg-slate-700"
+                      : "opacity-0 group-hover:opacity-60 hover:opacity-100 hover:bg-slate-200 dark:hover:bg-slate-700",
                   )}
                 >
                   <X className="h-3.5 w-3.5" />
@@ -262,13 +275,12 @@ export const QuickToolsTabs = () => {
 
       {/* Content */}
       <div className="flex-1 overflow-hidden relative">
-        {activeTab && (
-          activeTab.type === "hub" ? (
-             <QuickToolsHub onOpenTool={openToolInNewTab} />
+        {activeTab &&
+          (activeTab.type === "hub" ? (
+            <QuickToolsHub onOpenTool={openToolInNewTab} />
           ) : (
             renderTool(activeTab.toolId || "")
-          )
-        )}
+          ))}
       </div>
     </div>
   );

@@ -2,30 +2,59 @@
  * File: src/features/folder-creation/components/FolderForm.tsx
  *
  * Front-end form component for folder creation configuration.
- * Provides all configuration options including naming patterns, date settings, and subfolders.
+ * Provides all configuration options including naming patterns, date settings,
+ * subfolders, and presets. Layout matches the File Creation page for consistency.
  */
 
 import { open } from "@tauri-apps/plugin-dialog";
-import { FolderConfig } from "../utils/folderUtils";
+import { FolderConfig, PreviewNode } from "../utils/folderUtils";
 import { Button } from "../../../components/ui/button";
 import { Input } from "../../../components/ui/input";
 import { Label } from "../../../components/ui/label";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
+  SelectSeparator,
   SelectTrigger,
   SelectValue,
 } from "../../../components/ui/select";
 import { Separator } from "../../../components/ui/separator";
 import { Switch } from "../../../components/ui/switch";
 import { Slider } from "../../../components/ui/slider";
-import { FolderOpen, Save, Download, Upload, XCircle, List, Type, FileSpreadsheet, ChevronRight, Hash, Calendar, Settings2 } from "lucide-react";
+import {
+  FolderOpen,
+  Save,
+  Download,
+  Upload,
+  XCircle,
+  List,
+  Type,
+  FileSpreadsheet,
+  ChevronRight,
+  Hash,
+  Calendar,
+  Settings2,
+  Sparkles,
+  FilePlus,
+  FolderTree,
+  Shuffle,
+  Fingerprint,
+} from "lucide-react";
 import { motion } from "framer-motion";
 import { CsvConfigForm } from "../../../components/common/CsvConfigForm";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../../../components/ui/collapsible";
+import { CountInput } from "../../../components/common/CountInput";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "../../../components/ui/collapsible";
 import { cn } from "../../../lib/utils";
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { FolderPresetTemplates, PresetTemplate } from "./PresetTemplates";
+import { FilePreCreationConfig } from "./FilePreCreationConfig";
 
 interface ConfigPreset {
   name: string;
@@ -44,6 +73,8 @@ interface FolderFormProps {
   onDeletePreset?: (index: number) => void;
   onExportConfig?: () => void;
   onImportConfig?: () => void;
+  onLoadPresetTemplate?: (template: PresetTemplate) => void;
+  folderNodes?: PreviewNode[];
 }
 
 export const FolderForm = ({
@@ -58,11 +89,50 @@ export const FolderForm = ({
   onDeletePreset,
   onExportConfig,
   onImportConfig,
+  onLoadPresetTemplate,
+  folderNodes = [],
 }: FolderFormProps) => {
   // Collapsible section states
-  const [numberingOpen, setNumberingOpen] = useState(config.useNumbering || false);
-  const [dateOpen, setDateOpen] = useState(config.useDate || false);
+  const [namingOpen, setNamingOpen] = useState(true);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [subfoldersOpen, setSubfoldersOpen] = useState(!!config.subfolders);
+  const [templatesOpen, setTemplatesOpen] = useState(false);
+  const [filePreCreationOpen, setFilePreCreationOpen] = useState(
+    config.enableFilePreCreation || false,
+  );
+
+  /**
+   * Sync collapsible section states when config changes externally
+   * (e.g., preset load, import, or template selection).
+   * Opens sections that have active content so the user immediately
+   * sees what the preset configured.
+   */
+  useEffect(() => {
+    // Auto-open File Pre-Creation if enabled by the loaded config
+    setFilePreCreationOpen(config.enableFilePreCreation || false);
+
+    // Auto-open Subfolders if the config has subfolder definitions
+    if (config.subfolders) {
+      setSubfoldersOpen(true);
+    }
+
+    // Auto-open Advanced Options if any advanced feature is active
+    if (
+      config.useNumbering ||
+      config.useDate ||
+      config.useRandomString ||
+      config.useUUID
+    ) {
+      setAdvancedOpen(true);
+    }
+  }, [
+    config.enableFilePreCreation,
+    config.subfolders,
+    config.useNumbering,
+    config.useDate,
+    config.useRandomString,
+    config.useUUID,
+  ]);
 
   const handleSelectRoot = async () => {
     try {
@@ -81,8 +151,8 @@ export const FolderForm = ({
   };
 
   return (
-    <div className="space-y-8">
-      {/* Target Location */}
+    <div className="space-y-6">
+      {/* ── Section 1: Target Location ── */}
       <section className="space-y-3">
         <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
           Location
@@ -107,184 +177,159 @@ export const FolderForm = ({
 
       <Separator />
 
-      {/* Mode Selection */}
+      {/* ── Section 2: Creation Mode (segmented control) ── */}
       <section className="space-y-3">
         <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
           Creation Mode
         </Label>
-        <div className="grid grid-cols-3 gap-2 p-1 bg-muted rounded-lg">
-          <button
-            onClick={() => setConfig({ ...config, creationMode: 'pattern' })}
-            className={`flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium rounded-md transition-all ${
-              config.creationMode === 'pattern' || !config.creationMode
-                ? 'bg-background text-foreground shadow-sm'
-                : 'text-muted-foreground hover:text-foreground'
-            }`}
-            disabled={isCreating}
-          >
-            <Type className="h-4 w-4" />
-            Pattern
-          </button>
-          <button
-            onClick={() => setConfig({ ...config, creationMode: 'list' })}
-            className={`flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium rounded-md transition-all ${
-              config.creationMode === 'list'
-                ? 'bg-background text-foreground shadow-sm'
-                : 'text-muted-foreground hover:text-foreground'
-            }`}
-            disabled={isCreating}
-          >
-            <List className="h-4 w-4" />
-            List
-          </button>
-          <button
-            onClick={() => setConfig({ ...config, creationMode: 'csv' })}
-            className={`flex items-center justify-center gap-2 px-3 py-2 text-sm font-medium rounded-md transition-all ${
-              config.creationMode === 'csv'
-                ? 'bg-background text-foreground shadow-sm'
-                : 'text-muted-foreground hover:text-foreground'
-            }`}
-            disabled={isCreating}
-          >
-            <FileSpreadsheet className="h-4 w-4" />
-            CSV
-          </button>
+        <div className="grid grid-cols-3 gap-1.5 p-1 bg-muted rounded-lg">
+          {[
+            { value: "pattern", label: "Pattern", Icon: Type },
+            { value: "list", label: "List", Icon: List },
+            { value: "csv", label: "CSV", Icon: FileSpreadsheet },
+          ].map(({ value, label, Icon }) => (
+            <button
+              key={value}
+              onClick={() =>
+                setConfig({
+                  ...config,
+                  creationMode: value as FolderConfig["creationMode"],
+                })
+              }
+              className={cn(
+                "flex items-center justify-center gap-1.5 px-2 py-2 text-xs font-medium rounded-md transition-all",
+                config.creationMode === value ||
+                  (!config.creationMode && value === "pattern")
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+              disabled={isCreating}
+            >
+              <Icon className="h-3.5 w-3.5" />
+              {label}
+            </button>
+          ))}
         </div>
       </section>
 
       <Separator />
 
+      {/* ── Section 3: Mode-Specific Input ── */}
+
       {/* List Mode Input */}
-      {config.creationMode === 'list' && (
-        <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="space-y-4"
-        >
-             <div className="space-y-2">
-                <Label>Folder List</Label>
-                <textarea
-                  value={config.folderList}
-                  onChange={(e) => setConfig({ ...config, folderList: e.target.value })}
-                  placeholder="Enter folder names, separated by newlines or commas..."
-                  className="flex min-h-[300px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-                  disabled={isCreating}
-                  onKeyDown={(e) => {
-                    if ((e.metaKey || e.ctrlKey) && e.key === "ArrowUp") {
-                      e.preventDefault();
-                      e.currentTarget.scrollTop = 0;
-                      e.currentTarget.setSelectionRange(0, 0);
-                    }
-                  }}
-                />
-                <p className="text-[10px] text-muted-foreground">
-                  Separate names with newlines or commas.
-                </p>
-             </div>
-        </motion.div>
+      {config.creationMode === "list" && (
+        <section className="space-y-2">
+          <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            Folder List
+          </Label>
+          <textarea
+            value={config.folderList}
+            onChange={(e) =>
+              setConfig({ ...config, folderList: e.target.value })
+            }
+            placeholder="Enter folder names, separated by newlines or commas..."
+            className="flex min-h-[200px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={isCreating}
+            onKeyDown={(e) => {
+              if ((e.metaKey || e.ctrlKey) && e.key === "ArrowUp") {
+                e.preventDefault();
+                e.currentTarget.scrollTop = 0;
+                e.currentTarget.setSelectionRange(0, 0);
+              }
+            }}
+          />
+          <p className="text-[10px] text-muted-foreground">
+            Separate names with newlines or commas.
+          </p>
+        </section>
       )}
 
       {/* CSV Mode Config */}
-      {config.creationMode === 'csv' && (
-        <CsvConfigForm 
-            config={config} 
-            setConfig={setConfig} 
-            isCreating={isCreating} 
+      {config.creationMode === "csv" && (
+        <CsvConfigForm
+          config={config}
+          setConfig={setConfig}
+          isCreating={isCreating}
         />
       )}
 
-      <Separator />
-
-      {/* Core Naming */}
-      <section className="space-y-4">
-        <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-          Naming Pattern
-        </Label>
-
-        <div className="grid gap-4">
-          {config.creationMode === 'pattern' && (
-             <div className="space-y-2">
-                <Label>Base Name</Label>
-                <Input
-                  value={config.baseName}
-                  onChange={(e) =>
-                    setConfig({ ...config, baseName: e.target.value })
-                  }
-                  placeholder="e.g. project_folder"
-                  disabled={isCreating}
-                />
-              </div>
-          )}
-
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label>Separator</Label>
-              <Select
-                value={config.separator}
-                onValueChange={(v: string) =>
-                  setConfig({
-                    ...config,
-                    separator: v === "NONE" ? "" : v,
-                  })
-                }
-                disabled={isCreating}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="_">Underscore (_)</SelectItem>
-                  <SelectItem value="-">Hyphen (-)</SelectItem>
-                  <SelectItem value=".">Dot (.)</SelectItem>
-                  <SelectItem value=" ">Space ( )</SelectItem>
-                  <SelectItem value="NONE">None</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            {config.creationMode === 'pattern' && (
-              <div className="space-y-2">
-                <Label>Count</Label>
-                <Input
-                  type="number"
-                  min={1}
-                  max={1000}
-                  value={config.count}
-                  onChange={(e) =>
-                    setConfig({
-                      ...config,
-                      count: parseInt(e.target.value) || 1,
-                    })
-                  }
-                  disabled={isCreating}
-                />
-              </div>
-            )}
-          </div>
-        </div>
-      </section>
-
-      {/* Custom Prefix/Suffix - Collapsible Advanced Options */}
-      <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
+      {/* ── Section 4: Naming Pattern (collapsible bordered card) ── */}
+      <Collapsible open={namingOpen} onOpenChange={setNamingOpen}>
         <div className="border rounded-lg overflow-hidden">
-          <CollapsibleTrigger className="w-full flex items-center justify-between p-3 hover:bg-muted/50 transition-colors">
-            <div className="flex items-center gap-2">
+          <div className="flex items-center justify-between p-3 hover:bg-muted/50 transition-colors">
+            <CollapsibleTrigger className="flex items-center gap-2 flex-1">
               <Settings2 className="h-4 w-4 text-muted-foreground" />
               <span className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-                Advanced Options
+                Naming Pattern
               </span>
-            </div>
+            </CollapsibleTrigger>
             <div className="flex items-center gap-2">
               {(config.customPrefix || config.customSuffix) && (
-                <span className="text-xs text-blue-600 dark:text-blue-400">Active</span>
+                <span className="text-xs text-blue-600 dark:text-blue-400">
+                  Active
+                </span>
               )}
-              <ChevronRight className={cn(
-                "h-4 w-4 transition-transform text-muted-foreground",
-                advancedOpen && "rotate-90"
-              )} />
+              <CollapsibleTrigger>
+                <ChevronRight
+                  className={cn(
+                    "h-4 w-4 transition-transform text-muted-foreground",
+                    namingOpen && "rotate-90",
+                  )}
+                />
+              </CollapsibleTrigger>
             </div>
-          </CollapsibleTrigger>
+          </div>
           <CollapsibleContent>
             <div className="p-4 border-t space-y-4">
+              {/* Base Name & Count (Pattern mode only) */}
+              {config.creationMode === "pattern" && (
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label className="text-xs">Base Name</Label>
+                    <Input
+                      value={config.baseName}
+                      onChange={(e) =>
+                        setConfig({ ...config, baseName: e.target.value })
+                      }
+                      placeholder="e.g. project_folder"
+                      className="h-8 text-sm"
+                      disabled={isCreating}
+                    />
+                  </div>
+                  <CountInput
+                    label="Number of folders"
+                    hint="1–1000"
+                    value={config.count}
+                    onChange={(count) => setConfig({ ...config, count })}
+                    disabled={isCreating}
+                  />
+                </div>
+              )}
+
+              {/* Separator */}
+              <div className="space-y-2">
+                <Label className="text-xs">Separator</Label>
+                <Select
+                  value={config.separator || "NONE"}
+                  onValueChange={(v: string) =>
+                    setConfig({ ...config, separator: v === "NONE" ? "" : v })
+                  }
+                  disabled={isCreating}
+                >
+                  <SelectTrigger className="h-8 text-sm">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="_">Underscore (_)</SelectItem>
+                    <SelectItem value="-">Hyphen (-)</SelectItem>
+                    <SelectItem value=".">Dot (.)</SelectItem>
+                    <SelectItem value=" ">Space ( )</SelectItem>
+                    <SelectItem value="NONE">None</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Custom Prefix & Suffix */}
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label className="text-xs">Custom Prefix</Label>
@@ -316,435 +361,584 @@ export const FolderForm = ({
         </div>
       </Collapsible>
 
-      {/* Numbering Options - Collapsible */}
-      <Collapsible
-        open={numberingOpen}
-        onOpenChange={(open) => {
-          setNumberingOpen(open);
-          if (!open) setConfig({ ...config, useNumbering: false });
-          else setConfig({ ...config, useNumbering: true });
-        }}
-      >
+      {/* ── Section 5: Subfolders (collapsible bordered card) ── */}
+      <Collapsible open={subfoldersOpen} onOpenChange={setSubfoldersOpen}>
+        <div className="border rounded-lg overflow-hidden">
+          <div className="flex items-center justify-between p-3 hover:bg-muted/50 transition-colors">
+            <CollapsibleTrigger className="flex items-center gap-2 flex-1">
+              <FolderTree className="h-4 w-4 text-muted-foreground" />
+              <span className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+                Subfolders
+              </span>
+            </CollapsibleTrigger>
+            <div className="flex items-center gap-2">
+              {config.subfolders && (
+                <span className="text-xs text-blue-600 dark:text-blue-400">
+                  {config.subfolders.split(/[,\n]/).filter(Boolean).length}{" "}
+                  defined
+                </span>
+              )}
+              <CollapsibleTrigger>
+                <ChevronRight
+                  className={cn(
+                    "h-4 w-4 transition-transform text-muted-foreground",
+                    subfoldersOpen && "rotate-90",
+                  )}
+                />
+              </CollapsibleTrigger>
+            </div>
+          </div>
+          <CollapsibleContent>
+            <div className="p-4 border-t space-y-4">
+              <div className="space-y-2">
+                <Label className="text-[10px] text-muted-foreground">
+                  Comma or Newline Separated
+                </Label>
+                <textarea
+                  value={config.subfolders}
+                  onChange={(e) =>
+                    setConfig({ ...config, subfolders: e.target.value })
+                  }
+                  placeholder="Docs, Images, Assets..."
+                  disabled={isCreating}
+                  className="flex min-h-[80px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                />
+              </div>
+
+              {config.subfolders && (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  className="grid grid-cols-2 gap-4"
+                >
+                  <div className="space-y-1">
+                    <Label className="text-[10px]">Common Prefix</Label>
+                    <Input
+                      className="h-7 text-xs"
+                      value={config.subfolderPrefix}
+                      onChange={(e) =>
+                        setConfig({
+                          ...config,
+                          subfolderPrefix: e.target.value,
+                        })
+                      }
+                      placeholder="e.g. 0_"
+                      disabled={isCreating}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-[10px]">Common Suffix</Label>
+                    <Input
+                      className="h-7 text-xs"
+                      value={config.subfolderSuffix}
+                      onChange={(e) =>
+                        setConfig({
+                          ...config,
+                          subfolderSuffix: e.target.value,
+                        })
+                      }
+                      placeholder="e.g. _v1"
+                      disabled={isCreating}
+                    />
+                  </div>
+                </motion.div>
+              )}
+            </div>
+          </CollapsibleContent>
+        </div>
+      </Collapsible>
+
+      <Separator />
+
+      {/* ── Section 6: Advanced Options (single collapsible with sub-sections) ── */}
+      <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
         <div className="border rounded-lg overflow-hidden">
           <CollapsibleTrigger className="w-full flex items-center justify-between p-3 hover:bg-muted/50 transition-colors">
             <div className="flex items-center gap-2">
-              <Hash className="h-4 w-4 text-muted-foreground" />
+              <Sparkles className="h-4 w-4 text-muted-foreground" />
               <span className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-                Numbering Options
+                Advanced Options
               </span>
             </div>
             <div className="flex items-center gap-2">
-              <Switch
-                checked={config.useNumbering}
-                onClick={(e) => e.stopPropagation()}
-                onCheckedChange={(c: boolean) => {
-                  setConfig({ ...config, useNumbering: c });
-                  setNumberingOpen(c);
-                }}
-                disabled={isCreating}
+              {(config.useNumbering ||
+                config.useDate ||
+                config.useRandomString ||
+                config.useUUID) && (
+                <span className="text-xs text-blue-600 dark:text-blue-400">
+                  Active
+                </span>
+              )}
+              <ChevronRight
+                className={cn(
+                  "h-4 w-4 transition-transform text-muted-foreground",
+                  advancedOpen && "rotate-90",
+                )}
               />
-              <ChevronRight className={cn(
-                "h-4 w-4 transition-transform text-muted-foreground",
-                numberingOpen && "rotate-90"
-              )} />
             </div>
           </CollapsibleTrigger>
           <CollapsibleContent>
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              className="p-4 border-t space-y-4"
-            >
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label className="text-xs">Start From</Label>
-                  <Input
-                    type="number"
-                    value={config.startNumber}
-                    onChange={(e) =>
-                      setConfig({
-                        ...config,
-                        startNumber: parseInt(e.target.value) || 1,
-                      })
+            <div className="p-4 border-t space-y-5">
+              {/* Numbering */}
+              <section className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Hash className="h-3.5 w-3.5 text-muted-foreground" />
+                    <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Numbering
+                    </Label>
+                  </div>
+                  <Switch
+                    checked={config.useNumbering}
+                    onCheckedChange={(c: boolean) =>
+                      setConfig({ ...config, useNumbering: c })
                     }
-                    className="h-8"
                     disabled={isCreating}
                   />
                 </div>
-                <div className="space-y-2">
-                  <Label className="text-xs">Padding (001)</Label>
-                  <div className="pt-2">
-                    <Slider
-                      min={1}
-                      max={6}
-                      step={1}
-                      value={[config.digitCount]}
-                      onValueChange={([v]: number[]) =>
-                        setConfig({ ...config, digitCount: v })
-                      }
-                      disabled={isCreating}
-                    />
-                    <div className="text-right text-[10px] text-muted-foreground mt-1">
-                      {config.digitCount} digits
+                {config.useNumbering && (
+                  <div className="grid grid-cols-2 gap-3 pl-2 border-l-2 ml-1">
+                    <div className="space-y-1">
+                      <Label className="text-[10px]">Start From</Label>
+                      <Input
+                        type="number"
+                        value={config.startNumber}
+                        onChange={(e) =>
+                          setConfig({
+                            ...config,
+                            startNumber: parseInt(e.target.value) || 1,
+                          })
+                        }
+                        className="h-7 text-xs"
+                        disabled={isCreating}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[10px]">
+                        Padding ({String(1).padStart(config.digitCount, "0")})
+                      </Label>
+                      <Slider
+                        min={1}
+                        max={6}
+                        step={1}
+                        value={[config.digitCount]}
+                        onValueChange={([v]: number[]) =>
+                          setConfig({ ...config, digitCount: v })
+                        }
+                        disabled={isCreating}
+                      />
+                    </div>
+                    <div className="col-span-2 space-y-1">
+                      <Label className="text-[10px]">Position</Label>
+                      <Select
+                        value={config.numberPosition}
+                        onValueChange={(v: any) =>
+                          setConfig({ ...config, numberPosition: v })
+                        }
+                        disabled={isCreating}
+                      >
+                        <SelectTrigger className="h-7 text-xs">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="suffix">
+                            Suffix (Name_001)
+                          </SelectItem>
+                          <SelectItem value="prefix">
+                            Prefix (001_Name)
+                          </SelectItem>
+                          <SelectItem value="after-prefix">
+                            After Prefix
+                          </SelectItem>
+                          <SelectItem value="before-suffix">
+                            Before Suffix
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
                     </div>
                   </div>
-                </div>
-                <div className="col-span-2 space-y-2">
-                  <Label className="text-xs">Position</Label>
-                  <Select
-                    value={config.numberPosition}
-                    onValueChange={(
-                      v: "prefix" | "suffix" | "after-prefix" | "before-suffix"
-                    ) => setConfig({ ...config, numberPosition: v })}
+                )}
+              </section>
+
+              <Separator className="opacity-30" />
+
+              {/* Timestamp */}
+              <section className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Calendar className="h-3.5 w-3.5 text-muted-foreground" />
+                    <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Timestamp
+                    </Label>
+                  </div>
+                  <Switch
+                    checked={config.useDate}
+                    onCheckedChange={(c: boolean) =>
+                      setConfig({ ...config, useDate: c })
+                    }
                     disabled={isCreating}
-                  >
-                    <SelectTrigger className="h-8">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="suffix">Suffix (Name_001)</SelectItem>
-                      <SelectItem value="prefix">Prefix (001_Name)</SelectItem>
-                      <SelectItem value="after-prefix">
-                        After Prefix (Name_001)
-                      </SelectItem>
-                      <SelectItem value="before-suffix">
-                        Before Suffix (001_Name)
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
+                  />
                 </div>
-              </div>
-            </motion.div>
+                {config.useDate && (
+                  <div className="grid grid-cols-2 gap-3 pl-2 border-l-2 ml-1">
+                    <div className="space-y-1">
+                      <Label className="text-[10px]">Format</Label>
+                      <Select
+                        value={config.dateFormat}
+                        onValueChange={(v: any) =>
+                          setConfig({ ...config, dateFormat: v })
+                        }
+                        disabled={isCreating}
+                      >
+                        <SelectTrigger className="h-7 text-xs">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectGroup>
+                            <SelectLabel className="text-[10px] uppercase text-muted-foreground px-2 py-1">
+                              Standard
+                            </SelectLabel>
+                            <SelectItem value="YYYY-MM-DD">
+                              YYYY-MM-DD
+                            </SelectItem>
+                            <SelectItem value="YYYYMMDD">YYYYMMDD</SelectItem>
+                            <SelectItem value="DD-MM-YYYY">
+                              DD-MM-YYYY
+                            </SelectItem>
+                            <SelectItem value="MM-DD-YYYY">
+                              MM-DD-YYYY
+                            </SelectItem>
+                          </SelectGroup>
+                          <SelectSeparator />
+                          <SelectGroup>
+                            <SelectLabel className="text-[10px] uppercase text-muted-foreground px-2 py-1">
+                              Short
+                            </SelectLabel>
+                            <SelectItem value="YY-MM-DD">YY-MM-DD</SelectItem>
+                            <SelectItem value="YYMMDD">YYMMDD</SelectItem>
+                            <SelectItem value="MM-DD-YY">MM-DD-YY</SelectItem>
+                            <SelectItem value="MMDDYY">MMDDYY</SelectItem>
+                          </SelectGroup>
+                          <SelectSeparator />
+                          <SelectGroup>
+                            <SelectLabel className="text-[10px] uppercase text-muted-foreground px-2 py-1">
+                              Time
+                            </SelectLabel>
+                            <SelectItem value="YYYY-MM-DD_HH-MM-SS">
+                              YYYY-MM-DD_HH-MM-SS
+                            </SelectItem>
+                            <SelectItem value="YYYYMMDD_HHMMSS">
+                              YYYYMMDD_HHMMSS
+                            </SelectItem>
+                            <SelectItem value="HH-MM-SS">HH-MM-SS</SelectItem>
+                            <SelectItem value="HHMMSS">HHMMSS</SelectItem>
+                            <SelectItem value="timestamp">
+                              Unix Timestamp
+                            </SelectItem>
+                          </SelectGroup>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[10px]">Position</Label>
+                      <Select
+                        value={config.datePosition}
+                        onValueChange={(v: any) =>
+                          setConfig({ ...config, datePosition: v })
+                        }
+                        disabled={isCreating}
+                      >
+                        <SelectTrigger className="h-7 text-xs">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="prefix">Prefix</SelectItem>
+                          <SelectItem value="suffix">Suffix</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                )}
+              </section>
+
+              <Separator className="opacity-30" />
+
+              {/* Random String */}
+              <section className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Shuffle className="h-3.5 w-3.5 text-muted-foreground" />
+                    <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Random String
+                    </Label>
+                  </div>
+                  <Switch
+                    checked={config.useRandomString}
+                    onCheckedChange={(c: boolean) =>
+                      setConfig({ ...config, useRandomString: c })
+                    }
+                    disabled={isCreating}
+                  />
+                </div>
+                {config.useRandomString && (
+                  <div className="grid grid-cols-2 gap-3 pl-2 border-l-2 ml-1">
+                    <div className="space-y-1">
+                      <Label className="text-[10px]">Length</Label>
+                      <Input
+                        type="number"
+                        min={1}
+                        max={32}
+                        value={config.randomStringLength}
+                        onChange={(e) =>
+                          setConfig({
+                            ...config,
+                            randomStringLength: parseInt(e.target.value) || 8,
+                          })
+                        }
+                        className="h-7 text-xs"
+                        disabled={isCreating}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-[10px]">Position</Label>
+                      <Select
+                        value={config.randomStringPosition}
+                        onValueChange={(v: "prefix" | "suffix") =>
+                          setConfig({ ...config, randomStringPosition: v })
+                        }
+                        disabled={isCreating}
+                      >
+                        <SelectTrigger className="h-7 text-xs">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="prefix">Prefix</SelectItem>
+                          <SelectItem value="suffix">Suffix</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                )}
+              </section>
+
+              <Separator className="opacity-30" />
+
+              {/* UUID */}
+              <section className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Fingerprint className="h-3.5 w-3.5 text-muted-foreground" />
+                    <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      UUID
+                    </Label>
+                  </div>
+                  <Switch
+                    checked={config.useUUID}
+                    onCheckedChange={(c: boolean) =>
+                      setConfig({ ...config, useUUID: c })
+                    }
+                    disabled={isCreating}
+                  />
+                </div>
+                {config.useUUID && (
+                  <div className="pl-2 border-l-2 ml-1 space-y-1">
+                    <Label className="text-[10px]">Position</Label>
+                    <Select
+                      value={config.uuidPosition}
+                      onValueChange={(v: "prefix" | "suffix") =>
+                        setConfig({ ...config, uuidPosition: v })
+                      }
+                      disabled={isCreating}
+                    >
+                      <SelectTrigger className="h-7 text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="prefix">Prefix</SelectItem>
+                        <SelectItem value="suffix">Suffix</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+              </section>
+            </div>
           </CollapsibleContent>
         </div>
       </Collapsible>
 
-      {/* Date/Timestamp Options - Collapsible */}
+      <Separator />
+
+      {/* ── Section 7: File Pre-Creation (collapsible bordered card) ── */}
       <Collapsible
-        open={dateOpen}
-        onOpenChange={(open) => {
-          setDateOpen(open);
-          if (!open) setConfig({ ...config, useDate: false });
-          else setConfig({ ...config, useDate: true });
-        }}
+        open={filePreCreationOpen}
+        onOpenChange={setFilePreCreationOpen}
       >
         <div className="border rounded-lg overflow-hidden">
-          <CollapsibleTrigger className="w-full flex items-center justify-between p-3 hover:bg-muted/50 transition-colors">
-            <div className="flex items-center gap-2">
-              <Calendar className="h-4 w-4 text-muted-foreground" />
+          <div className="flex items-center justify-between p-3 hover:bg-muted/50 transition-colors">
+            <CollapsibleTrigger className="flex items-center gap-2 flex-1">
+              <FilePlus className="h-4 w-4 text-purple-500" />
               <span className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-                Timestamp Options
+                Pre-Create Files
               </span>
-            </div>
+            </CollapsibleTrigger>
             <div className="flex items-center gap-2">
               <Switch
-                checked={config.useDate}
+                checked={config.enableFilePreCreation || false}
                 onClick={(e) => e.stopPropagation()}
-                onCheckedChange={(c: boolean) => {
-                  setConfig({ ...config, useDate: c });
-                  setDateOpen(c);
+                onCheckedChange={(checked) => {
+                  setConfig({ ...config, enableFilePreCreation: checked });
+                  setFilePreCreationOpen(checked);
                 }}
                 disabled={isCreating}
               />
-              <ChevronRight className={cn(
-                "h-4 w-4 transition-transform text-muted-foreground",
-                dateOpen && "rotate-90"
-              )} />
-            </div>
-          </CollapsibleTrigger>
-          <CollapsibleContent>
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              className="p-4 border-t space-y-4"
-            >
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label className="text-xs">Format</Label>
-                  <Select
-                    value={config.dateFormat}
-                    onValueChange={(v: any) =>
-                      setConfig({ ...config, dateFormat: v })
-                }
-                disabled={isCreating}
-              >
-                <SelectTrigger className="h-8">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="YYYY-MM-DD">YYYY-MM-DD</SelectItem>
-                  <SelectItem value="YYYYMMDD">YYYYMMDD</SelectItem>
-                  <SelectItem value="DD-MM-YYYY">DD-MM-YYYY</SelectItem>
-                  <SelectItem value="MM-DD-YYYY">MM-DD-YYYY</SelectItem>
-                  <SelectItem value="YYYY-MM-DD_HH-MM-SS">
-                    YYYY-MM-DD_HH-MM-SS
-                  </SelectItem>
-                  <SelectItem value="YYYYMMDD_HHMMSS">
-                    YYYYMMDD_HHMMSS
-                  </SelectItem>
-                  <SelectItem value="timestamp">Unix Timestamp</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label className="text-xs">Position</Label>
-              <Select
-                value={config.datePosition}
-                onValueChange={(v: any) =>
-                  setConfig({ ...config, datePosition: v })
-                }
-                disabled={isCreating}
-              >
-                <SelectTrigger className="h-8">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="prefix">Prefix</SelectItem>
-                  <SelectItem value="suffix">Suffix</SelectItem>
-                </SelectContent>
-              </Select>
+              <CollapsibleTrigger>
+                <ChevronRight
+                  className={cn(
+                    "h-4 w-4 transition-transform text-muted-foreground",
+                    filePreCreationOpen && "rotate-90",
+                  )}
+                />
+              </CollapsibleTrigger>
             </div>
           </div>
-            </motion.div>
+          <CollapsibleContent>
+            {config.enableFilePreCreation && (
+              <FilePreCreationConfig
+                config={config}
+                setConfig={setConfig}
+                folderNodes={folderNodes}
+              />
+            )}
           </CollapsibleContent>
         </div>
       </Collapsible>
 
-      {/* Random String Options */}
-      <section className="space-y-4">
-        <div className="flex items-center justify-between">
-          <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-            Random String
-          </Label>
-          <Switch
-            checked={config.useRandomString}
-            onCheckedChange={(c: boolean) =>
-              setConfig({ ...config, useRandomString: c })
-            }
-            disabled={isCreating}
-          />
-        </div>
-
-        {config.useRandomString && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            className="grid grid-cols-2 gap-4 pl-2 border-l-2 ml-1"
-          >
-            <div className="space-y-2">
-              <Label className="text-xs">Length</Label>
-              <Input
-                type="number"
-                min={1}
-                max={32}
-                value={config.randomStringLength}
-                onChange={(e) =>
-                  setConfig({
-                    ...config,
-                    randomStringLength: parseInt(e.target.value) || 8,
-                  })
-                }
-                className="h-8"
-                disabled={isCreating}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label className="text-xs">Position</Label>
-              <Select
-                value={config.randomStringPosition}
-                onValueChange={(v: "prefix" | "suffix") =>
-                  setConfig({ ...config, randomStringPosition: v })
-                }
-                disabled={isCreating}
-              >
-                <SelectTrigger className="h-8">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="prefix">Prefix</SelectItem>
-                  <SelectItem value="suffix">Suffix</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </motion.div>
-        )}
-      </section>
-
       <Separator />
 
-      {/* UUID Options */}
-      <section className="space-y-4">
-        <div className="flex items-center justify-between">
-          <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-            UUID
-          </Label>
-          <Switch
-            checked={config.useUUID}
-            onCheckedChange={(c: boolean) =>
-              setConfig({ ...config, useUUID: c })
-            }
-            disabled={isCreating}
-          />
-        </div>
-
-        {config.useUUID && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            className="pl-2 border-l-2 ml-1"
-          >
-            <div className="space-y-2">
-              <Label className="text-xs">Position</Label>
-              <Select
-                value={config.uuidPosition}
-                onValueChange={(v: "prefix" | "suffix") =>
-                  setConfig({ ...config, uuidPosition: v })
-                }
-                disabled={isCreating}
-              >
-                <SelectTrigger className="h-8">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="prefix">Prefix</SelectItem>
-                  <SelectItem value="suffix">Suffix</SelectItem>
-                </SelectContent>
-              </Select>
+      {/* ── Section 8: Presets & Templates (collapsible bordered card) ── */}
+      <Collapsible>
+        <div className="border rounded-lg overflow-hidden">
+          <CollapsibleTrigger className="w-full flex items-center justify-between p-3 hover:bg-muted/50 transition-colors">
+            <div className="flex items-center gap-2">
+              <Save className="h-4 w-4 text-muted-foreground" />
+              <span className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+                Presets & Templates
+              </span>
             </div>
-          </motion.div>
-        )}
-      </section>
-      
-
-
-      <Separator />
-
-      {/* Subfolder Configuration (Shared) */}
-      <section className="space-y-4">
-        <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-          Subfolders
-        </Label>
-
-        <div className="space-y-2">
-          <Label className="text-xs">List (Comma or Newline Separated)</Label>
-          <textarea
-            value={config.subfolders}
-            onChange={(e) =>
-              setConfig({ ...config, subfolders: e.target.value })
-            }
-            placeholder="Docs, Images, Assets..."
-            disabled={isCreating}
-            className="flex min-h-[80px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-          />
-        </div>
-
-        {config.subfolders && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            className="grid grid-cols-2 gap-4 pt-2"
-          >
-            <div className="space-y-1">
-              <Label className="text-xs">Common Prefix</Label>
-              <Input
-                className="h-7 text-xs"
-                value={config.subfolderPrefix}
-                onChange={(e) =>
-                  setConfig({ ...config, subfolderPrefix: e.target.value })
-                }
-                placeholder="e.g. 0_"
-                disabled={isCreating}
-              />
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs">Common Suffix</Label>
-              <Input
-                className="h-7 text-xs"
-                value={config.subfolderSuffix}
-                onChange={(e) =>
-                  setConfig({ ...config, subfolderSuffix: e.target.value })
-                }
-                placeholder="e.g. _v1"
-                disabled={isCreating}
-              />
-            </div>
-          </motion.div>
-        )}
-      </section>
-
-      <Separator />
-
-      {/* Configuration Presets */}
-      <section className="space-y-3">
-        <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-          Presets
-        </Label>
-        <div className="flex gap-2">
-          <Input
-            value={presetName}
-            onChange={(e) => setPresetName?.(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && onSavePreset?.()}
-            placeholder="Preset name..."
-            className="h-8 text-sm"
-            disabled={isCreating}
-          />
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={onSavePreset}
-            disabled={!presetName.trim() || isCreating}
-          >
-            <Save className="h-3 w-3" />
-          </Button>
-        </div>
-        {presets.length > 0 && (
-          <div className="space-y-1 max-h-32 overflow-y-auto">
-            {presets.map((preset, index) => (
-              <div
-                key={index}
-                className="flex items-center gap-2 p-1.5 rounded hover:bg-accent/50 group"
-              >
-                <button
-                  onClick={() => onLoadPreset?.(preset)}
-                  className="flex-1 text-left text-xs truncate"
+            <ChevronRight className="h-4 w-4 text-muted-foreground transition-transform data-[state=open]:rotate-90" />
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <div className="p-4 border-t space-y-3">
+              {/* Save preset */}
+              <div className="flex gap-2">
+                <Input
+                  value={presetName}
+                  onChange={(e) => setPresetName?.(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && onSavePreset?.()}
+                  placeholder="Preset name..."
+                  className="h-8 text-sm"
                   disabled={isCreating}
+                />
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={onSavePreset}
+                  disabled={!presetName.trim() || isCreating}
                 >
-                  {preset.name}
-                </button>
-                <button
-                  onClick={() => onDeletePreset?.(index)}
-                  className="opacity-0 group-hover:opacity-100 text-destructive hover:text-destructive/80 transition-opacity"
-                  disabled={isCreating}
-                >
-                  <XCircle className="h-3 w-3" />
-                </button>
+                  <Save className="h-3 w-3" />
+                </Button>
               </div>
-            ))}
-          </div>
-        )}
-        <div className="flex gap-2 pt-1">
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={onExportConfig}
-            className="flex-1"
-            disabled={isCreating}
-          >
-            <Download className="h-3 w-3 mr-1" />
-            Export
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={onImportConfig}
-            className="flex-1"
-            disabled={isCreating}
-          >
-            <Upload className="h-3 w-3 mr-1" />
-            Import
-          </Button>
+
+              {/* Preset list */}
+              {presets.length > 0 && (
+                <div className="space-y-1 max-h-32 overflow-y-auto">
+                  {presets.map((preset, index) => (
+                    <div
+                      key={index}
+                      className="flex items-center gap-2 p-1.5 rounded hover:bg-accent/50 group"
+                    >
+                      <button
+                        onClick={() => onLoadPreset?.(preset)}
+                        className="flex-1 text-left text-xs truncate"
+                        disabled={isCreating}
+                      >
+                        {preset.name}
+                      </button>
+                      <button
+                        onClick={() => onDeletePreset?.(index)}
+                        className="opacity-0 group-hover:opacity-100 text-destructive hover:text-destructive/80 transition-opacity"
+                        disabled={isCreating}
+                        aria-label={`Delete preset "${preset.name}"`}
+                        title={`Delete preset "${preset.name}"`}
+                      >
+                        <XCircle className="h-3 w-3" aria-hidden="true" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Export / Import */}
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={onExportConfig}
+                  className="flex-1"
+                  disabled={isCreating}
+                >
+                  <Download className="h-3 w-3 mr-1" />
+                  Export
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={onImportConfig}
+                  className="flex-1"
+                  disabled={isCreating}
+                >
+                  <Upload className="h-3 w-3 mr-1" />
+                  Import
+                </Button>
+              </div>
+
+              {/* Quick Start Templates */}
+              {onLoadPresetTemplate && (
+                <Collapsible
+                  open={templatesOpen}
+                  onOpenChange={setTemplatesOpen}
+                >
+                  <CollapsibleTrigger className="w-full flex items-center justify-between p-2 hover:bg-muted/50 rounded transition-colors mt-1">
+                    <div className="flex items-center gap-2">
+                      <Sparkles className="h-3.5 w-3.5 text-blue-500" />
+                      <span className="text-xs font-medium text-muted-foreground">
+                        Quick Start Templates
+                      </span>
+                    </div>
+                    <ChevronRight
+                      className={cn(
+                        "h-3.5 w-3.5 transition-transform text-muted-foreground",
+                        templatesOpen && "rotate-90",
+                      )}
+                    />
+                  </CollapsibleTrigger>
+                  <CollapsibleContent>
+                    <motion.div
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      className="pt-2"
+                    >
+                      <FolderPresetTemplates
+                        onSelectPreset={onLoadPresetTemplate}
+                      />
+                    </motion.div>
+                  </CollapsibleContent>
+                </Collapsible>
+              )}
+            </div>
+          </CollapsibleContent>
         </div>
-      </section>
+      </Collapsible>
     </div>
   );
 };

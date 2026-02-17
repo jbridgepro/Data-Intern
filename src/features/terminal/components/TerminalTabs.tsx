@@ -148,6 +148,7 @@ export const TerminalTabs = () => {
         title="Terminal"
         subtitle="Run commands and scripts"
         info={terminalInfo}
+        toolId="terminal"
       />
       {/* Tab Bar */}
       <div className="flex items-center gap-1 p-2 border-b bg-(--terminal-selection) border-(--terminal-border)">

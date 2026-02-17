@@ -12,6 +12,32 @@ import { motion } from "framer-motion";
 import { PreviewNode } from "../utils/folderUtils";
 import { Input } from "../../../components/ui/input";
 import { ScrollArea } from "../../../components/ui/scroll-area";
+import "./FolderPreview.css";
+
+/** Row wrapper that applies indentation via CSS variable (no inline style). */
+function FolderPreviewRow({
+  level,
+  className,
+  children,
+}: {
+  level: number;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (ref.current)
+      ref.current.style.setProperty(
+        "--folder-preview-margin-left",
+        `${level * 16}px`
+      );
+  }, [level]);
+  return (
+    <div ref={ref} className={`folder-preview-row ${className ?? ""}`}>
+      {children}
+    </div>
+  );
+}
 
 interface FolderPreviewProps {
   nodes: PreviewNode[];
@@ -66,6 +92,7 @@ const EditableNode = ({
 
   const isPlaceholder = node.id === "more-placeholder";
   const canEdit = (node.status === "pending" || !node.status) && !isPlaceholder;
+  const isPreCreationFile = node.type === "file" && node.isPreCreationFile;
 
   return (
     <motion.div
@@ -76,17 +103,14 @@ const EditableNode = ({
     >
       {/* Connector lines for tree structure */}
       {level > 0 && (
-        <div
-          className="absolute left-[-1.25rem] top-0 bottom-0 w-px bg-border"
-          style={{ left: "-14px" }}
-        />
+        <div className="absolute folder-preview-connector top-0 bottom-0 w-px bg-border" />
       )}
 
-      <div
+      <FolderPreviewRow
+        level={level}
         className={`flex items-center gap-2 py-1 px-2 rounded-lg hover:bg-accent/50 transition-colors ${
           level === 0 ? "mb-1" : ""
-        }`}
-        style={{ marginLeft: level * 16 }}
+        } ${isPreCreationFile ? "bg-purple-50/50 dark:bg-purple-900/10" : ""}`}
       >
         {/* Horizontal connector */}
         {level > 0 && (
@@ -96,7 +120,11 @@ const EditableNode = ({
         {node.type === "folder" ? (
           <Folder className="h-4 w-4 text-blue-500 shrink-0" />
         ) : (
-          <File className="h-4 w-4 text-muted-foreground shrink-0" />
+          <File
+            className={`h-4 w-4 shrink-0 ${
+              isPreCreationFile ? "text-purple-500" : "text-muted-foreground"
+            }`}
+          />
         )}
 
         {isEditing && !isPlaceholder && canEdit ? (
@@ -129,6 +157,15 @@ const EditableNode = ({
           </div>
         )}
 
+        {/* Pattern badge for pattern-based propagated files */}
+        {isPreCreationFile &&
+          node.propagationMode &&
+          node.propagationMode !== "manual" && (
+            <span className="text-[9px] bg-blue-500/20 text-blue-700 dark:text-blue-400 px-1.5 py-0.5 rounded shrink-0">
+              Pattern
+            </span>
+          )}
+
         {/* Status indicators */}
         {!isPlaceholder && (
           <>
@@ -145,7 +182,7 @@ const EditableNode = ({
             )}
           </>
         )}
-      </div>
+      </FolderPreviewRow>
 
       {/* Error message */}
       {node.status === "error" && node.errorMessage && (

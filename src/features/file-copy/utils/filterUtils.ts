@@ -52,6 +52,12 @@ export function isFileVisible(entry: FileEntry, options: FilterOptions): boolean
   }
 
   // 3. Extension filtering (Files only)
+  // When extensions are actively selected, apply them as a filter.
+  // When NO extensions are selected: in exclude mode show everything,
+  // in include mode show everything ONLY if a search term is active
+  // (so the search isn't blocked), otherwise hide all files.
+  const hasActiveSearch = searchTerm && searchTerm.trim().length > 0;
+
   if (filterExtensions.length > 0) {
     const ext = entry.extension ? entry.extension.toLowerCase() : "{no-ext}";
 
@@ -66,15 +72,17 @@ export function isFileVisible(entry: FileEntry, options: FilterOptions): boolean
         return false;
       }
     }
-  } else if (filterMode === "include") {
-    // In include mode with no extensions selected, hide all files
+  } else if (filterMode === "include" && !hasActiveSearch) {
+    // In include mode with no extensions selected AND no search active,
+    // hide all files (user needs to pick at least one extension).
+    // When search IS active, skip this rule so matching files of any type show.
     return false;
   }
 
   // 4. Search term filtering (Files only)
   // We typically don't filter folders by search term to allow navigation to children that match
-  if (searchTerm && searchTerm.trim()) {
-    if (!entry.name.toLowerCase().includes(searchTerm.toLowerCase())) {
+  if (hasActiveSearch) {
+    if (!entry.name.toLowerCase().includes(searchTerm!.toLowerCase())) {
       return false;
     }
   }

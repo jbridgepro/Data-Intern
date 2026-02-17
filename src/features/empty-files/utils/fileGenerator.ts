@@ -5,7 +5,8 @@
  * Handles various naming patterns including numbering, dates, timestamps, random strings, and UUIDs.
  */
 
-// import { join } from "@tauri-apps/api/path";
+import { join } from "@tauri-apps/api/path";
+import { formatDate as sharedFormatDate } from "../../../utils/dateUtils";
 
 export interface FileConfig {
     rootPath: string;
@@ -28,7 +29,8 @@ export interface FileConfig {
 
     // Date/Time
     useDate: boolean;
-    dateFormat: 'YYYY-MM-DD' | 'YYYYMMDD' | 'DD-MM-YYYY' | 'MM-DD-YYYY' | 'YYYY-MM-DD_HH-MM-SS' | 'YYYYMMDD_HHMMSS' | 'timestamp';
+    dateFormat: 'YYYY-MM-DD' | 'YYYYMMDD' | 'YY-MM-DD' | 'YYMMDD' | 'DD-MM-YYYY' | 'MM-DD-YYYY' | 'MM-DD-YY' | 'MMDDYY' | 'YYYY-MM-DD_HH-MM-SS' | 'YYYYMMDD_HHMMSS' | 'YYMMDD_HHMMSS' | 'HH-MM-SS' | 'HHMMSS' | 'timestamp' | 'custom';
+    customDateFormat?: string;
     datePosition: 'prefix' | 'suffix';
 
     // Random string generation
@@ -43,7 +45,7 @@ export interface FileConfig {
     overwrite: boolean;
 
     // Creation Mode
-    creationMode: 'pattern' | 'list' | 'csv';
+    creationMode: 'pattern' | 'list' | 'csv' | 'map';
     fileList: string;
 
     // CSV Configuration
@@ -78,6 +80,8 @@ export interface GenerationStats {
  * Calculates the total number of files to be created based on configuration
  */
 export const getTotalCount = (config: FileConfig): number => {
+    if (config.creationMode === 'map') return 0;
+
     const extensions = config.extensions.length > 0 ? config.extensions : [''];
     const extCount = extensions.length;
 
@@ -102,25 +106,11 @@ export const getTotalCount = (config: FileConfig): number => {
  * @param format - The date/time format to use
  * @returns Formatted date/time string
  */
-const formatDate = (format: string): string => {
-    const d = new Date();
-    const year = d.getFullYear();
-    const month = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    const hours = String(d.getHours()).padStart(2, '0');
-    const minutes = String(d.getMinutes()).padStart(2, '0');
-    const seconds = String(d.getSeconds()).padStart(2, '0');
-
-    switch (format) {
-        case 'YYYY-MM-DD': return `${year}-${month}-${day}`;
-        case 'YYYYMMDD': return `${year}${month}${day}`;
-        case 'DD-MM-YYYY': return `${day}-${month}-${year}`;
-        case 'MM-DD-YYYY': return `${month}-${day}-${year}`;
-        case 'YYYY-MM-DD_HH-MM-SS': return `${year}-${month}-${day}_${hours}-${minutes}-${seconds}`;
-        case 'YYYYMMDD_HHMMSS': return `${year}${month}${day}_${hours}${minutes}${seconds}`;
-        case 'timestamp': return String(d.getTime());
-        default: return `${year}-${month}-${day}`;
+const formatDate = (format: string, customFormat?: string): string => {
+    if (format === 'custom' && customFormat) {
+        return sharedFormatDate(customFormat);
     }
+    return sharedFormatDate(format);
 };
 
 /**
@@ -269,6 +259,8 @@ export const generateFileNameNoExt = (
  * @returns Array of generated file objects
  */
 export const generatePreview = async (config: FileConfig): Promise<GeneratedFile[]> => {
+    if (config.creationMode === 'map') return [];
+
     const files: GeneratedFile[] = [];
     const {
         rootPath, extensions, count,
@@ -276,7 +268,7 @@ export const generatePreview = async (config: FileConfig): Promise<GeneratedFile
     } = config;
 
     // Pre-calculate date string if needed (same for all files in preview)
-    const dateStr = useDate ? formatDate(dateFormat) : '';
+    const dateStr = useDate ? formatDate(dateFormat, config.customDateFormat) : '';
     const activeExtensions = extensions.length > 0 ? extensions : ['']; // Ensure at least one pass if no extension
 
     if (config.creationMode === 'list') {
@@ -400,7 +392,7 @@ export const generateExecutionList = (config: FileConfig, previewFiles: Generate
     // Since I can't easily export formatDate without another Replace, I'll copy the date generation logic or 
     // just rely on generatePreview's behavior of using a fixed date string across the batch.
     // Actually, I can just use `formatDate(dateFormat)` since it is in scope of this file!
-    const dateStr = useDate ? formatDate(dateFormat) : '';
+    const dateStr = useDate ? formatDate(dateFormat, config.customDateFormat) : '';
 
     remainingRows.forEach((row, _i) => {
         const index = rowsCovered + _i; // Actual index in original array (0-based)

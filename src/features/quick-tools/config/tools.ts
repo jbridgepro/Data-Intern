@@ -66,7 +66,7 @@ export const toolsConfig: ToolMetadata[] = [
     {
         id: "file-converter",
         name: "File Converter",
-        description: "Convert video and audio files to different formats.",
+        description: "Convert video, audio, images, documents, and spreadsheets between formats. Re-encode same-format files to adjust quality or size, with live output estimates.",
         icon: FileVideo,
         route: "file-converter",
         category: "utility",

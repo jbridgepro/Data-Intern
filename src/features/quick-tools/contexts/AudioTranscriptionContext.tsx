@@ -6,7 +6,14 @@
  * Remote VibeVoice-ASR is supported via custom service URL.
  */
 
-import React, { createContext, useContext, useState, useRef, useCallback, useEffect } from "react";
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useRef,
+  useCallback,
+  useEffect,
+} from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
@@ -81,22 +88,30 @@ interface AudioTranscriptionContextType {
   startService: () => Promise<{ success: boolean; error?: string }>;
 }
 
-const AudioTranscriptionContext = createContext<AudioTranscriptionContextType | null>(null);
+const AudioTranscriptionContext =
+  createContext<AudioTranscriptionContextType | null>(null);
 
 export const useAudioTranscription = () => {
   const context = useContext(AudioTranscriptionContext);
   if (!context) {
-    throw new Error("useAudioTranscription must be used within AudioTranscriptionProvider");
+    throw new Error(
+      "useAudioTranscription must be used within AudioTranscriptionProvider",
+    );
   }
   return context;
 };
 
-export const AudioTranscriptionProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+export const AudioTranscriptionProvider: React.FC<{
+  children: React.ReactNode;
+}> = ({ children }) => {
   const [jobs, setJobs] = useState<TranscriptionJob[]>([]);
-  const [activeRecording, setActiveRecording] = useState<TranscriptionJob | null>(null);
+  const [activeRecording, setActiveRecording] =
+    useState<TranscriptionJob | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [audioLevel, setAudioLevel] = useState(0);
-  const [options, setOptions] = useState<TranscriptionOptions>(defaultTranscriptionOptions);
+  const [options, setOptions] = useState<TranscriptionOptions>(
+    defaultTranscriptionOptions,
+  );
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -105,9 +120,12 @@ export const AudioTranscriptionProvider: React.FC<{ children: React.ReactNode }>
   const animationFrameRef = useRef<number | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
-  const updateOptions = useCallback((partial: Partial<TranscriptionOptions>) => {
-    setOptions((prev) => ({ ...prev, ...partial }));
-  }, []);
+  const updateOptions = useCallback(
+    (partial: Partial<TranscriptionOptions>) => {
+      setOptions((prev) => ({ ...prev, ...partial }));
+    },
+    [],
+  );
 
   // Cleanup on unmount
   useEffect(() => {
@@ -124,19 +142,17 @@ export const AudioTranscriptionProvider: React.FC<{ children: React.ReactNode }>
     };
   }, []);
 
+  /**
+   * Show a browser notification if permission is already granted.
+   * Does NOT prompt for permission — that must happen from a user gesture
+   * via requestNotificationPermission().
+   */
   const showNotification = useCallback((title: string, body: string) => {
-    // Use browser notifications if available
     if ("Notification" in window && Notification.permission === "granted") {
       new Notification(title, { body });
-    } else if ("Notification" in window && Notification.permission !== "denied") {
-      Notification.requestPermission().then((permission) => {
-        if (permission === "granted") {
-          new Notification(title, { body });
-        }
-      });
     }
   }, []);
-  
+
   /** Get supported MIME type for MediaRecorder */
   const getSupportedMimeType = useCallback(() => {
     const types = [
@@ -159,47 +175,49 @@ export const AudioTranscriptionProvider: React.FC<{ children: React.ReactNode }>
    * Convert audio blob to WAV PCM format and return as base64.
    * This ensures the backend receives a valid WAV file.
    */
-  const convertBlobToWavBase64 = useCallback(async (blob: Blob): Promise<string> => {
-    return new Promise(async (resolve, reject) => {
-      try {
-        const arrayBuffer = await blob.arrayBuffer();
-        const audioContext = new AudioContext();
-        
-        let audioBuffer: AudioBuffer;
+  const convertBlobToWavBase64 = useCallback(
+    async (blob: Blob): Promise<string> => {
+      return new Promise(async (resolve, reject) => {
         try {
-          audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-        } catch (decodeError) {
-          // If decoding fails, just send raw base64 and let backend handle it
-          console.warn("Audio decode failed, sending raw format:", decodeError);
-          const base64 = btoa(
-            new Uint8Array(arrayBuffer).reduce((data, byte) => data + String.fromCharCode(byte), "")
-          );
-          await audioContext.close();
-          resolve(base64);
-          return;
-        }
+          const arrayBuffer = await blob.arrayBuffer();
+          const audioContext = new AudioContext();
 
-        // Convert AudioBuffer to WAV
-        const wavBuffer = audioBufferToWav(audioBuffer);
-        const wavBlob = new Blob([wavBuffer], { type: "audio/wav" });
-        
-        const reader = new FileReader();
-        reader.onloadend = () => {
-          const result = reader.result as string;
-          const base64 = result.split(",")[1];
-          audioContext.close();
-          resolve(base64);
-        };
-        reader.onerror = (err) => {
-          audioContext.close();
+          let audioBuffer: AudioBuffer;
+          try {
+            audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+          } catch (decodeError) {
+            await audioContext.close();
+            reject(
+              new Error(
+                "Could not decode audio. The file may be corrupted, an unsupported format, or a video file. Try converting to WAV/MP3 or use the Groq provider for video files.",
+              ),
+            );
+            return;
+          }
+
+          // Convert AudioBuffer to WAV
+          const wavBuffer = audioBufferToWav(audioBuffer);
+          const wavBlob = new Blob([wavBuffer], { type: "audio/wav" });
+
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            const result = reader.result as string;
+            const base64 = result.split(",")[1];
+            audioContext.close();
+            resolve(base64);
+          };
+          reader.onerror = (err) => {
+            audioContext.close();
+            reject(err);
+          };
+          reader.readAsDataURL(wavBlob);
+        } catch (err) {
           reject(err);
-        };
-        reader.readAsDataURL(wavBlob);
-      } catch (err) {
-        reject(err);
-      }
-    });
-  }, []);
+        }
+      });
+    },
+    [],
+  );
 
   /**
    * Convert AudioBuffer to WAV ArrayBuffer.
@@ -246,7 +264,11 @@ export const AudioTranscriptionProvider: React.FC<{ children: React.ReactNode }>
     for (let i = 0; i < length; i++) {
       for (let channel = 0; channel < numberOfChannels; channel++) {
         const sample = Math.max(-1, Math.min(1, channels[channel][i]));
-        view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7FFF, true);
+        view.setInt16(
+          offset,
+          sample < 0 ? sample * 0x8000 : sample * 0x7fff,
+          true,
+        );
         offset += 2;
       }
     }
@@ -283,7 +305,10 @@ export const AudioTranscriptionProvider: React.FC<{ children: React.ReactNode }>
   }, [options.serviceUrl]);
 
   /** Start the voice service process via Tauri. Parses options.serviceUrl for host/port. */
-  const startService = useCallback(async (): Promise<{ success: boolean; error?: string }> => {
+  const startService = useCallback(async (): Promise<{
+    success: boolean;
+    error?: string;
+  }> => {
     try {
       const url = options.serviceUrl || "http://127.0.0.1:8765";
       let host = "127.0.0.1";
@@ -331,40 +356,74 @@ export const AudioTranscriptionProvider: React.FC<{ children: React.ReactNode }>
    * Shared transcription logic: invoke backend with streaming and update job state.
    * Used by both recording (transcribeBlob) and file upload (transcribeFile).
    */
+  /**
+   * Map file extension to MIME type for Groq API.
+   * Groq accepts: flac, m4a, mp3, mp4, mpeg, mpga, oga, ogg, wav, webm.
+   */
+  const getMimeTypeForExtension = useCallback((ext: string): string => {
+    const mimeMap: Record<string, string> = {
+      wav: "audio/wav",
+      mp3: "audio/mpeg",
+      mpeg: "audio/mpeg",
+      mpga: "audio/mpeg",
+      m4a: "audio/mp4",
+      mp4: "audio/mp4",
+      ogg: "audio/ogg",
+      oga: "audio/ogg",
+      flac: "audio/flac",
+      webm: "audio/webm",
+    };
+    return mimeMap[ext.toLowerCase()] || "audio/wav";
+  }, []);
+
   const runTranscribe = useCallback(
     async (
       jobId: string,
       displayName: string,
       audioBase64: string,
-      fileExtension?: string
+      fileExtension?: string,
     ): Promise<void> => {
       let unlisten: (() => void) | undefined;
       try {
         let currentTranscript = "";
-        unlisten = await listen<any>("transcription-stream", (event) => {
-          const payload = event.payload;
-          if (!payload) return;
-          if (payload.type === "token" || payload.type === "segment") {
-            const chunk = payload.text ?? "";
-            currentTranscript += chunk;
-            setJobs((prev) =>
-              prev.map((job) =>
-                job.id === jobId
-                  ? { ...job, transcript: currentTranscript, progress: Math.min(90, job.progress + 5) }
-                  : job
-              )
-            );
-          } else if (payload.type === "done" && (payload.text ?? "").trim()) {
-            currentTranscript = (payload.text ?? "").trim();
-            setJobs((prev) =>
-              prev.map((job) =>
-                job.id === jobId ? { ...job, transcript: currentTranscript, progress: 95 } : job
-              )
-            );
+        // Listen for streaming events only when using Faster-Whisper (Tauri backend)
+        if (options.provider === "faster-whisper") {
+          try {
+            unlisten = await listen<any>("transcription-stream", (event) => {
+              const payload = event.payload;
+              if (!payload) return;
+              if (payload.type === "token" || payload.type === "segment") {
+                const chunk = payload.text ?? "";
+                currentTranscript += chunk;
+                setJobs((prev) =>
+                  prev.map((job) =>
+                    job.id === jobId
+                      ? {
+                          ...job,
+                          transcript: currentTranscript,
+                          progress: Math.min(90, job.progress + 5),
+                        }
+                      : job,
+                  ),
+                );
+              } else if (
+                payload.type === "done" &&
+                (payload.text ?? "").trim()
+              ) {
+                currentTranscript = (payload.text ?? "").trim();
+                setJobs((prev) =>
+                  prev.map((job) =>
+                    job.id === jobId
+                      ? { ...job, transcript: currentTranscript, progress: 95 }
+                      : job,
+                  ),
+                );
+              }
+            });
+          } catch {
+            // Tauri not available (e.g. web dev) - continue without streaming updates
           }
-        });
-
-
+        }
 
         let result: {
           success: boolean;
@@ -374,18 +433,23 @@ export const AudioTranscriptionProvider: React.FC<{ children: React.ReactNode }>
         };
 
         if (options.provider === "groq") {
-          if (!options.groqApiKey) {
-            throw new Error("Groq API Key is required. Please enter it in the settings panel.");
+          if (!options.groqApiKey?.trim()) {
+            throw new Error(
+              "Groq API Key is required. Please enter it in the settings panel.",
+            );
           }
 
-          // Convert base64 to Blob for Groq API
+          // Convert base64 to Blob with correct format for Groq API.
+          // Use original file extension when provided (MP3, M4A, etc.); otherwise default to WAV.
+          const ext = (fileExtension || "wav").toLowerCase();
+          const mimeType = getMimeTypeForExtension(ext);
           const binaryString = window.atob(audioBase64);
           const bytes = new Uint8Array(binaryString.length);
           for (let i = 0; i < binaryString.length; i++) {
             bytes[i] = binaryString.charCodeAt(i);
           }
-          const blob = new Blob([bytes], { type: "audio/wav" });
-          const file = new File([blob], "audio.wav", { type: "audio/wav" });
+          const blob = new Blob([bytes], { type: mimeType });
+          const file = new File([blob], `audio.${ext}`, { type: mimeType });
 
           const formData = new FormData();
           formData.append("file", file);
@@ -395,31 +459,39 @@ export const AudioTranscriptionProvider: React.FC<{ children: React.ReactNode }>
           }
           formData.append("response_format", "verbose_json"); // Get segments
 
-          const response = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
-            method: "POST",
-            headers: {
-              "Authorization": `Bearer ${options.groqApiKey}`
+          const response = await fetch(
+            "https://api.groq.com/openai/v1/audio/transcriptions",
+            {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${options.groqApiKey.trim()}`,
+              },
+              body: formData,
             },
-            body: formData
-          });
+          );
 
           if (!response.ok) {
-            const err = await response.json().catch(() => ({ error: { message: response.statusText } }));
-            throw new Error(err.error?.message || `Groq API Error: ${response.status} ${response.statusText}`);
+            const err = await response
+              .json()
+              .catch(() => ({ error: { message: response.statusText } }));
+            throw new Error(
+              err.error?.message ||
+                `Groq API Error: ${response.status} ${response.statusText}`,
+            );
           }
 
           const data = await response.json();
           result = {
             success: true,
-            text: data.text,
-            segments: data.segments?.map((s: any) => ({
-              start: s.start,
-              end: s.end,
-              text: s.text,
-              confidence: 1.0
-            })) || [],
+            text: data.text ?? "",
+            segments:
+              data.segments?.map((s: any) => ({
+                start: s.start ?? 0,
+                end: s.end ?? 0,
+                text: s.text ?? "",
+                confidence: 1.0,
+              })) || [],
           };
-
         } else {
           // Default: Tauri local voice service (Faster-Whisper)
           result = await invoke<{
@@ -443,14 +515,17 @@ export const AudioTranscriptionProvider: React.FC<{ children: React.ReactNode }>
         if (result.success) {
           const fromSegments =
             result.segments && result.segments.length > 0
-              ? result.segments.map((s) => s.text).join(" ").trim()
+              ? result.segments
+                  .map((s) => s.text)
+                  .join(" ")
+                  .trim()
               : "";
           const accumulatedText =
             (result.text && result.text.trim()) ||
             currentTranscript.trim() ||
             fromSegments ||
             "";
-          
+
           setJobs((prev) =>
             prev.map((job) => {
               if (job.id !== jobId) return job;
@@ -463,39 +538,68 @@ export const AudioTranscriptionProvider: React.FC<{ children: React.ReactNode }>
                 completedAt: new Date(),
                 ...(fileExtension !== undefined ? { fileExtension } : {}),
               };
-            })
+            }),
           );
-          showNotification("Transcription Complete", `"${displayName}" has finished transcribing.`);
+          showNotification(
+            "Transcription Complete",
+            `"${displayName}" has finished transcribing.`,
+          );
         } else {
           setJobs((prev) =>
             prev.map((job) =>
-              job.id === jobId ? { ...job, status: "error", error: result.error || "Transcription failed" } : job
-            )
+              job.id === jobId
+                ? {
+                    ...job,
+                    status: "error",
+                    error: result.error || "Transcription failed",
+                  }
+                : job,
+            ),
           );
-          showNotification("Transcription Failed", result.error || "Unable to transcribe audio");
+          showNotification(
+            "Transcription Failed",
+            result.error || "Unable to transcribe audio",
+          );
         }
       } catch (error: unknown) {
         unlisten?.();
-        const errorMessage = error instanceof Error ? error.message : "Transcription failed";
-        if (errorMessage.includes("Network Error") || errorMessage.includes("Failed to fetch")) {
-          const detail = "Could not connect to voice service. Please ensure it is running.";
+        const errorMessage =
+          error instanceof Error ? error.message : "Transcription failed";
+        if (
+          errorMessage.includes("Network Error") ||
+          errorMessage.includes("Failed to fetch")
+        ) {
+          const detail =
+            "Could not connect to voice service. Please ensure it is running.";
           setJobs((prev) =>
             prev.map((job) =>
-              job.id === jobId ? { ...job, status: "error", error: detail } : job
-            )
+              job.id === jobId
+                ? { ...job, status: "error", error: detail }
+                : job,
+            ),
           );
           showNotification("Connection Failed", detail);
         } else {
           setJobs((prev) =>
             prev.map((job) =>
-              job.id === jobId ? { ...job, status: "error", error: errorMessage } : job
-            )
+              job.id === jobId
+                ? { ...job, status: "error", error: errorMessage }
+                : job,
+            ),
           );
           showNotification("Transcription Error", errorMessage);
         }
       }
     },
-    [options.serviceUrl, options.provider, options.language, options.enableDiarization, showNotification]
+    [
+      options.serviceUrl,
+      options.provider,
+      options.language,
+      options.enableDiarization,
+      options.groqApiKey,
+      showNotification,
+      getMimeTypeForExtension,
+    ],
   );
 
   /** Transcribe a recorded blob; called from MediaRecorder onstop with job id and name. */
@@ -509,7 +613,7 @@ export const AudioTranscriptionProvider: React.FC<{ children: React.ReactNode }>
         setActiveRecording(null);
       }
     },
-    [runTranscribe, convertBlobToWavBase64]
+    [runTranscribe, convertBlobToWavBase64],
   );
 
   const startRecording = useCallback(async () => {
@@ -567,14 +671,14 @@ export const AudioTranscriptionProvider: React.FC<{ children: React.ReactNode }>
                 audioBlob,
                 audioUrl,
               }
-            : null
+            : null,
         );
         setJobs((prev) =>
           prev.map((job) =>
             job.id === newJob.id
               ? { ...job, status: "processing", audioBlob, audioUrl }
-              : job
-          )
+              : job,
+          ),
         );
 
         // Run transcription with stable job id and display name
@@ -586,7 +690,8 @@ export const AudioTranscriptionProvider: React.FC<{ children: React.ReactNode }>
       updateAudioLevel();
     } catch (error: unknown) {
       console.error("Failed to start recording:", error);
-      const message = error instanceof Error ? error.message : "Unable to access microphone";
+      const message =
+        error instanceof Error ? error.message : "Unable to access microphone";
       showNotification("Recording Failed", message);
     }
   }, [updateAudioLevel, showNotification, transcribeBlob]);
@@ -614,11 +719,16 @@ export const AudioTranscriptionProvider: React.FC<{ children: React.ReactNode }>
     }
   }, [isRecording]);
 
+  /**
+   * Transcribe an uploaded audio file.
+   * For Faster-Whisper: converts to WAV for reliable backend processing.
+   * For Groq: sends original format (MP3, M4A, etc.) for best API compatibility.
+   */
   const transcribeFile = useCallback(
     async (file: File) => {
       const jobId = `file-${Date.now()}`;
       const audioUrl = URL.createObjectURL(file);
-      // Preserve file extension for download (e.g. "mp3", "wav")
+      // Preserve file extension for download and Groq API format
       const fileExtension = file.name.includes(".")
         ? file.name.slice(file.name.lastIndexOf(".") + 1).toLowerCase()
         : undefined;
@@ -639,22 +749,40 @@ export const AudioTranscriptionProvider: React.FC<{ children: React.ReactNode }>
       setJobs((prev) => [newJob, ...prev]);
 
       try {
-        const arrayBuffer = await file.arrayBuffer();
-        const base64 = btoa(
-          new Uint8Array(arrayBuffer).reduce((data, byte) => data + String.fromCharCode(byte), "")
-        );
+        let base64: string;
+
+        if (options.provider === "faster-whisper") {
+          // Convert to WAV for reliable Faster-Whisper processing (handles MP3, M4A, etc.)
+          const blob = new Blob([await file.arrayBuffer()], {
+            type: file.type || "audio/wav",
+          });
+          base64 = await convertBlobToWavBase64(blob);
+        } else {
+          // Groq: send original format for best API compatibility
+          const arrayBuffer = await file.arrayBuffer();
+          base64 = btoa(
+            new Uint8Array(arrayBuffer).reduce(
+              (data, byte) => data + String.fromCharCode(byte),
+              "",
+            ),
+          );
+        }
+
         await runTranscribe(jobId, file.name, base64, fileExtension);
       } catch (error: unknown) {
-        const errorMessage = error instanceof Error ? error.message : "Transcription failed";
+        const errorMessage =
+          error instanceof Error ? error.message : "Transcription failed";
         setJobs((prev) =>
           prev.map((job) =>
-            job.id === jobId ? { ...job, status: "error", error: errorMessage } : job
-          )
+            job.id === jobId
+              ? { ...job, status: "error", error: errorMessage }
+              : job,
+          ),
         );
         showNotification("Transcription Error", errorMessage);
       }
     },
-    [runTranscribe, showNotification]
+    [runTranscribe, showNotification, options.provider, convertBlobToWavBase64],
   );
 
   const clearJob = useCallback((id: string) => {
@@ -678,30 +806,37 @@ export const AudioTranscriptionProvider: React.FC<{ children: React.ReactNode }>
     });
   }, []);
 
-  const downloadAudio = useCallback((jobId: string) => {
-    const job = jobs.find((j) => j.id === jobId);
-    if (job?.audioUrl) {
-      const baseName = job.name.replace(/\s+/g, "_").replace(/\.[^.]+$/, "") || job.name;
-      const extension = job.fileExtension || "webm";
-      const a = document.createElement("a");
-      a.href = job.audioUrl;
-      a.download = `${baseName}.${extension}`;
-      a.click();
-    }
-  }, [jobs]);
+  const downloadAudio = useCallback(
+    (jobId: string) => {
+      const job = jobs.find((j) => j.id === jobId);
+      if (job?.audioUrl) {
+        const baseName =
+          job.name.replace(/\s+/g, "_").replace(/\.[^.]+$/, "") || job.name;
+        const extension = job.fileExtension || "webm";
+        const a = document.createElement("a");
+        a.href = job.audioUrl;
+        a.download = `${baseName}.${extension}`;
+        a.click();
+      }
+    },
+    [jobs],
+  );
 
-  const downloadTranscript = useCallback((jobId: string) => {
-    const job = jobs.find((j) => j.id === jobId);
-    if (job?.transcript) {
-      const blob = new Blob([job.transcript], { type: "text/plain" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${job.name.replace(/\s+/g, "_")}_transcript.txt`;
-      a.click();
-      URL.revokeObjectURL(url);
-    }
-  }, [jobs]);
+  const downloadTranscript = useCallback(
+    (jobId: string) => {
+      const job = jobs.find((j) => j.id === jobId);
+      if (job?.transcript) {
+        const blob = new Blob([job.transcript], { type: "text/plain" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `${job.name.replace(/\s+/g, "_")}_transcript.txt`;
+        a.click();
+        URL.revokeObjectURL(url);
+      }
+    },
+    [jobs],
+  );
 
   return (
     <AudioTranscriptionContext.Provider

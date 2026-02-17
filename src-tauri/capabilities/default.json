@@ -251,6 +251,71 @@
           "name": "python3",
           "cmd": "python3",
           "args": true
+        },
+        {
+          "name": "soffice",
+          "cmd": "soffice",
+          "args": true
+        }
+      ]
+    },
+    {
+      "identifier": "shell:allow-spawn",
+      "allow": [
+        {
+          "name": "clawdbot",
+          "cmd": "clawdbot",
+          "args": true
+        },
+        {
+          "name": "node",
+          "cmd": "node",
+          "args": true
+        },
+        {
+          "name": "npm",
+          "cmd": "npm",
+          "args": true
+        },
+        {
+          "name": "sh",
+          "cmd": "/bin/sh",
+          "args": true
+        },
+        {
+          "name": "ffmpeg",
+          "cmd": "ffmpeg",
+          "args": true
+        },
+        {
+          "name": "ffprobe",
+          "cmd": "ffprobe",
+          "args": true
+        },
+        {
+          "name": "textutil",
+          "cmd": "textutil",
+          "args": true
+        },
+        {
+          "name": "cupsfilter",
+          "cmd": "cupsfilter",
+          "args": true
+        },
+        {
+          "name": "python",
+          "cmd": "python",
+          "args": true
+        },
+        {
+          "name": "python3",
+          "cmd": "python3",
+          "args": true
+        },
+        {
+          "name": "soffice",
+          "cmd": "soffice",
+          "args": true
         }
       ]
     },

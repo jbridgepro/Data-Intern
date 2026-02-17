@@ -286,8 +286,8 @@ const Toast = ({
       type === "success"
         ? "bg-green-100/90 dark:bg-green-900/90 text-green-800 dark:text-green-200 border border-green-200 dark:border-green-800"
         : type === "error"
-        ? "bg-red-100/90 dark:bg-red-900/90 text-red-800 dark:text-red-200 border border-red-200 dark:border-red-800"
-        : "bg-blue-100/90 dark:bg-blue-900/90 text-blue-800 dark:text-blue-200 border border-blue-200 dark:border-blue-800"
+          ? "bg-red-100/90 dark:bg-red-900/90 text-red-800 dark:text-red-200 border border-red-200 dark:border-red-800"
+          : "bg-blue-100/90 dark:bg-blue-900/90 text-blue-800 dark:text-blue-200 border border-blue-200 dark:border-blue-800"
     }`}
   >
     {type === "success" ? (
@@ -326,57 +326,104 @@ export const Settings = ({
 
   // Shorthand destructures for frequently-used values in JSX
   const {
-    activeSection, setActiveSection,
-    searchQuery, setSearchQuery,
-    toasts, removeToast, showToast,
-    sectionRefs, isMac,
+    activeSection,
+    setActiveSection,
+    searchQuery,
+    setSearchQuery,
+    toasts,
+    removeToast,
+    showToast,
+    sectionRefs,
+    isMac,
     // General
-    notificationsEnabled, setNotificationsEnabled,
-    autoSaveEnabled, setAutoSaveEnabled,
-    confirmBeforeDelete, setConfirmBeforeDelete,
-    defaultViewMode, setDefaultViewMode,
-    language, setLanguage,
-    themePreferences, updateThemePreferences, handleCustomColorsToggle,
+    notificationsEnabled,
+    setNotificationsEnabled,
+    autoSaveEnabled,
+    setAutoSaveEnabled,
+    confirmBeforeDelete,
+    setConfirmBeforeDelete,
+    defaultViewMode,
+    setDefaultViewMode,
+    language,
+    setLanguage,
+    themePreferences,
+    updateThemePreferences,
+    handleCustomColorsToggle,
     // File Mapper
-    mapperShowFileSizes, setMapperShowFileSizes,
-    mapperShowFileCounts, setMapperShowFileCounts,
-    mapperMaxDepth, setMapperMaxDepth,
-    mapperVisualizationStyle, setMapperVisualizationStyle,
+    mapperShowFileSizes,
+    setMapperShowFileSizes,
+    mapperShowFileCounts,
+    setMapperShowFileCounts,
+    mapperMaxDepth,
+    setMapperMaxDepth,
+    mapperVisualizationStyle,
+    setMapperVisualizationStyle,
     // File Copy
-    copyConflictResolution, setCopyConflictResolution,
-    copyPreserveStructure, setCopyPreserveStructure,
-    copyExcludeTemp, setCopyExcludeTemp,
+    copyConflictResolution,
+    setCopyConflictResolution,
+    copyPreserveStructure,
+    setCopyPreserveStructure,
+    copyExcludeTemp,
+    setCopyExcludeTemp,
     // Folder Creation
-    folderDefaultSeparator, setFolderDefaultSeparator,
-    folderAutoCreateStructure, setFolderAutoCreateStructure,
+    folderDefaultSeparator,
+    setFolderDefaultSeparator,
+    folderAutoCreateStructure,
+    setFolderAutoCreateStructure,
     // Empty Files
-    emptyFilesDefaultExtensions, setEmptyFilesDefaultExtensions,
-    emptyFilesUseNumbering, setEmptyFilesUseNumbering,
-    emptyFilesDefaultCount, setEmptyFilesDefaultCount,
+    emptyFilesDefaultExtensions,
+    setEmptyFilesDefaultExtensions,
+    emptyFilesUseNumbering,
+    setEmptyFilesUseNumbering,
+    emptyFilesDefaultCount,
+    setEmptyFilesDefaultCount,
     // Terminal
-    terminalTheme, setTerminalTheme,
-    terminalFontSize, setTerminalFontSize,
-    terminalScrollback, setTerminalScrollback,
+    terminalTheme,
+    setTerminalTheme,
+    terminalFontSize,
+    setTerminalFontSize,
+    terminalScrollback,
+    setTerminalScrollback,
     // Find & Replace
-    findReplaceMatchCase, setFindReplaceMatchCase,
-    findReplaceUseRegex, setFindReplaceUseRegex,
-    findReplaceDefaultIncludePattern, setFindReplaceDefaultIncludePattern,
+    findReplaceMatchCase,
+    setFindReplaceMatchCase,
+    findReplaceUseRegex,
+    setFindReplaceUseRegex,
+    findReplaceDefaultIncludePattern,
+    setFindReplaceDefaultIncludePattern,
     // SQL Export
-    sqlDefaultExportFolder, setSqlDefaultExportFolder,
-    sqlDefaultBatchSize, setSqlDefaultBatchSize,
-    sqlCsvDelimiter, setSqlCsvDelimiter,
-    sqlCsvDelimiterIsCustom, setSqlCsvDelimiterIsCustom,
-    sqlIncludeHeaders, setSqlIncludeHeaders,
+    sqlDefaultExportFolder,
+    setSqlDefaultExportFolder,
+    sqlDefaultBatchSize,
+    setSqlDefaultBatchSize,
+    sqlCsvDelimiter,
+    setSqlCsvDelimiter,
+    sqlCsvDelimiterIsCustom,
+    setSqlCsvDelimiterIsCustom,
+    sqlIncludeHeaders,
+    setSqlIncludeHeaders,
     handleDelimiterSelect,
     // AI
-    aiSettings, updateAiSettings,
-    showAiSetupWizard, setShowAiSetupWizard,
-    aiProvider, aiModel, aiCreativityLevel,
-    aiEnableBackup, aiDryRunDefault, aiEnableHistory,
-    aiAutoApproveThreshold, aiReasoningLive,
-    setAiProvider, setAiModel, setAiCreativityLevel,
-    setAiEnableBackup, setAiDryRunDefault, setAiEnableHistory,
-    setAiAutoApproveThreshold, setAiReasoningLive,
+    aiSettings,
+    updateAiSettings,
+    showAiSetupWizard,
+    setShowAiSetupWizard,
+    aiProvider,
+    aiModel,
+    aiCreativityLevel,
+    aiEnableBackup,
+    aiDryRunDefault,
+    aiEnableHistory,
+    aiAutoApproveThreshold,
+    aiReasoningLive,
+    setAiProvider,
+    setAiModel,
+    setAiCreativityLevel,
+    setAiEnableBackup,
+    setAiDryRunDefault,
+    setAiEnableHistory,
+    setAiAutoApproveThreshold,
+    setAiReasoningLive,
     isAiProviderConfigured,
     // Handlers
     scrollToSection,
@@ -1527,8 +1574,8 @@ export const Settings = ({
                     {aiProvider === "ollama"
                       ? "Install Ollama and pull a model to start using AI features locally."
                       : aiProvider === "openrouter"
-                      ? "Add your OpenRouter API key to access 100+ AI models."
-                      : "Add your Anthropic API key to use Claude AI."}
+                        ? "Add your OpenRouter API key to access 100+ AI models."
+                        : "Add your Anthropic API key to use Claude AI."}
                   </p>
                   <div className="flex flex-wrap gap-2">
                     <Button
@@ -2316,7 +2363,6 @@ export const Settings = ({
             </div>
           </div>
 
-
           <UpdateCheckRow />
 
           <div className="space-y-3">
@@ -2365,6 +2411,7 @@ export const Settings = ({
           title="Settings"
           subtitle="Manage your application preferences"
           info={settingsInfo}
+          toolId="settings"
           right={
             <div className="relative flex-1 max-w-md">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />

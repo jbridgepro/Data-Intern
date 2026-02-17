@@ -1,0 +1,14 @@
+/**
+ * File: src/features/folder-creation/components/FolderPreview.css
+ *
+ * Styles for folder preview tree.
+ * Connector position and row margin use CSS (no inline style attribute).
+ */
+
+.folder-preview-connector {
+  left: -14px;
+}
+
+.folder-preview-row {
+  margin-left: var(--folder-preview-margin-left, 0);
+}

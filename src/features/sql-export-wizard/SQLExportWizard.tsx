@@ -63,6 +63,13 @@ export function SQLExportWizard() {
   const [previewOpen, setPreviewOpen] = useState(true);
   const [explorerCollapsed, setExplorerCollapsed] = useState(false);
 
+  // When user connects, collapse connection section so main content is in view
+  useEffect(() => {
+    if (activeConnection && connectionOpen) {
+      setConnectionOpen(false);
+    }
+  }, [activeConnection?.id]);
+
   useEffect(() => {
     setActivityEntries(getActivityEntries());
   }, []);
@@ -81,7 +88,7 @@ export function SQLExportWizard() {
       },
       query: {
         label: "Query",
-        description: "Design SQL visually or with natural language input.",
+        description: "Run SQL against your database and view results.",
         icon: Search,
       },
     }),
@@ -101,23 +108,27 @@ export function SQLExportWizard() {
   // Wizard steps for progress and guidance: Connect → Select target → Workflow → Configure
   const wizardSteps = useMemo(
     () => [
-      { id: 1, label: "Connect", short: "1. Connect", done: !!activeConnection },
+      {
+        id: 1,
+        label: "Connect",
+        short: "1. Connect",
+        done: !!activeConnection,
+      },
       {
         id: 2,
         label: "Select target",
         short: "2. Target",
-        done: !!(selectedDatabase && (operationMode === "query" || selectedTable)),
+        done: !!(
+          selectedDatabase &&
+          (operationMode === "query" || selectedTable)
+        ),
       },
       { id: 3, label: "Workflow", short: "3. Workflow", done: true },
       { id: 4, label: "Configure", short: "4. Configure", done: false },
     ],
     [activeConnection, selectedDatabase, selectedTable, operationMode],
   );
-  const currentWizardStep = activeConnection
-    ? selectedDatabase
-      ? 3
-      : 2
-    : 1;
+  const currentWizardStep = activeConnection ? (selectedDatabase ? 3 : 2) : 1;
 
   const formatFileSize = (bytes?: number): string => {
     if (!bytes && bytes !== 0) return "—";
@@ -191,6 +202,7 @@ export function SQLExportWizard() {
         title="SQL Export Wizard"
         subtitle="Export, import, and query databases with a guided workflow"
         info={sqlExportWizardInfo}
+        toolId="sql-export"
         right={
           <div className="flex flex-wrap items-center gap-2">
             <Badge
@@ -203,31 +215,35 @@ export function SQLExportWizard() {
             >
               {activeConnection ? "Connected" : "Not connected"}
             </Badge>
-            <Badge variant="secondary" className="bg-slate-900/5 text-slate-600 dark:bg-white/10 dark:text-slate-300">
+            <Badge
+              variant="secondary"
+              className="bg-slate-900/5 text-slate-600 dark:bg-white/10 dark:text-slate-300"
+            >
               {modeMeta[operationMode].label} Mode
             </Badge>
           </div>
         }
       />
 
-      {/* Compact context bar: wizard progress + current context at a glance */}
-      <div className="flex flex-col gap-2">
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-xl border border-slate-200/70 bg-card/50 px-4 py-2.5 shadow-sm dark:border-slate-800/70">
+      {/* Single context bar: steps + current connection/database/table */}
+      <div className="rounded-xl border border-slate-200/70 dark:border-slate-800/70 bg-card/50 px-4 py-2.5 shadow-sm flex flex-wrap items-center gap-x-4 gap-y-2">
+        {/* Step indicators */}
+        <div className="flex items-center gap-x-1 sm:gap-x-2">
           {wizardSteps.map((step, index) => (
             <div
               key={step.id}
               className={cn(
-                "flex items-center gap-1.5 text-xs",
-                index < wizardSteps.length - 1 && "pr-2 border-r border-slate-200/70 dark:border-slate-700/70",
+                "flex items-center gap-1 text-xs",
+                index < wizardSteps.length - 1 && "sm:mr-1",
               )}
             >
               <span
                 className={cn(
-                  "flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold",
+                  "flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold transition-colors",
                   step.done
                     ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
                     : currentWizardStep === step.id
-                      ? "bg-slate-900 text-white dark:bg-white dark:text-slate-900"
+                      ? "bg-slate-900 text-white dark:bg-white dark:text-slate-900 ring-2 ring-slate-300 dark:ring-slate-600"
                       : "bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400",
                 )}
               >
@@ -235,7 +251,7 @@ export function SQLExportWizard() {
               </span>
               <span
                 className={cn(
-                  "font-medium",
+                  "font-medium hidden sm:inline",
                   currentWizardStep === step.id
                     ? "text-foreground"
                     : "text-muted-foreground",
@@ -246,25 +262,35 @@ export function SQLExportWizard() {
             </div>
           ))}
         </div>
-        <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+        <div
+          className="h-4 w-px bg-slate-200 dark:bg-slate-700 shrink-0"
+          aria-hidden
+        />
+        {/* Current context */}
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
           <span className="flex items-center gap-1.5">
-            <Server className="h-3.5 w-3.5" />
-            <strong className="text-foreground">{connectionLabel}</strong>
-            {activeConnection && (
-              <span className="truncate max-w-[180px]">{connectionSubtitle}</span>
-            )}
+            <Server className="h-3.5 w-3.5 shrink-0" />
+            <span
+              className="font-medium text-foreground truncate max-w-[140px] sm:max-w-[200px]"
+              title={connectionSubtitle}
+            >
+              {connectionLabel}
+            </span>
           </span>
           <span className="flex items-center gap-1.5">
-            <Database className="h-3.5 w-3.5" />
-            <strong className="text-foreground">{selectedDatabase || "—"}</strong>
+            <Database className="h-3.5 w-3.5 shrink-0" />
+            <span className="font-medium text-foreground truncate max-w-[100px] sm:max-w-[120px]">
+              {selectedDatabase || "—"}
+            </span>
           </span>
-          <span className="flex items-center gap-1.5">
-            <Table2 className="h-3.5 w-3.5" />
-            <strong className="text-foreground">{tableLabel}</strong>
-          </span>
-          <Badge variant="secondary" className="text-[10px]">
-            {modeMeta[operationMode].label}
-          </Badge>
+          {operationMode !== "query" && (
+            <span className="flex items-center gap-1.5">
+              <Table2 className="h-3.5 w-3.5 shrink-0" />
+              <span className="font-medium text-foreground truncate max-w-[120px]">
+                {tableLabel}
+              </span>
+            </span>
+          )}
         </div>
       </div>
 
@@ -370,14 +396,19 @@ export function SQLExportWizard() {
                     </button>
                   ))}
                 </div>
-                <Button variant="outline" size="sm" onClick={handleClearTimeline}>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleClearTimeline}
+                >
                   Clear Timeline
                 </Button>
               </div>
               <div className="space-y-3">
                 {filteredActivityEntries.length === 0 && (
                   <div className="rounded-xl border border-dashed border-slate-200/70 p-4 text-xs text-slate-500 dark:border-slate-800/70 dark:text-slate-400">
-                    No activity yet. Run an export or import to populate the timeline.
+                    No activity yet. Run an export or import to populate the
+                    timeline.
                   </div>
                 )}
                 {filteredActivityEntries.map((item) => {
@@ -438,27 +469,49 @@ export function SQLExportWizard() {
       </Collapsible>
 
       {/* Main Content Area: responsive grid; left = explorer + collapsible preview */}
-      <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-4 min-h-0 min-w-0">
+      <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-4 min-h-0 min-w-0 overflow-hidden">
         {/* Database Explorer - Left sidebar; collapsible to maximize space for operation panel */}
         <div
           className={cn(
-            "flex flex-col min-h-0 gap-3 transition-all duration-200",
+            "flex flex-col min-h-0 gap-3 transition-all duration-200 min-w-0",
             explorerCollapsed ? "lg:col-span-1" : "lg:col-span-3",
           )}
         >
-          <div className="flex items-center justify-between gap-2 lg:justify-end">
-            <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 lg:sr-only">
-              Explorer
-            </span>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 text-xs text-slate-500 shrink-0"
-              onClick={() => setExplorerCollapsed(!explorerCollapsed)}
-              aria-label={explorerCollapsed ? "Expand explorer" : "Collapse explorer"}
-            >
-              {explorerCollapsed ? "Show explorer" : "Hide explorer"}
-            </Button>
+          <div
+            className={cn(
+              "flex items-center gap-2 shrink-0",
+              explorerCollapsed
+                ? "justify-center"
+                : "justify-between lg:justify-end",
+            )}
+          >
+            {explorerCollapsed ? (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 text-xs gap-1.5 border-slate-200 dark:border-slate-700"
+                onClick={() => setExplorerCollapsed(false)}
+                aria-label="Open database explorer"
+              >
+                <Table2 className="h-3.5 w-3.5" />
+                Database explorer
+              </Button>
+            ) : (
+              <>
+                <span className="text-xs font-semibold text-slate-600 dark:text-slate-300 lg:sr-only">
+                  Explorer
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 text-xs text-slate-500 shrink-0"
+                  onClick={() => setExplorerCollapsed(true)}
+                  aria-label="Collapse explorer"
+                >
+                  Hide explorer
+                </Button>
+              </>
+            )}
           </div>
           {!explorerCollapsed && (
             <>
@@ -533,63 +586,58 @@ export function SQLExportWizard() {
         {/* Operation Panel - Right side; expands when explorer collapsed */}
         <div
           className={cn(
-            "flex flex-col min-h-0 space-y-4 min-w-0",
+            "flex flex-col min-h-0 space-y-4 min-w-0 overflow-hidden",
             explorerCollapsed ? "lg:col-span-11" : "lg:col-span-9",
           )}
         >
-          {/* Operation Mode Selector */}
-          <div className="rounded-2xl border border-slate-200/70 dark:border-slate-800/70 bg-white/80 dark:bg-slate-900/70 p-4 shadow-sm">
-            <div className="flex flex-col gap-3">
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-semibold text-slate-700 dark:text-slate-300">
-                  Choose your workflow
-                </span>
-                <span className="text-xs text-slate-500 dark:text-slate-400">
-                  Pick an action and configure it below.
-                </span>
-              </div>
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-                {(Object.keys(modeMeta) as OperationMode[]).map((mode) => {
-                  const Icon = modeMeta[mode].icon;
-                  const isActive = operationMode === mode;
-                  return (
-                    <button
-                      key={mode}
-                      type="button"
-                      onClick={() => setOperationMode(mode)}
+          {/* Workflow tabs: Export | Import | Query — clear active state */}
+          <div className="rounded-2xl border border-slate-200/70 dark:border-slate-800/70 bg-slate-50/60 dark:bg-slate-900/50 p-2 shadow-sm shrink-0">
+            <p className="text-xs font-medium text-slate-500 dark:text-slate-400 px-2 pb-2 pt-0.5">
+              What do you want to do?
+            </p>
+            <div className="flex flex-wrap gap-1 sm:gap-2">
+              {(Object.keys(modeMeta) as OperationMode[]).map((mode) => {
+                const Icon = modeMeta[mode].icon;
+                const isActive = operationMode === mode;
+                return (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => setOperationMode(mode)}
+                    className={cn(
+                      "flex items-center gap-2 rounded-xl border px-4 py-2.5 text-left transition-all min-w-0",
+                      isActive
+                        ? "border-slate-900/20 bg-white dark:bg-slate-900 shadow-sm dark:border-white/15 text-slate-900 dark:text-slate-100 ring-1 ring-slate-900/5 dark:ring-white/10"
+                        : "border-transparent bg-transparent hover:bg-white/80 dark:hover:bg-slate-800/80 text-slate-600 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200",
+                    )}
+                    {...{ "aria-pressed": isActive ? "true" : "false" }}
+                  >
+                    <span
                       className={cn(
-                        "flex h-full flex-col gap-2 rounded-xl border px-4 py-3 text-left transition-all",
+                        "flex h-7 w-7 shrink-0 items-center justify-center rounded-lg",
                         isActive
-                          ? "border-slate-900/15 bg-slate-900/4 shadow-sm dark:border-white/10 dark:bg-white/5"
-                          : "border-slate-200/70 bg-white/80 hover:border-slate-300 dark:border-slate-800/70 dark:bg-slate-900/70",
+                          ? "bg-slate-900 text-white dark:bg-white dark:text-slate-900"
+                          : "bg-slate-200/80 text-slate-600 dark:bg-slate-700 dark:text-slate-300",
                       )}
-                      {...{ "aria-pressed": isActive ? "true" : "false" }}
                     >
-                      <div className="flex items-center gap-2 text-sm font-semibold text-slate-800 dark:text-slate-100">
-                        <span
-                          className={cn(
-                            "flex h-8 w-8 items-center justify-center rounded-lg",
-                            isActive
-                              ? "bg-slate-900 text-white dark:bg-white dark:text-slate-900"
-                              : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300",
-                          )}
-                        >
-                          <Icon className="h-4 w-4" />
-                        </span>
+                      <Icon className="h-3.5 w-3.5" />
+                    </span>
+                    <div className="flex flex-col items-start gap-0">
+                      <span className="text-sm font-semibold leading-tight">
                         {modeMeta[mode].label}
-                      </div>
-                      <p className="text-xs text-slate-500 dark:text-slate-400">
+                      </span>
+                      <span className="text-[10px] leading-tight text-slate-500 dark:text-slate-400 hidden sm:block max-w-[180px] truncate">
                         {modeMeta[mode].description}
-                      </p>
-                    </button>
-                  );
-                })}
-              </div>
+                      </span>
+                    </div>
+                  </button>
+                );
+              })}
             </div>
           </div>
 
-          {/* Operation Panel Content */}
-          <div className="flex-1 min-h-0">
+          {/* Operation Panel Content - fills remaining space */}
+          <div className="flex-1 min-h-0 overflow-auto min-w-0">
             {operationMode === "export" && (
               <ExportPanel
                 connection={activeConnection}
@@ -615,20 +663,38 @@ export function SQLExportWizard() {
         </div>
       </div>
 
-      {/* Compact status bar: current status and last operation */}
-      <div className="rounded-xl border border-slate-200/70 dark:border-slate-800/70 bg-white/80 dark:bg-slate-900/70 px-4 py-2.5 shadow-sm">
+      {/* Status bar: connection, hint, and quick link to Activity */}
+      <div className="rounded-xl border border-slate-200/70 dark:border-slate-800/70 bg-white/80 dark:bg-slate-900/70 px-4 py-2.5 shadow-sm shrink-0">
         <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
           <div className="flex items-center gap-2 text-slate-600 dark:text-slate-400">
             <span className="font-semibold text-slate-700 dark:text-slate-200">
               Status
             </span>
-            <Badge variant="secondary" className="bg-emerald-500/10 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-200 text-[10px]">
-              Ready
+            <Badge
+              variant="secondary"
+              className="bg-emerald-500/10 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-200 text-[10px]"
+            >
+              {activeConnection ? "Connected" : "Not connected"}
             </Badge>
-            <span>Awaiting your next action.</span>
+            <span>
+              {activeConnection
+                ? `${modeMeta[operationMode].label} · ${selectedDatabase || "Select database"}`
+                : "Connect to get started."}
+            </span>
+            {filteredActivityEntries.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setActivityOpen(true)}
+                className="text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 underline underline-offset-2"
+              >
+                View activity ({filteredActivityEntries.length})
+              </button>
+            )}
           </div>
-          <span className="text-slate-500 dark:text-slate-400">
-            Last operation: No operations yet
+          <span className="text-slate-500 dark:text-slate-400 max-w-[320px] sm:max-w-none">
+            {operationMode === "query"
+              ? "Run SQL in the editor; use Quick Tools → SQL Formatter to build or format."
+              : "Select a table in the explorer, then configure and run."}
           </span>
         </div>
       </div>

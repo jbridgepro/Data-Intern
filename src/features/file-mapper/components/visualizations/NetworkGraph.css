@@ -1,0 +1,12 @@
+/**
+ * File: src/features/file-mapper/components/visualizations/NetworkGraph.css
+ *
+ * Styles for Network Graph visualization.
+ * Context menu position uses CSS variables set from JS (no inline style attribute).
+ */
+
+.network-graph-context-menu {
+  position: fixed;
+  top: var(--network-graph-menu-top, 0);
+  left: var(--network-graph-menu-left, 0);
+}

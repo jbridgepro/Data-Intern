@@ -2,26 +2,77 @@
  * File: src/features/file-mapper/components/visualizations/NetworkGraph.tsx
  *
  * Frontend component for Network Graph visualization
- * Node-based relationship diagram showing folder/file connections with zoom and pan capabilities
+ * Node-based relationship diagram with zoom, pan, and context menu (Copy Path, Reveal in Explorer)
  */
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import * as d3 from "d3";
 import { FileSystemNode } from "../../utils/fileSystemScanner";
 import { VisualizationConfig } from "../../types";
 import { formatFileSize } from "../../utils/fileSystemScanner";
 import { getTheme, isDarkMode } from "../../utils/visualizationTheme";
-import { ZoomIn, ZoomOut, RotateCcw } from "lucide-react";
+import { ZoomIn, ZoomOut, RotateCcw, Copy, FolderOpen } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
+import "./NetworkGraph.css";
+
+/** Context menu positioned via CSS variables (no inline style). */
+function ContextMenuPortal({
+  x,
+  y,
+  menuRef,
+  onClick,
+  children,
+}: {
+  x: number;
+  y: number;
+  menuRef: React.RefObject<HTMLDivElement | null>;
+  onClick: (e: React.MouseEvent) => void;
+  children: React.ReactNode;
+}) {
+  useEffect(() => {
+    if (!menuRef.current) return;
+    menuRef.current.style.setProperty("--network-graph-menu-top", `${y}px`);
+    menuRef.current.style.setProperty("--network-graph-menu-left", `${x}px`);
+  }, [x, y, menuRef]);
+  return (
+    <div
+      ref={menuRef}
+      className="network-graph-context-menu fixed z-9999 min-w-[180px] bg-white dark:bg-slate-800 shadow-xl rounded-xl border border-slate-200 dark:border-slate-700 py-1.5"
+      onClick={onClick}
+    >
+      {children}
+    </div>
+  );
+}
 
 interface NetworkGraphProps {
   data: FileSystemNode;
   config: VisualizationConfig;
 }
 
+interface ContextMenuState {
+  x: number;
+  y: number;
+  node: { path: string; name: string };
+}
+
 export function NetworkGraph({ data, config }: NetworkGraphProps) {
   const svgRef = useRef<SVGSVGElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const isDark = isDarkMode();
+  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+
+  useEffect(() => {
+    const handleOutsideClick = (e: MouseEvent) => {
+      if (e.button !== 0 || !contextMenu) return;
+      if (menuRef.current?.contains(e.target as Node)) return;
+      setContextMenu(null);
+    };
+    document.addEventListener("mousedown", handleOutsideClick);
+    return () => document.removeEventListener("mousedown", handleOutsideClick);
+  }, [contextMenu]);
 
   useEffect(() => {
     if (!svgRef.current || !data) return;
@@ -190,6 +241,15 @@ export function NetworkGraph({ data, config }: NetworkGraphProps) {
           .attr("stroke-width", 1.5);
         
         d3.select("body").selectAll("div.tooltip").remove();
+      })
+      .on("contextmenu", function (event, d) {
+        event.preventDefault();
+        event.stopPropagation();
+        setContextMenu({
+          x: event.clientX,
+          y: event.clientY,
+          node: { path: d.id, name: d.name },
+        });
       });
 
     // Add labels
@@ -323,6 +383,52 @@ export function NetworkGraph({ data, config }: NetworkGraphProps) {
       <div className="w-full h-full">
         <svg ref={svgRef} className="w-full h-full min-h-[600px] cursor-move" />
       </div>
+
+      {/* Context Menu: Copy Path, Reveal in Explorer (ported to body so it's not clipped) */}
+      {contextMenu &&
+        createPortal(
+          <ContextMenuPortal
+            x={contextMenu.x}
+            y={contextMenu.y}
+            menuRef={menuRef}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-3 py-1.5 text-xs font-semibold text-slate-400 border-b border-slate-100 dark:border-slate-700/50 mb-1">
+              {contextMenu.node.name}
+            </div>
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  await navigator.clipboard.writeText(contextMenu.node.path);
+                } catch (err) {
+                  console.error("Failed to copy path:", err);
+                }
+                setContextMenu(null);
+              }}
+              className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700/80 text-left transition-colors"
+            >
+              <Copy className="h-3.5 w-3.5" />
+              Copy Path
+            </button>
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  await revealItemInDir(contextMenu.node.path);
+                } catch (err) {
+                  console.error("Failed to reveal item:", err);
+                }
+                setContextMenu(null);
+              }}
+              className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700/80 text-left transition-colors"
+            >
+              <FolderOpen className="h-3.5 w-3.5" />
+              Reveal in Explorer
+            </button>
+          </ContextMenuPortal>,
+          document.body
+        )}
     </div>
   );
 }

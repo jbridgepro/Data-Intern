@@ -23,7 +23,7 @@ import {
   CheckCircle2,
   XCircle,
   AlertTriangle,
-  RotateCcw
+  RotateCcw,
 } from "lucide-react";
 import {
   FolderConfig,
@@ -61,37 +61,42 @@ interface ConfigPreset {
 }
 
 export const FolderCreation = () => {
-  const [config, setConfig, resetConfig] = usePersistentState<FolderConfig>("folder-creation-config", {
-    rootPath: "",
-    creationMode: "pattern",
-    folderList: "",
-    baseName: "Project",
-    count: 1,
-    subfolders: "",
-    useNumbering: true,
-    startNumber: 1,
-    digitCount: 2,
-    numberPosition: "prefix",
-    separator: "-",
-    customPrefix: "",
-    customSuffix: "",
-    useDate: false,
-    dateFormat: "YYYY-MM-DD",
-    datePosition: "prefix",
-    useRandomString: false,
-    randomStringLength: 8,
-    randomStringPosition: "suffix",
-    useUUID: false,
-    uuidPosition: "suffix",
-    subfolderPrefix: "",
-    subfolderSuffix: "",
-    overwrite: false,
-    csvDelimiter: "-",
-    csvColumnOrder: [],
-    csvColumnConfig: {},
-    csvRows: [],
-    csvHeaders: [],
-  });
+  const [config, setConfig, resetConfig] = usePersistentState<FolderConfig>(
+    "folder-creation-config",
+    {
+      rootPath: "",
+      creationMode: "pattern",
+      folderList: "",
+      baseName: "Project",
+      count: 1,
+      subfolders: "",
+      useNumbering: true,
+      startNumber: 1,
+      digitCount: 2,
+      numberPosition: "prefix",
+      separator: "-",
+      customPrefix: "",
+      customSuffix: "",
+      useDate: false,
+      dateFormat: "YYYY-MM-DD",
+      datePosition: "prefix",
+      useRandomString: false,
+      randomStringLength: 8,
+      randomStringPosition: "suffix",
+      useUUID: false,
+      uuidPosition: "suffix",
+      subfolderPrefix: "",
+      subfolderSuffix: "",
+      overwrite: false,
+      csvDelimiter: "-",
+      csvColumnOrder: [],
+      csvColumnConfig: {},
+      csvRows: [],
+      csvHeaders: [],
+      enableFilePreCreation: false,
+      preCreationFiles: [],
+    },
+  );
 
   // State to hold the current nodes. This allows edits to persist until config changes.
   const [nodes, setNodes] = useState<PreviewNode[]>([]);
@@ -110,15 +115,15 @@ export const FolderCreation = () => {
   useEffect(() => {
     const newNodes = generatePreview(config);
     setNodes(newNodes);
-    
+
     // Calculate stats from preview nodes, but override total with true count
     const previewStats = calculateStats(newNodes);
     const totalCount = getTotalCount(config);
-    
+
     setStats({
       ...previewStats,
       total: totalCount,
-      pending: totalCount // Reset pending to total since we haven't started
+      pending: totalCount, // Reset pending to total since we haven't started
     });
   }, [config]);
 
@@ -173,8 +178,6 @@ export const FolderCreation = () => {
 
     setStatus("creating");
     setErrorMessage(null);
-    setStatus("creating");
-    setErrorMessage(null);
     const totalCount = getTotalCount(config);
     setProgress({ current: 0, total: totalCount, status: "Starting..." });
 
@@ -191,14 +194,13 @@ export const FolderCreation = () => {
       };
     });
     setNodes(resetNodes);
-    setNodes(resetNodes);
     // Initialize stats with total count
     setStats({
       total: totalCount,
       success: 0,
       error: 0,
       exists: 0,
-      pending: totalCount
+      pending: totalCount,
     });
 
     try {
@@ -214,7 +216,7 @@ export const FolderCreation = () => {
         },
         (newStats) => {
           setStats(newStats);
-        }
+        },
       );
 
       if (result.success) {
@@ -260,10 +262,13 @@ export const FolderCreation = () => {
   };
 
   /**
-   * Exports current configuration as JSON
+   * Exports current configuration as JSON.
+   * Includes all settings including pre-creation files.
+   * CSV row data is excluded to keep the export lightweight.
    */
   const exportConfig = () => {
-    const dataStr = JSON.stringify(config, null, 2);
+    const exportData = { ...config, csvRows: [] };
+    const dataStr = JSON.stringify(exportData, null, 2);
     const dataBlob = new Blob([dataStr], { type: "application/json" });
     const url = URL.createObjectURL(dataBlob);
     const link = document.createElement("a");
@@ -283,12 +288,20 @@ export const FolderCreation = () => {
         multiple: false,
       });
       if (selected && typeof selected === "string") {
-        // Note: In a real Tauri app, you'd use readTextFile from @tauri-apps/plugin-fs
-        // For now, this is a placeholder - you'd need to implement file reading
-        console.log("Import config from:", selected);
+        // Import readTextFile from Tauri's fs plugin
+        const { readTextFile } = await import("@tauri-apps/plugin-fs");
+        const fileContent = await readTextFile(selected);
+        const importedConfig = JSON.parse(fileContent) as FolderConfig;
+
+        // Apply the imported configuration
+        setConfig(importedConfig);
+        setStatus("idle");
+        setErrorMessage(null);
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error("Failed to import config:", e);
+      setErrorMessage(e?.message || "Failed to import configuration file");
+      setStatus("error");
     }
   };
 
@@ -311,6 +324,7 @@ export const FolderCreation = () => {
         title="Folder Creation"
         subtitle="Batch create organized folder structures"
         info={folderCreationInfo}
+        toolId="folder"
         right={
           <Button
             variant="ghost"
@@ -329,7 +343,7 @@ export const FolderCreation = () => {
 
       <div className="flex-1 flex overflow-hidden">
         {/* Config Panel - Left */}
-        <div className="w-[400px] border-r overflow-y-auto p-6 space-y-8 bg-card/30">
+        <div className="w-[400px] border-r overflow-y-auto p-6 space-y-6 bg-card/30">
           <FolderForm
             config={config}
             setConfig={(newConfig) => {
@@ -345,6 +359,10 @@ export const FolderCreation = () => {
             onDeletePreset={deletePreset}
             onExportConfig={exportConfig}
             onImportConfig={importConfig}
+            onLoadPresetTemplate={(template) =>
+              setConfig((prev) => ({ ...prev, ...template.config }))
+            }
+            folderNodes={nodes}
           />
           <div className="h-4" /> {/* Spacer */}
         </div>

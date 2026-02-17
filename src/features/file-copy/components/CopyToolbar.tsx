@@ -3,7 +3,6 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
-  History,
   FolderSearch,
   Bookmark,
   BookmarkCheck,
@@ -51,13 +50,13 @@ interface CopyToolbarProps {
   onInvertSelection?: () => void;
   hasSelection: boolean;
   
-  showHistory: boolean;
-  onToggleHistory: () => void;
-  
   isProcessing: boolean;
 
   onExpandAll: () => void;
   onCollapseAll: () => void;
+
+  /** Number of visible files in the tree (for search result count) */
+  visibleFileCount?: number;
 }
 
 export const CopyToolbar = ({
@@ -80,11 +79,10 @@ export const CopyToolbar = ({
   onClearSelection,
   onInvertSelection,
   hasSelection,
-  showHistory,
-  onToggleHistory,
   isProcessing,
   onExpandAll,
-  onCollapseAll
+  onCollapseAll,
+  visibleFileCount
 }: CopyToolbarProps) => {
   const [showSettings, setShowSettings] = useState(false);
   const settingsRef = useRef<HTMLDivElement>(null);
@@ -100,7 +98,7 @@ export const CopyToolbar = ({
   }, []);
 
   return (
-    <div className="flex flex-col border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 relative z-10">
+    <div className="flex flex-col border-b bg-background/95 backdrop-blur supports-backdrop-filter:bg-background/60 relative z-10">
       {/* Top Bar: Source & Global Actions */}
       <div className="flex items-center justify-between px-4 py-3 gap-4">
         <div className="flex items-center gap-3 flex-1">
@@ -168,118 +166,49 @@ export const CopyToolbar = ({
           )}
         </div>
 
-        <div className="flex items-center gap-2">
-          <Button
-            variant={showHistory ? "secondary" : "ghost"}
-            size="sm"
-            onClick={onToggleHistory}
-          >
-            <History className="h-4 w-4 mr-2" />
-            History
-          </Button>
-        </div>
+        {/* History button moved to the right panel (OperationControls) */}
       </div>
 
       <Separator />
 
-      {/* Bottom Bar: Filtering & Selection Tools */}
-      <div className="flex items-center justify-between px-4 py-2 bg-muted/30 gap-4">
-        {/* Search & Badges */}
-        <div className="flex items-center gap-4 flex-1 min-w-0">
-          <div className="relative w-64 shrink-0">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-            <Input
-              placeholder="Filter files..."
-              value={searchTerm}
-              onChange={(e) => onSearchChange(e.target.value)}
-              className="h-8 pl-8 pr-8 text-xs bg-background"
-              disabled={isProcessing}
-            />
-            {searchTerm && (
+      {/* Middle Bar: Search, Selection & Tree Tools */}
+      <div className="flex items-center justify-between px-4 py-2 bg-muted/30 gap-3">
+        {/* Search Input (flex-1 for full available width) */}
+        <div className="relative flex-1 min-w-0 max-w-md">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+          <Input
+            placeholder="Search files by name..."
+            value={searchTerm}
+            onChange={(e) => onSearchChange(e.target.value)}
+            className={cn(
+              "h-8 pl-8 text-xs bg-background transition-colors",
+              searchTerm
+                ? "pr-24 ring-1 ring-primary/30 border-primary/40"
+                : "pr-8"
+            )}
+            disabled={isProcessing}
+          />
+          {/* Match count badge + clear button when search is active */}
+          {searchTerm ? (
+            <div className="absolute right-1.5 top-1/2 -translate-y-1/2 flex items-center gap-1">
+              {visibleFileCount !== undefined && (
+                <span className="text-[10px] font-medium text-primary bg-primary/10 px-1.5 py-0.5 rounded">
+                  {visibleFileCount} {visibleFileCount === 1 ? "match" : "matches"}
+                </span>
+              )}
               <button
                 onClick={() => onSearchChange("")}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                className="p-0.5 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                title="Clear search"
               >
                 <X className="h-3 w-3" />
               </button>
-            )}
-          </div>
-
-          <div className="h-4 w-px bg-border/60" />
-
-          {/* New Location for Filter Mode Button */}
-          <TooltipProvider delayDuration={300}>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                   variant={filterMode === "include" ? "default" : "secondary"}
-                   size="sm"
-                   className={cn(
-                     "h-7 text-[10px] px-3 gap-1.5 transition-all border shrink-0",
-                     filterMode === "include" 
-                       ? "bg-primary text-primary-foreground hover:bg-primary/90 border-primary" 
-                       : "bg-background hover:bg-muted text-muted-foreground border-border hover:text-foreground"
-                   )}
-                   onClick={onToggleFilterMode}
-                >
-                   <ListFilter className="h-3.5 w-3.5"/>
-                   <span>{filterMode === "include" ? "Include Mode" : "Exclude Mode"}</span>
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom" className="max-w-xs text-xs">
-                <p className="font-semibold mb-1">{filterMode === "include" ? "Include Mode" : "Exclude Mode"}</p>
-                <p>{filterMode === "include" 
-                  ? "Only files with selected extensions will be shown." 
-                  : "Files with selected extensions will be hidden."}
-                </p>
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-
-          {/* Quick Filters */}
-          <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar mask-grad-right">
-            {availableExtensions.length > 0 ? (
-               availableExtensions.map(ext => (
-                <TooltipProvider key={ext} delayDuration={200}>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Badge
-                        variant={activeFilters.includes(ext)
-                          ? (filterMode === "exclude" ? "destructive" : "default")
-                          : "outline"}
-                        className={cn(
-                          "cursor-pointer text-[10px] h-5 px-2 transition-colors",
-                          activeFilters.includes(ext)
-                              ? (filterMode === "exclude" ? "hover:bg-destructive/80" : "hover:bg-primary/80")
-                              : "hover:bg-secondary"
-                        )}
-                        onClick={() => !isProcessing && onToggleFilter(ext)}
-                      >
-                        {ext === "{no-ext}" ? "No Ext" : `.${ext}`}
-                      </Badge>
-                    </TooltipTrigger>
-                    <TooltipContent side="bottom" className="text-xs">
-                      {activeFilters.includes(ext)
-                        ? filterMode === "exclude"
-                          ? `Click to stop hiding .${ext} files`
-                          : `Click to stop showing only .${ext} files`
-                        : filterMode === "exclude"
-                          ? `Click to hide .${ext} files`
-                          : `Click to show only .${ext} files`}
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
-              ))
-            ) : (
-              <span className="text-[10px] text-muted-foreground italic px-2">
-                No extensions found
-              </span>
-            )}
-          </div>
+            </div>
+          ) : null}
         </div>
 
-        {/* Right Tools */}
-        <div className="flex items-center gap-3 shrink-0">
+        {/* Right Tools: Expand/Collapse, Settings, Selection Actions */}
+        <div className="flex items-center gap-2 shrink-0">
            {/* Expand/Collapse All Buttons */}
            <div className="flex items-center bg-muted/50 rounded-md p-0.5 border">
               <TooltipProvider>
@@ -343,8 +272,6 @@ export const CopyToolbar = ({
                        onCheckedChange={onToggleExcludeTemp}
                      />
                    </div>
-                   
-                   {/* Removed Filter Mode from here as it's now in the main bar */}
                  </div>
                </div>
              )}
@@ -352,6 +279,7 @@ export const CopyToolbar = ({
 
           <div className="h-4 w-px bg-border/60" />
 
+          {/* Selection Actions */}
           <div className="flex gap-1">
             <Button
               variant="secondary"
@@ -388,6 +316,97 @@ export const CopyToolbar = ({
           </div>
         </div>
       </div>
+
+      {/* File Type Filters Bar (dedicated row for full visibility) */}
+      {currentPath && (
+        <div className="flex items-center gap-3 px-4 py-2 border-t bg-muted/20">
+          {/* Filter Mode Toggle */}
+          <TooltipProvider delayDuration={300}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                   variant={filterMode === "include" ? "default" : "secondary"}
+                   size="sm"
+                   className={cn(
+                     "h-7 text-[10px] px-3 gap-1.5 transition-all border shrink-0",
+                     filterMode === "include" 
+                       ? "bg-primary text-primary-foreground hover:bg-primary/90 border-primary" 
+                       : "bg-background hover:bg-muted text-muted-foreground border-border hover:text-foreground"
+                   )}
+                   onClick={onToggleFilterMode}
+                >
+                   <ListFilter className="h-3.5 w-3.5"/>
+                   <span>{filterMode === "include" ? "Include" : "Exclude"}</span>
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" className="max-w-xs text-xs">
+                <p className="font-semibold mb-1">{filterMode === "include" ? "Include Mode" : "Exclude Mode"}</p>
+                <p>{filterMode === "include" 
+                  ? "Only files with selected extensions will be shown." 
+                  : "Files with selected extensions will be hidden."}
+                </p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+
+          <div className="h-4 w-px bg-border/60" />
+
+          {/* Extension Filter Badges */}
+          <div className="flex items-center gap-1.5 flex-1 overflow-x-auto no-scrollbar">
+            {availableExtensions.length > 0 ? (
+               availableExtensions.map(ext => (
+                <TooltipProvider key={ext} delayDuration={200}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Badge
+                        variant={activeFilters.includes(ext)
+                          ? (filterMode === "exclude" ? "destructive" : "default")
+                          : "outline"}
+                        className={cn(
+                          "cursor-pointer text-[10px] h-5 px-2 transition-colors shrink-0",
+                          activeFilters.includes(ext)
+                              ? (filterMode === "exclude" ? "hover:bg-destructive/80" : "hover:bg-primary/80")
+                              : "hover:bg-secondary"
+                        )}
+                        onClick={() => !isProcessing && onToggleFilter(ext)}
+                      >
+                        {ext === "{no-ext}" ? "No Ext" : `.${ext}`}
+                      </Badge>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom" className="text-xs">
+                      {activeFilters.includes(ext)
+                        ? filterMode === "exclude"
+                          ? `Click to stop hiding .${ext} files`
+                          : `Click to stop showing only .${ext} files`
+                        : filterMode === "exclude"
+                          ? `Click to hide .${ext} files`
+                          : `Click to show only .${ext} files`}
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              ))
+            ) : (
+              <span className="text-[10px] text-muted-foreground italic px-1">
+                No extensions found
+              </span>
+            )}
+          </div>
+
+          {/* Active filter count indicator */}
+          {activeFilters.length > 0 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 text-[10px] px-2 text-muted-foreground hover:text-foreground shrink-0"
+              onClick={() => activeFilters.forEach(ext => onToggleFilter(ext))}
+              title="Clear all filters"
+            >
+              <X className="h-3 w-3 mr-1" />
+              {activeFilters.length} active
+            </Button>
+          )}
+        </div>
+      )}
     </div>
   );
 };
