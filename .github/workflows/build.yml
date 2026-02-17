@@ -56,7 +56,7 @@ jobs:
   build:
     name: Build (${{ matrix.platform }})
     needs: [lint]
-    if: github.event_name != 'push' || matrix.platform != 'linux'
+
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -91,7 +91,7 @@ jobs:
           npm run tauri build -- --bundles nsis
 
       - name: Build Tauri app (Linux)
-        if: matrix.platform == 'linux'
+        if: matrix.platform == 'linux' && github.event_name != 'push'
 
         run: |
 
@@ -153,7 +153,7 @@ jobs:
 
       # ── Upload artifacts ──
       - name: Upload Build Artifacts (Linux)
-        if: matrix.platform == 'linux' && success()
+        if: matrix.platform == 'linux' && success() && github.event_name != 'push'
         uses: actions/upload-artifact@v4
         with:
           name: projectfile-pro-linux
