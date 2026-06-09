@@ -18,6 +18,7 @@ import { Terminal } from "./features/terminal/Terminal";
 import { FindReplace } from "./features/find-replace/FindReplace";
 import { SQLExportWizard } from "./features/sql-export-wizard/SQLExportWizard";
 import { AIFileAssistant } from "./features/ai-assistant/AIFileAssistant";
+import { AICurator } from "./features/ai-curator/AICurator";
 import { Settings } from "./features/settings/Settings";
 import { AgentSidebar } from "./features/agents/components/AgentSidebar";
 import { AgentFloatingButton } from "./features/agents/components/AgentFloatingButton";
@@ -211,6 +212,8 @@ function App() {
         return <SQLExportWizard />;
       case "ai-assistant":
         return <AIFileAssistant />;
+      case "ai-curator":
+        return <AICurator />;
       case "settings":
         return (
           <Settings

@@ -289,6 +289,7 @@ export class OpenRouterService {
   async chat(
     messages: OpenRouterMessage[],
     options?: {
+      model?: string;
       tools?: ToolDefinition[];
       stream?: boolean;
       onChunk?: (chunk: string) => void;
@@ -300,11 +301,11 @@ export class OpenRouterService {
     }
 
     const startTime = Date.now();
-    const model = this.settings.model;
+    const model = options?.model || this.settings.model;
 
     // Build request
     const request: OpenRouterRequest = {
-      model: this.settings.model,
+      model,
       messages,
       max_tokens: this.settings.maxTokens,
       temperature: this.settings.temperature,
@@ -323,7 +324,7 @@ export class OpenRouterService {
     // Add fallback models if enabled
     if (this.settings.enableFallback && this.settings.fallbackModels.length > 0) {
       request.route = 'fallback';
-      request.models = [this.settings.model, ...this.settings.fallbackModels];
+      request.models = [model, ...this.settings.fallbackModels];
     }
 
     // Log the request

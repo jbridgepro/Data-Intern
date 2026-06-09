@@ -340,6 +340,25 @@ export function getQuickToolPageMeta(activeTab: {
   };
 }
 
+/** Content for AI Curator */
+export const aiCuratorInfo: ToolInfoContentType = {
+  overview:
+    "The AI Curator analyzes media files and scores them on quality, composition, subject quality, service fit, and deliverable readiness. It groups similar files, detects duplicates, and organizes everything into suggested folders: Best Selects, Usable / Secondary, Needs Editing, and Reject Candidates.",
+  steps: [
+    "Select a directory containing media files you want to curate.",
+    "Choose a curation mode: Deep AI Review for full AI analysis with detailed scoring, or Fast Sort for quick metadata-based sorting.",
+    "Pick a service type (Portrait, Event, Real Estate, Product, etc.) to tailor the AI prompts.",
+    "Click 'Start Curation' to begin. Progress is shown in real-time.",
+    "Review the results organized by folder. Each file has scores, reason tags, and an explanation.",
+    "Optionally click 'Copy to Organized Folders' to copy files into Best Selects, Usable, Needs Editing, and Rejects folders.",
+  ],
+  examples: [
+    "Curate a wedding gallery — best selects for the album, secondaries for proofs, blurry shots rejected.",
+    "Organize real estate photos — keep listing-ready images with bright exposure, flag duplicates.",
+    "Review product photography batches — identify hero shots, detail images, and outtakes.",
+  ],
+};
+
 /** Content for Terminal */
 export const terminalInfo: ToolInfoContentType = {
   overview:

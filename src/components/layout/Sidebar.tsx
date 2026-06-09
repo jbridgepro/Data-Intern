@@ -39,6 +39,7 @@ import {
   Zap,
   Star,
   GripVertical,
+  Wand2,
 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { motion, AnimatePresence, Reorder, useDragControls } from "framer-motion";
@@ -331,6 +332,14 @@ export const Sidebar = ({
       category: "ai",
       description: "AI-powered file operations",
       shortcut: "8",
+    },
+    {
+      id: "ai-curator",
+      label: "AI Curator",
+      icon: Wand2,
+      category: "ai",
+      description: "AI-powered media curation and scoring",
+      shortcut: "c",
     },
     {
       id: "quick-tools",
