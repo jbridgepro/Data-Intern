@@ -434,7 +434,7 @@ export const AgentCard = ({
                    {contextDetails.map((line) => (
                      <div
                        key={line.label}
-                       className="grid grid-cols-[auto,1fr] gap-2 items-start"
+                       className="grid grid-cols-[auto_1fr] gap-2 items-start"
                      >
                        <span className="text-muted-foreground/70">{line.label}</span>
                        <span className="min-w-0 truncate" title={line.value}>
