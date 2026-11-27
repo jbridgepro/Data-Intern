@@ -689,7 +689,7 @@ export async function executeTool(
               };
             }
 
-            await agentService.startAgent(args.agentId);
+            await agentService.startAgent(args.agentId, 'ai-assistant');
             return {
               success: true,
               data: {

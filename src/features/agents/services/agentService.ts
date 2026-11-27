@@ -5,10 +5,11 @@
  * This service can be used by both React components and AI Assistant tools.
  */
 
-import type { AgentConfig, AgentState, AgentLog } from '../types';
+import type { AgentConfig, AgentState, AgentLog, AgentTrigger } from '../types';
 import { DEFAULT_AGENTS } from '../agentRegistry';
 import { getAgentExecutor } from '../utils/agentExecutors';
 import type { AgentExecutionContext } from '../utils/agentExecutors';
+import { approvalStore } from './approvalStore';
 
 /**
  * Global agent storage (simplified for service layer).
@@ -187,7 +188,7 @@ class AgentService {
   /**
    * Starts an agent.
    */
-  async startAgent(id: string): Promise<void> {
+  async startAgent(id: string, trigger: AgentTrigger = 'manual'): Promise<void> {
     const agent = this.agents.get(id);
     if (!agent || !agent.enabled) {
       throw new Error('Agent not found or not enabled');
@@ -214,7 +215,12 @@ class AgentService {
         stage: 'Initializing...',
       },
       startedAt: new Date(),
-      logs: [],
+      logs: trigger === 'manual' ? [] : [{
+        timestamp: new Date(),
+        level: 'info',
+        message: trigger === 'on-change' ? 'Started because watched files changed' : `Started by ${trigger}`,
+      }],
+      trigger,
     };
 
     this.agentStates.set(id, initialState);
@@ -274,7 +280,7 @@ class AgentService {
     const executionPromise = (async () => {
       try {
         const executor = getAgentExecutor(agent.type);
-        const results = await executor(agent, context);
+        const { proposal, ...results } = await executor(agent, context);
 
         if (this.agentStopFlags.get(id)) {
           const state = this.agentStates.get(id);
@@ -287,6 +293,19 @@ class AgentService {
             this.notifyListeners();
           }
           return;
+        }
+
+        // Drafted changes go to the Approval Inbox instead of being applied here.
+        let approvalMessage: string | null = null;
+        if (proposal && proposal.changes.length > 0) {
+          const changeSet = await approvalStore.submit(this.agents.get(id) || agent, proposal, trigger);
+          if (changeSet) {
+            results.changeSetId = changeSet.id;
+            results.pendingChanges = changeSet.status === 'pending' ? changeSet.changes.length : 0;
+            approvalMessage = changeSet.status === 'pending'
+              ? `${changeSet.changes.length} change(s) waiting in the Approval Inbox (${changeSet.lane === 'needs-you' ? 'needs you' : 'can wait'})`
+              : `Applied ${changeSet.appliedChangeIds?.length || 0} low-risk change(s) automatically`;
+          }
         }
 
         // Mark as completed
@@ -308,7 +327,7 @@ class AgentService {
               {
                 timestamp: new Date(),
                 level: 'success',
-                message: 'Agent completed successfully',
+                message: approvalMessage || 'Agent completed successfully',
               } as AgentLog,
             ].slice(-50),
           });
@@ -338,6 +357,21 @@ class AgentService {
     })();
 
     this.agentExecutions.set(id, executionPromise);
+  }
+
+  /**
+   * Waits for an agent's current run to finish (resolves at once if idle).
+   */
+  async waitForAgent(id: string): Promise<void> {
+    await this.agentExecutions.get(id);
+  }
+
+  /**
+   * Whether an agent is currently running or paused.
+   */
+  isAgentBusy(id: string): boolean {
+    const status = this.agentStates.get(id)?.status;
+    return status === 'running' || status === 'paused';
   }
 
   /**

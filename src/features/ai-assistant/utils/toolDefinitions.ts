@@ -401,7 +401,7 @@ export const TOOLS: ToolDefinition[] = [
   },
   {
     name: 'configure_agent',
-    description: 'Configures an agent with specific parameters. Use this to set up agents for specific directories or customize their behavior.',
+    description: 'Configures an agent with specific parameters. Use this to set up agents for specific directories or customize their behavior. Agents never change files directly: they draft changes into the Approval Inbox, where the user approves them.',
     input_schema: {
       type: 'object',
       properties: {
@@ -411,7 +411,7 @@ export const TOOLS: ToolDefinition[] = [
         },
         params: {
           type: 'object',
-          description: 'Agent-specific parameters. For file-organizer: {targetDirectory, strategy, includeSubdirectories}. For duplicate-finder: {targetDirectory, minFileSize, autoRemove}. For cleanup-agent: {targetDirectories, removeEmptyFolders, removeTempFiles, olderThanDays}.',
+          description: 'Agent-specific parameters. For file-organizer: {targetDirectory, strategy, includeSubdirectories}. For duplicate-finder: {targetDirectory, minFileSize, proposeRemoval (default true; drafts duplicates for the trash, user approves)}. For cleanup-agent: {targetDirectories, removeEmptyFolders, removeTempFiles, olderThanDays}.',
         },
         enabled: {
           type: 'boolean',
