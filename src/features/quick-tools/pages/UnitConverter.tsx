@@ -131,7 +131,7 @@ export const UnitConverter: React.FC = () => {
         </div>
 
         <div className="grid gap-6">
-          <div className="grid grid-cols-[1fr,auto,1fr] gap-4 items-end">
+          <div className="grid grid-cols-[1fr_auto_1fr] gap-4 items-end">
             {/* From */}
             <div className="space-y-2">
               <label className="text-xs font-semibold uppercase text-slate-500">From</label>

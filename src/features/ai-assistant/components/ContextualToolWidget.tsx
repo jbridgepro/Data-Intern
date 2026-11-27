@@ -176,7 +176,7 @@ export const ContextualToolWidget = ({
         
         return (
           <div className="space-y-2 pt-1">
-             <div className="grid grid-cols-[1fr,auto,1fr] gap-2 items-center">
+             <div className="grid grid-cols-[1fr_auto_1fr] gap-2 items-center">
                 <div className="bg-slate-50 dark:bg-slate-900/50 p-2 rounded border border-slate-100 dark:border-slate-800 text-xs break-all">
                   <div className="text-[10px] uppercase text-muted-foreground font-semibold mb-0.5">Source</div>
                   <div className="font-mono text-slate-700 dark:text-slate-300">
