@@ -33,6 +33,7 @@ import { StatusBar } from "./components/layout/StatusBar";
 import { ResizablePanel } from "./components/ui/resizable-panel";
 
 import { AgentSelectionProvider } from "./features/agents/contexts/AgentSelectionContext";
+import { agentScheduler } from "./features/agents/services/agentScheduler";
 import { ChatProvider } from "./features/chat/contexts/ChatContext";
 import { EditorProvider } from "./contexts/EditorContext";
 import { AudioTranscriptionProvider } from "./features/quick-tools/contexts/AudioTranscriptionContext";
@@ -89,6 +90,12 @@ function App() {
   useEffect(() => {
     setAgentSidebarOpen(configuration.visibility.agents);
   }, [configuration.visibility.agents]);
+
+  // Run scheduled and on-change agents in the background while the app is open
+  useEffect(() => {
+    agentScheduler.start();
+    return () => agentScheduler.stop();
+  }, []);
 
   // Handle manual agent sidebar toggle - updates both state and configuration
   const handleToggleAgentSidebar = () => {

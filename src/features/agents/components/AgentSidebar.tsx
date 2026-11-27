@@ -26,6 +26,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronUp,
+  Inbox,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -45,6 +46,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { AgentDeleteDialog } from "./AgentDeleteDialog";
+import { ApprovalInbox } from "./ApprovalInbox";
+import { useApprovals } from "../hooks/useApprovals";
 
 interface AgentSidebarProps {
   /** Whether the sidebar is open */
@@ -59,7 +62,7 @@ interface AgentSidebarProps {
   onToggleMinimize?: () => void;
 }
 
-type Tab = 'agents' | 'my-skills' | 'skill-store';
+type Tab = 'agents' | 'inbox' | 'my-skills' | 'skill-store';
 type SortOption = 'name' | 'status' | 'date' | 'running-first';
 type FilterOption = 'all' | 'running' | 'paused' | 'completed' | 'error' | 'idle';
 
@@ -79,9 +82,11 @@ export const AgentSidebar = ({
     pauseAgent,
     resumeAgent,
     clearAgentState,
+    updateAgent,
   } = useAgentManager();
 
   const { selectAgent, createAndSelectAgent, selectedAgentId, deleteAgent } = useAgentSelection();
+  const { pendingCount, needsYou } = useApprovals();
 
   const handleSelectAgent = (agentId: string) => {
     selectAgent(agentId);
@@ -177,6 +182,17 @@ export const AgentSidebar = ({
     }
 
     return filtered;
+  }, [agents, searchQuery, filterOption, agentStates]);
+
+  // Built-in agents (organizer, cleanup, ...) shown below task agents so their
+  // schedule and approval settings can be changed.
+  const builtInAgents = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    return agents
+      .filter(a => a.type !== 'task-agent')
+      .filter(a => !query || a.name.toLowerCase().includes(query) || a.description.toLowerCase().includes(query))
+      .filter(a => filterOption === 'all' || agentStates.find(s => s.id === a.id)?.status === filterOption)
+      .sort((a, b) => a.name.localeCompare(b.name));
   }, [agents, searchQuery, filterOption, agentStates]);
 
   // Sort agents
@@ -444,6 +460,37 @@ export const AgentSidebar = ({
             )}
           </button>
           <button 
+            onClick={() => setActiveTab('inbox')}
+            className={cn(
+              "flex-1 py-2.5 text-xs font-medium text-center uppercase tracking-wider hover:bg-slate-100/50 dark:hover:bg-slate-800/50 transition-colors relative",
+              activeTab === 'inbox' ? "text-violet-600 dark:text-violet-400" : "text-muted-foreground"
+            )}
+            title={pendingCount > 0 ? `${pendingCount} change set(s) waiting for approval` : 'Approval Inbox'}
+          >
+            <span className="relative inline-block">
+              <Inbox className="h-3.5 w-3.5 mx-auto mb-1" />
+              {pendingCount > 0 && (
+                <span
+                  className={cn(
+                    "absolute -top-1.5 -right-2.5 min-w-[14px] h-[14px] px-0.5 rounded-full text-[9px] leading-[14px] text-white",
+                    needsYou.length > 0 ? "bg-red-500" : "bg-amber-500"
+                  )}
+                >
+                  {pendingCount}
+                </span>
+              )}
+            </span>
+            <span className="block">Inbox</span>
+            {activeTab === 'inbox' && (
+              <motion.div
+                layoutId="activeTabIndicator"
+                className="absolute bottom-0 left-0 right-0 h-0.5 bg-violet-600 dark:bg-violet-400"
+                initial={false}
+                transition={{ type: "spring", stiffness: 300, damping: 30 }}
+              />
+            )}
+          </button>
+          <button 
             onClick={() => setActiveTab('my-skills')}
             className={cn(
               "flex-1 py-2.5 text-xs font-medium text-center uppercase tracking-wider hover:bg-slate-100/50 dark:hover:bg-slate-800/50 transition-colors relative",
@@ -495,7 +542,7 @@ export const AgentSidebar = ({
               >
                 <ScrollArea className="h-full">
                   <div className="pb-4">
-                    {sortedAgents.length === 0 ? (
+                    {sortedAgents.length === 0 && builtInAgents.length === 0 ? (
                       <motion.div
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
@@ -547,13 +594,53 @@ export const AgentSidebar = ({
                               onResume={() => resumeAgent(agent.id)}
                               onClear={() => clearAgentState(agent.id)}
                               onDelete={() => handleDeleteClick(agent.id, agent.name)}
+                              onUpdate={(updates) => updateAgent(agent.id, updates)}
                             />
                           </motion.div>
                         );
                       })
                     )}
+
+                    {builtInAgents.length > 0 && (
+                      <div className="pt-2">
+                        <div className="px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground border-b border-border/40">
+                          Built-in agents
+                        </div>
+                        {builtInAgents.map((agent) => {
+                          const state = agentStates.find((s) => s.id === agent.id);
+                          return (
+                            <AgentCard
+                              key={agent.id}
+                              agent={agent}
+                              state={state}
+                              isExpanded={expandedAgents.has(agent.id)}
+                              onToggleExpand={(e) => { e?.stopPropagation(); toggleExpanded(agent.id); }}
+                              onToggleEnabled={() => toggleAgent(agent.id)}
+                              onStart={() => startAgent(agent.id)}
+                              onStop={() => stopAgent(agent.id)}
+                              onPause={() => pauseAgent(agent.id)}
+                              onResume={() => resumeAgent(agent.id)}
+                              onClear={() => clearAgentState(agent.id)}
+                              onDelete={() => handleDeleteClick(agent.id, agent.name)}
+                              onUpdate={(updates) => updateAgent(agent.id, updates)}
+                            />
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                 </ScrollArea>
+              </motion.div>
+            ) : activeTab === 'inbox' ? (
+              <motion.div
+                key="inbox"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                transition={{ duration: 0.15 }}
+                className="h-full"
+              >
+                <ApprovalInbox />
               </motion.div>
             ) : activeTab === 'my-skills' ? (
               <motion.div

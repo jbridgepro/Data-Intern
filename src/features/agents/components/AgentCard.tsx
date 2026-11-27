@@ -13,6 +13,7 @@ import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
 // import { getAgentMetadata } from "../agentRegistry";
 import type { AgentConfig, AgentResults, AgentState } from "../types";
+import { AgentAutonomySettings } from "./AgentAutonomySettings";
 
 type ContextLine = { label: string; value: string };
 type Metric = { label: string; value: string };
@@ -129,8 +130,8 @@ const getContextDetails = (agent: AgentConfig): ContextLine[] => {
         { label: "Target", value: params.targetDirectory || "Not set" },
         { label: "Min size", value: formatFileSize(params.minFileSize || 0) },
         {
-          label: "Auto remove",
-          value: params.autoRemove ? "Enabled" : "Disabled",
+          label: "Draft removal",
+          value: (params.proposeRemoval ?? params.autoRemove ?? true) ? "On (asks first)" : "Off",
         },
       ];
     case "file-analyzer":
@@ -206,11 +207,8 @@ const getResultMetrics = (
       if (results.duplicateGroups !== undefined) {
         metrics.push({ label: "Groups", value: formatCount(results.duplicateGroups) });
       }
-      if (results.filesRemoved !== undefined) {
-        metrics.push({ label: "Removed", value: formatCount(results.filesRemoved) });
-      }
-      if (results.spaceSaved !== undefined) {
-        metrics.push({ label: "Saved", value: formatFileSize(results.spaceSaved) });
+      if (results.reclaimableSpace) {
+        metrics.push({ label: "Reclaimable", value: formatFileSize(results.reclaimableSpace) });
       }
       break;
     case "file-analyzer":
@@ -231,18 +229,18 @@ const getResultMetrics = (
       }
       break;
     case "cleanup-agent":
-      if (results.filesRemoved !== undefined) {
-        metrics.push({ label: "Files", value: formatCount(results.filesRemoved) });
+      if (results.tempFilesFound !== undefined) {
+        metrics.push({ label: "Temp files", value: formatCount(results.tempFilesFound) });
       }
-      if (results.foldersRemoved !== undefined) {
-        metrics.push({ label: "Folders", value: formatCount(results.foldersRemoved) });
+      if (results.emptyFoldersFound !== undefined) {
+        metrics.push({ label: "Empty folders", value: formatCount(results.emptyFoldersFound) });
       }
-      if (results.spaceSaved !== undefined) {
-        metrics.push({ label: "Saved", value: formatFileSize(results.spaceSaved) });
+      if (results.reclaimableSpace) {
+        metrics.push({ label: "Reclaimable", value: formatFileSize(results.reclaimableSpace) });
       }
       break;
     case "backup-agent":
-      if (results.filesBackedUp !== undefined) {
+      if (results.filesBackedUp) {
         metrics.push({ label: "Files", value: formatCount(results.filesBackedUp) });
       }
       if (results.totalSizeBackedUp) {
@@ -250,14 +248,11 @@ const getResultMetrics = (
       }
       break;
     case "sync-agent":
-      if (results.filesSynced !== undefined) {
-        metrics.push({ label: "Synced", value: formatCount(results.filesSynced) });
-      }
       if (results.filesCreated !== undefined) {
-        metrics.push({ label: "Created", value: formatCount(results.filesCreated) });
+        metrics.push({ label: "New", value: formatCount(results.filesCreated) });
       }
       if (results.filesUpdated !== undefined) {
-        metrics.push({ label: "Updated", value: formatCount(results.filesUpdated) });
+        metrics.push({ label: "Overwrites", value: formatCount(results.filesUpdated) });
       }
       break;
     case "task-agent":
@@ -267,6 +262,10 @@ const getResultMetrics = (
       break;
     default:
       break;
+  }
+
+  if (results.pendingChanges) {
+    metrics.unshift({ label: "Awaiting approval", value: formatCount(results.pendingChanges) });
   }
 
   return metrics;
@@ -284,6 +283,7 @@ interface AgentCardProps {
   onResume: () => void;
   onClear: () => void;
   onDelete: () => void;
+  onUpdate?: (updates: Partial<AgentConfig>) => void;
   isSelected?: boolean;
 }
 
@@ -299,6 +299,7 @@ export const AgentCard = ({
   onResume,
   onClear,
   onDelete,
+  onUpdate,
   isSelected,
 }: AgentCardProps) => {
   // const metadata = getAgentMetadata(agent.type);
@@ -434,7 +435,7 @@ export const AgentCard = ({
                    {contextDetails.map((line) => (
                      <div
                        key={line.label}
-                       className="grid grid-cols-[auto,1fr] gap-2 items-start"
+                       className="grid grid-cols-[auto_1fr] gap-2 items-start"
                      >
                        <span className="text-muted-foreground/70">{line.label}</span>
                        <span className="min-w-0 truncate" title={line.value}>
@@ -448,6 +449,14 @@ export const AgentCard = ({
                {needsConfig && (
                  <div className="text-[11px] text-amber-600 dark:text-amber-400">
                    Needs configuration: {missingConfigReason}
+                 </div>
+               )}
+
+               {onUpdate && <AgentAutonomySettings agent={agent} onUpdate={onUpdate} />}
+
+               {typeof state?.results?.message === 'string' && state.status === 'completed' && (
+                 <div className="text-[11px] whitespace-pre-wrap rounded-md bg-background/70 border border-border/50 p-2 max-h-40 overflow-y-auto">
+                   {state.results.message}
                  </div>
                )}
                

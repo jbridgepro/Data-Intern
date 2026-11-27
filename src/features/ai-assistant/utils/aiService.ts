@@ -2397,6 +2397,106 @@ export async function improvePromptWithAI(
 }
 
 /**
+ * Reads the AI Assistant settings saved by the app (used by background agents,
+ * which run outside the assistant's React tree).
+ */
+export function loadSavedAISettings(): AISettings | null {
+  try {
+    const raw = localStorage.getItem('ai-assistant-settings');
+    return raw ? (JSON.parse(raw) as AISettings) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * One-shot text completion with whichever provider the user configured
+ * (Anthropic, Ollama or OpenRouter). Throws with a readable message if no
+ * provider is set up. `modelOverride` lets a single agent use its own model.
+ */
+export async function completeWithAI(options: {
+  system: string;
+  prompt: string;
+  maxTokens?: number;
+  temperature?: number;
+  modelOverride?: string;
+  settings?: AISettings | null;
+}): Promise<string> {
+  const settings = options.settings ?? loadSavedAISettings();
+  if (!settings) {
+    throw new Error('No AI provider is configured. Set one up in AI Assistant settings.');
+  }
+  const maxTokens = options.maxTokens ?? 1024;
+  const temperature = options.temperature ?? 0.3;
+  const messages = [
+    { role: 'system', content: options.system },
+    { role: 'user', content: options.prompt },
+  ];
+
+  if (settings.provider === 'ollama') {
+    const baseUrl = settings.ollamaBaseUrl || 'http://localhost:11434';
+    const model = options.modelOverride || settings.ollamaModel || settings.model || 'llama3.2:3b';
+    const res = await fetch(`${baseUrl}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model, messages, stream: false, options: { temperature } }),
+    });
+    if (!res.ok) throw new Error(`Ollama request failed: ${res.status} ${await res.text()}`);
+    const data = await res.json();
+    const text = data?.message?.content;
+    if (typeof text !== 'string') throw new Error('Invalid response from Ollama');
+    return text.trim();
+  }
+
+  if (settings.provider === 'anthropic') {
+    if (!settings.apiKey) throw new Error('Anthropic API key is not configured.');
+    if (!anthropicClient) initializeAIClient(settings);
+    if (!anthropicClient) throw new Error('Could not initialize the Anthropic client.');
+    const response = await anthropicClient.messages.create({
+      model: options.modelOverride || getModelName(settings),
+      max_tokens: maxTokens,
+      temperature,
+      system: options.system,
+      messages: [{ role: 'user', content: options.prompt }],
+    });
+    const text = response.content
+      .map(part => (part.type === 'text' ? part.text : ''))
+      .join('')
+      .trim();
+    if (!text) throw new Error('Empty response from Anthropic');
+    return text;
+  }
+
+  if (settings.provider === 'openrouter') {
+    const openRouter = settings.openRouter ?? DEFAULT_OPENROUTER_SETTINGS;
+    const apiKey = openRouter.apiKey?.trim();
+    if (!apiKey) throw new Error('OpenRouter API key is not configured.');
+    const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': openRouter.siteUrl || (typeof window !== 'undefined' ? window.location.origin : ''),
+        'X-Title': openRouter.siteName || 'File Pro',
+      },
+      body: JSON.stringify({
+        model: options.modelOverride || openRouter.model || 'anthropic/claude-3.5-sonnet',
+        messages,
+        max_tokens: maxTokens,
+        temperature,
+      }),
+    });
+    if (!res.ok) throw new Error(`OpenRouter request failed: ${res.status} ${await res.text()}`);
+    const data = await res.json();
+    const text = data?.choices?.[0]?.message?.content;
+    if (typeof text !== 'string') throw new Error('Invalid response from OpenRouter');
+    return text.trim();
+  }
+
+  throw new Error(`Unsupported AI provider: ${settings.provider}`);
+}
+
+/**
  * Tests the API key or connection by making a simple request.
  * Supports both Anthropic and Ollama providers.
  */

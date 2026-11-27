@@ -6,13 +6,14 @@
  */
 
 import { useState, useEffect } from "react";
-import { Sparkles, Play, Loader2 } from "lucide-react";
+import { Sparkles, Play, Loader2, Settings2, CalendarClock, Inbox } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { agentService } from "../../agents/services/agentService";
 import { getAgentMetadata } from "../../agents/agentRegistry";
 import type { AgentConfig, AgentState } from "../../agents/types";
+import { AgentAutonomySettings } from "../../agents/components/AgentAutonomySettings";
 import { cn } from "@/lib/utils";
 
 interface AgentToolsProps {
@@ -27,6 +28,7 @@ export const AgentTools = ({
   const [agents, setAgents] = useState<AgentConfig[]>([]);
   const [agentStates, setAgentStates] = useState<AgentState[]>([]);
   const [startingAgent, setStartingAgent] = useState<string | null>(null);
+  const [settingsOpenFor, setSettingsOpenFor] = useState<string | null>(null);
 
   // Subscribe to agent service updates
   useEffect(() => {
@@ -164,9 +166,18 @@ export const AgentTools = ({
           const isRunning =
             state?.status === "running" || state?.status === "paused";
 
+          const scheduleLabel = agent.schedule?.enabled
+            ? agent.schedule.frequency === "on-change"
+              ? "On file change"
+              : agent.schedule.frequency === "hourly"
+                ? "Hourly"
+                : `${agent.schedule.frequency[0].toUpperCase()}${agent.schedule.frequency.slice(1)} ${agent.schedule.time || "09:00"}`
+            : null;
+          const pending = state?.status === "completed" ? state.results?.pendingChanges : 0;
+
           return (
+            <div key={agent.id} className="flex flex-col gap-1">
             <Button
-              key={agent.id}
               variant="outline"
               size="sm"
               onClick={() => handleStartAgent(agent)}
@@ -230,6 +241,34 @@ export const AgentTools = ({
                 </div>
               )}
             </Button>
+            <div className="flex items-center justify-between gap-2 px-1">
+              <button
+                className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
+                onClick={() => setSettingsOpenFor(settingsOpenFor === agent.id ? null : agent.id)}
+              >
+                <Settings2 className="h-3 w-3" />
+                Schedule & approval
+              </button>
+              <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+                {scheduleLabel && (
+                  <span className="flex items-center gap-0.5" title="Runs on its own">
+                    <CalendarClock className="h-3 w-3" /> {scheduleLabel}
+                  </span>
+                )}
+                {pending ? (
+                  <span className="flex items-center gap-0.5 text-amber-600 dark:text-amber-400" title="Waiting in the Approval Inbox (Agents panel)">
+                    <Inbox className="h-3 w-3" /> {pending} to review
+                  </span>
+                ) : null}
+              </div>
+            </div>
+            {settingsOpenFor === agent.id && (
+              <AgentAutonomySettings
+                agent={agent}
+                onUpdate={(updates) => agentService.updateAgent(agent.id, updates)}
+              />
+            )}
+            </div>
           );
         })}
       </div>

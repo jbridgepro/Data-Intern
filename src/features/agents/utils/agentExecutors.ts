@@ -5,17 +5,22 @@
  * Each agent type has its own executor that performs actual file management tasks.
  */
 
-import { readDir, stat, remove, exists, mkdir } from '@tauri-apps/plugin-fs';
-import { join, basename, dirname } from '@tauri-apps/api/path';
-import { copyFile as tauriCopyFile, rename } from '@tauri-apps/plugin-fs';
-import { Command } from '@tauri-apps/plugin-shell';
-import type { AgentConfig, AgentState, AgentLog, AgentResults } from '../types';
+import { readDir, stat, exists } from '@tauri-apps/plugin-fs';
+import { join, basename } from '@tauri-apps/api/path';
+import type { AgentConfig, AgentLog, AgentProposal, AgentResults } from '../types';
 import { organizeFilesByStrategy } from '../../ai-assistant/utils/organizationStrategies';
 import { findDuplicateFiles } from '../../ai-assistant/utils/duplicateDetection';
 import { analyzeDirectoryFiles } from '../../ai-assistant/utils/fileAnalysis';
-import { executeFileOperation } from '../../ai-assistant/utils/fileOperations';
-import { executeFileCopyTool } from '../../ai-assistant/utils/tabTools';
+import { completeWithAI } from '../../ai-assistant/utils/aiService';
 import type { OrganizationConfig } from '../../ai-assistant/types';
+import { AGENT_TRASH_DIR, buildTrashPath, trashStamp } from './changeSets';
+
+/**
+ * What an executor returns. Executors that want to change files put the
+ * changes in `proposal`; the agent service routes them through the Approval
+ * Inbox instead of the executor touching the disk itself.
+ */
+export type AgentExecutionResult = AgentResults & { proposal?: AgentProposal };
 
 /**
  * Agent execution context with progress callbacks.
@@ -35,7 +40,7 @@ export interface AgentExecutionContext {
 export async function executeFileOrganizerAgent(
   agent: AgentConfig,
   context: AgentExecutionContext
-): Promise<AgentResults> {
+): Promise<AgentExecutionResult> {
   const { onProgress, onLog, onError, shouldStop } = context;
   let targetDirectory = agent.params?.targetDirectory || '';
   const strategy = agent.params?.strategy || 'by-type';
@@ -104,15 +109,17 @@ export async function executeFileOrganizerAgent(
       message: `Found ${operation.files.length} files to organize`,
     });
 
-    onProgress(50, 'Executing file operations...');
+    onProgress(70, 'Drafting moves...');
 
     // Filter out files that are already in their target location
     const filesToMove = operation.files.filter(item => {
-      // Normalize paths for comparison
       const source = item.sourcePath.replace(/\\/g, '/');
       const target = item.targetPath?.replace(/\\/g, '/') || '';
-      return source !== target;
+      const isMove = item.action === 'move' || item.action === 'rename';
+      return isMove && target !== '' && source !== target;
     });
+
+    onProgress(100, 'Completed');
 
     if (filesToMove.length === 0) {
       onLog({
@@ -120,52 +127,32 @@ export async function executeFileOrganizerAgent(
         level: 'info',
         message: 'All files are already organized. No operations needed.',
       });
-      onProgress(100, 'Completed');
-      return {
-        filesProcessed: 0,
-        foldersCreated: 0,
-      };
+      return { filesProcessed: 0, foldersCreated: 0 };
     }
 
-    onLog({
-      timestamp: new Date(),
-      level: 'info',
-      message: `Moving ${filesToMove.length} files to organized structure...`,
-    });
-
-    // Execute the operation with filtered files
-    const operationToExecute = {
-      ...operation,
-      files: filesToMove,
-    };
-
-    try {
-      await executeFileOperation(operationToExecute, {
-        enableBackup: true,
-        excludedFolders: [],
-      });
-    } catch (error: any) {
-      // Log the actual error for debugging
-      onLog({
-        timestamp: new Date(),
-        level: 'error',
-        message: `Error during file operation: ${error.message || 'Unknown error'}`,
-        data: error,
-      });
-      throw error;
-    }
-
-    onProgress(100, 'Completed');
+    const folders = new Set(
+      filesToMove.map(f => f.targetPath!.replace(/\\/g, '/').split('/').slice(0, -1).join('/'))
+    );
 
     onLog({
       timestamp: new Date(),
       level: 'success',
-      message: `File organization completed successfully. Processed ${filesToMove.length} files.`,
+      message: `Drafted ${filesToMove.length} moves into ${folders.size} folders. Waiting for approval.`,
     });
 
     return {
       filesProcessed: filesToMove.length,
-      foldersCreated: new Set(filesToMove.map(f => f.targetPath?.split('/').slice(0, -1).join('/')).filter(Boolean)).size,
+      foldersCreated: folders.size,
+      proposal: {
+        title: `Organize ${filesToMove.length} files (${strategy})`,
+        summary: `Move ${filesToMove.length} files in ${targetDirectory} into ${folders.size} folders.`,
+        changes: filesToMove.map(f => ({
+          kind: 'move' as const,
+          source: f.sourcePath,
+          target: f.targetPath!,
+          reason: f.reason,
+        })),
+      },
     };
   } catch (error: any) {
     // Log detailed error information
@@ -188,11 +175,13 @@ export async function executeFileOrganizerAgent(
 export async function executeDuplicateFinderAgent(
   agent: AgentConfig,
   context: AgentExecutionContext
-): Promise<AgentResults> {
+): Promise<AgentExecutionResult> {
   const { onProgress, onLog, onError, shouldStop } = context;
   let targetDirectory = agent.params?.targetDirectory || '';
   const minFileSize = agent.params?.minFileSize || 0;
-  const autoRemove = agent.params?.autoRemove === true;
+  // Drafting a cleanup is safe: nothing is removed until someone approves it.
+  // `autoRemove` is the older name for this setting.
+  const proposeRemoval = agent.params?.proposeRemoval ?? agent.params?.autoRemove ?? true;
 
   if (!targetDirectory) {
     // Try to get current directory from localStorage (set by AI Assistant)
@@ -242,48 +231,47 @@ export async function executeDuplicateFinderAgent(
       data: { totalDuplicates: duplicateAnalysis.totalDuplicates },
     });
 
-    let filesRemoved = 0;
-    let spaceSaved = 0;
+    onProgress(100, 'Completed');
 
-    if (autoRemove && filteredGroups.length > 0) {
-      onProgress(80, 'Removing duplicate files...');
-
-      // Remove duplicates (keep first file in each group)
+    const stamp = trashStamp();
+    const changes: AgentProposal['changes'] = [];
+    let reclaimable = 0;
+    if (proposeRemoval) {
       for (const group of filteredGroups) {
-        if (shouldStop()) {
-          throw new Error('Agent stopped by user');
-        }
-
-        // Keep the first file, remove the rest
-        for (let i = 1; i < group.files.length; i++) {
-          try {
-            await remove(group.files[i].path);
-            filesRemoved++;
-            spaceSaved += group.size;
-          } catch (error) {
-            onLog({
-              timestamp: new Date(),
-              level: 'warning',
-              message: `Failed to remove duplicate: ${group.files[i].path}`,
-            });
-          }
+        // Keep the first file in each group, draft the rest for the trash.
+        for (const file of group.files.slice(1)) {
+          if (file.path.includes(AGENT_TRASH_DIR)) continue;
+          changes.push({
+            kind: 'trash',
+            source: file.path,
+            target: buildTrashPath(targetDirectory, file.path, stamp),
+            size: group.size,
+            reason: `Duplicate of ${group.files[0].path}`,
+          });
+          reclaimable += group.size;
         }
       }
     }
 
-    onProgress(100, 'Completed');
-
     onLog({
       timestamp: new Date(),
       level: 'success',
-      message: `Duplicate scan completed. Found ${filteredGroups.length} groups`,
+      message: changes.length > 0
+        ? `Found ${filteredGroups.length} duplicate groups. Drafted ${changes.length} files for the trash, waiting for approval.`
+        : `Duplicate scan completed. Found ${filteredGroups.length} groups`,
     });
 
     return {
       duplicatesFound: duplicateAnalysis.totalDuplicates,
       duplicateGroups: filteredGroups.length,
-      filesRemoved,
-      spaceSaved,
+      filesRemoved: 0,
+      spaceSaved: 0,
+      reclaimableSpace: reclaimable,
+      proposal: changes.length > 0 ? {
+        title: `Remove ${changes.length} duplicate files`,
+        summary: `Move ${changes.length} duplicates from ${targetDirectory} to the agent trash (keeps one copy of each). Undoable.`,
+        changes,
+      } : undefined,
     };
   } catch (error: any) {
     onError(error.message || 'Duplicate finder failed');
@@ -298,7 +286,7 @@ export async function executeDuplicateFinderAgent(
 export async function executeFileAnalyzerAgent(
   agent: AgentConfig,
   context: AgentExecutionContext
-): Promise<AgentResults> {
+): Promise<AgentExecutionResult> {
   const { onProgress, onLog, onError, shouldStop } = context;
   let targetDirectory = agent.params?.targetDirectory || '';
   const analyzeUnused = agent.params?.analyzeUnused !== false;
@@ -403,7 +391,7 @@ export async function executeFileAnalyzerAgent(
 export async function executeCleanupAgent(
   agent: AgentConfig,
   context: AgentExecutionContext
-): Promise<AgentResults> {
+): Promise<AgentExecutionResult> {
   const { onProgress, onLog, onError, shouldStop } = context;
   const targetDirectories = agent.params?.targetDirectories || [];
   const removeEmptyFolders = agent.params?.removeEmptyFolders !== false;
@@ -421,55 +409,56 @@ export async function executeCleanupAgent(
       message: `Starting cleanup in ${targetDirectories.length} directory(ies)...`,
     });
 
-    let filesRemoved = 0;
-    let foldersRemoved = 0;
-    let spaceSaved = 0;
     const cutoffDate = Date.now() - olderThanDays * 24 * 60 * 60 * 1000;
+    const stamp = trashStamp();
+    const changes: AgentProposal['changes'] = [];
+    let reclaimable = 0;
+    let tempFileCount = 0;
+    let emptyFolderCount = 0;
 
     for (let i = 0; i < targetDirectories.length; i++) {
       const directory = targetDirectories[i];
       onProgress(
         Math.floor((i / targetDirectories.length) * 80),
-        `Cleaning up ${basename(directory)}...`
+        `Scanning ${await basename(directory)}...`
       );
 
       if (shouldStop()) {
         throw new Error('Agent stopped by user');
       }
 
-      // Remove temp files
       if (removeTempFiles) {
         const tempFiles = await findTempFiles(directory, cutoffDate);
         for (const file of tempFiles) {
+          let size: number | undefined;
           try {
-            const fileStat = await stat(file);
-            await remove(file);
-            filesRemoved++;
-            spaceSaved += fileStat.size;
-          } catch (error) {
-            onLog({
-              timestamp: new Date(),
-              level: 'warning',
-              message: `Failed to remove temp file: ${file}`,
-            });
+            size = (await stat(file)).size;
+            reclaimable += size;
+          } catch {
+            // Size is informational only
           }
+          changes.push({
+            kind: 'trash',
+            source: file,
+            target: buildTrashPath(directory, file, stamp),
+            size,
+            reason: `Temporary file older than ${olderThanDays} days`,
+          });
+          tempFileCount++;
         }
       }
 
-      // Remove empty folders
       if (removeEmptyFolders) {
         const emptyFolders = await findEmptyFolders(directory);
+        // Deepest first, so nested empty folders can all be removed.
+        emptyFolders.sort((a, b) => b.length - a.length);
         for (const folder of emptyFolders) {
-          try {
-            await remove(folder);
-            foldersRemoved++;
-          } catch (error) {
-            onLog({
-              timestamp: new Date(),
-              level: 'warning',
-              message: `Failed to remove empty folder: ${folder}`,
-            });
-          }
+          changes.push({
+            kind: 'remove-empty-dir',
+            source: folder,
+            reason: 'Empty folder',
+          });
+          emptyFolderCount++;
         }
       }
     }
@@ -479,13 +468,23 @@ export async function executeCleanupAgent(
     onLog({
       timestamp: new Date(),
       level: 'success',
-      message: `Cleanup completed. Removed ${filesRemoved} files and ${foldersRemoved} folders`,
+      message: changes.length > 0
+        ? `Drafted cleanup of ${tempFileCount} temp files and ${emptyFolderCount} empty folders. Waiting for approval.`
+        : 'Nothing to clean up.',
     });
 
     return {
-      filesRemoved,
-      foldersRemoved,
-      spaceSaved,
+      filesRemoved: 0,
+      foldersRemoved: 0,
+      spaceSaved: 0,
+      tempFilesFound: tempFileCount,
+      emptyFoldersFound: emptyFolderCount,
+      reclaimableSpace: reclaimable,
+      proposal: changes.length > 0 ? {
+        title: `Clean up ${tempFileCount} temp files, ${emptyFolderCount} empty folders`,
+        summary: `Temp files go to the agent trash (undoable). Empty folders are removed only if still empty when approved.`,
+        changes,
+      } : undefined,
     };
   } catch (error: any) {
     onError(error.message || 'Cleanup failed');
@@ -606,11 +605,10 @@ async function collectFoldersRecursive(
 export async function executeBackupAgent(
   agent: AgentConfig,
   context: AgentExecutionContext
-): Promise<AgentResults> {
+): Promise<AgentExecutionResult> {
   const { onProgress, onLog, onError, shouldStop } = context;
   const sourceDirectories = agent.params?.sourceDirectories || [];
   const backupLocation = agent.params?.backupLocation || '';
-  const includeSubdirectories = agent.params?.includeSubdirectories !== false;
 
   if (sourceDirectories.length === 0) {
     throw new Error('No source directories specified');
@@ -627,72 +625,29 @@ export async function executeBackupAgent(
       message: `Starting backup of ${sourceDirectories.length} directory(ies) to ${backupLocation}...`,
     });
 
-    // Ensure backup location exists
-    onProgress(5, 'Preparing backup location...');
-    try {
-      const backupExists = await exists(backupLocation);
-      if (!backupExists) {
-        await mkdir(backupLocation, { recursive: true });
-        onLog({
-          timestamp: new Date(),
-          level: 'info',
-          message: `Created backup directory: ${backupLocation}`,
-        });
-      }
-    } catch (error: any) {
-      throw new Error(`Failed to create backup directory: ${error.message}`);
+    const changes: AgentProposal['changes'] = [];
+
+    if (!(await exists(backupLocation))) {
+      changes.push({ kind: 'mkdir', source: backupLocation, reason: 'Backup destination' });
     }
 
-    let totalFilesBackedUp = 0;
-    let totalSizeBackedUp = 0;
-
-    // Backup each source directory
     for (let i = 0; i < sourceDirectories.length; i++) {
       const sourceDir = sourceDirectories[i];
-      const sourceDirName = await basename(sourceDir);
-      const targetBackupDir = await join(backupLocation, sourceDirName);
-
-      onProgress(
-        Math.floor((i / sourceDirectories.length) * 80) + 10,
-        `Backing up ${sourceDirName}...`
-      );
-
       if (shouldStop()) {
         throw new Error('Agent stopped by user');
       }
-
-      // Use file copy tool to backup files
-      const copyResult = await executeFileCopyTool(
-        {
-          sourcePath: sourceDir,
-          destinationPath: targetBackupDir,
-          operation: 'copy',
-          includeSubdirectories,
-          overwrite: false, // Don't overwrite existing backups
-        },
-        (progress) => {
-          if (progress) {
-            const overallProgress = Math.floor(
-              ((i / sourceDirectories.length) * 80) +
-              ((progress.percentage / 100) * (80 / sourceDirectories.length)) +
-              10
-            );
-            onProgress(overallProgress, progress.status || `Backing up ${sourceDirName}...`);
-          }
-        }
-      );
-
-      if (!copyResult.success) {
-        onLog({
-          timestamp: new Date(),
-          level: 'warning',
-          message: `Backup of ${sourceDirName} had issues: ${copyResult.error}`,
-        });
-      } else {
-        // Count files backed up from copy result
-        const filesCount = copyResult.data?.filesProcessed || copyResult.data?.totalFiles || 0;
-        totalFilesBackedUp += filesCount;
+      onProgress(10 + Math.floor((i / sourceDirectories.length) * 80), `Checking ${sourceDir}...`);
+      if (!(await exists(sourceDir))) {
+        onLog({ timestamp: new Date(), level: 'warning', message: `Source not found, skipping: ${sourceDir}` });
+        continue;
       }
+      const sourceDirName = await basename(sourceDir);
+      changes.push({
+        kind: 'copy-tree',
+        source: sourceDir,
+        target: await join(backupLocation, sourceDirName),
+        reason: 'Copy new files only, never overwrites existing backups',
+      });
     }
 
     onProgress(100, 'Completed');
@@ -700,13 +655,18 @@ export async function executeBackupAgent(
     onLog({
       timestamp: new Date(),
       level: 'success',
-      message: `Backup completed. Backed up ${totalFilesBackedUp} files`,
+      message: `Drafted backup of ${changes.filter(c => c.kind === 'copy-tree').length} folder(s).`,
     });
 
     return {
-      filesBackedUp: totalFilesBackedUp,
+      filesBackedUp: 0,
       backupLocation,
-      totalSizeBackedUp,
+      totalSizeBackedUp: 0,
+      proposal: changes.length > 0 ? {
+        title: `Back up ${sourceDirectories.length} folder(s)`,
+        summary: `Copy new files to ${backupLocation}. Existing backups are never overwritten.`,
+        changes,
+      } : undefined,
     };
   } catch (error: any) {
     onError(error.message || 'Backup failed');
@@ -721,7 +681,7 @@ export async function executeBackupAgent(
 export async function executeSyncAgent(
   agent: AgentConfig,
   context: AgentExecutionContext
-): Promise<AgentResults> {
+): Promise<AgentExecutionResult> {
   const { onProgress, onLog, onError, shouldStop } = context;
   const sourceDirectory = agent.params?.sourceDirectory || '';
   const targetDirectory = agent.params?.targetDirectory || '';
@@ -739,161 +699,70 @@ export async function executeSyncAgent(
       message: `Starting sync (${syncDirection}) from ${sourceDirectory} to ${targetDirectory}...`,
     });
 
-    // Ensure target directory exists
-    onProgress(5, 'Preparing sync target...');
-    try {
-      const targetExists = await exists(targetDirectory);
-      if (!targetExists) {
-        await mkdir(targetDirectory, { recursive: true });
-      }
-    } catch (error: any) {
-      throw new Error(`Failed to create target directory: ${error.message}`);
-    }
+    onProgress(5, 'Reading both folders...');
 
-    let filesSynced = 0;
+    const toRelative = (root: string, path: string) =>
+      path.replace(/\\/g, '/').replace(root.replace(/\\/g, '/').replace(/\/+$/, ''), '').replace(/^\//, '');
+
+    const sourceFiles = await collectAllFiles(sourceDirectory, includeSubdirectories);
+    const targetFiles = (await exists(targetDirectory))
+      ? await collectAllFiles(targetDirectory, includeSubdirectories)
+      : [];
+    const sourceMap = new Map(sourceFiles.map(f => [toRelative(sourceDirectory, f.path), f]));
+    const targetMap = new Map(targetFiles.map(f => [toRelative(targetDirectory, f.path), f]));
+
+    const changes: AgentProposal['changes'] = [];
     let filesCreated = 0;
     let filesUpdated = 0;
 
     if (syncDirection === 'one-way' || syncDirection === 'bidirectional') {
-      // Sync source -> target
-      onProgress(20, 'Syncing source to target...');
-
-      if (shouldStop()) {
-        throw new Error('Agent stopped by user');
-      }
-
-      const sourceFiles = await collectAllFiles(sourceDirectory, includeSubdirectories);
-      const targetFiles = await collectAllFiles(targetDirectory, includeSubdirectories);
-      const targetFileMap = new Map(targetFiles.map(f => [f.name, f]));
-
-      for (let i = 0; i < sourceFiles.length; i++) {
-        const sourceFile = sourceFiles[i];
-        const relativePath = sourceFile.path.replace(sourceDirectory, '').replace(/^\//, '');
-        const targetPath = await join(targetDirectory, relativePath);
-        const targetFile = targetFileMap.get(relativePath);
-
-        if (shouldStop()) {
-          throw new Error('Agent stopped by user');
-        }
-
-        // Check if file needs syncing
-        let needsSync = false;
-        if (!targetFile) {
-          needsSync = true; // File doesn't exist in target
-        } else {
-          // Compare modification times
-          const sourceTime = sourceFile.modified.getTime();
-          const targetTime = targetFile.modified.getTime();
-          if (sourceTime > targetTime || sourceFile.size !== targetFile.size) {
-            needsSync = true; // Source is newer or sizes differ
-          }
-        }
-
-        if (needsSync) {
-          try {
-            // Ensure target directory exists
-            const targetDir = await dirname(targetPath);
-            const targetDirExists = await exists(targetDir);
-            if (!targetDirExists) {
-              await mkdir(targetDir, { recursive: true });
-            }
-
-            await tauriCopyFile(sourceFile.path, targetPath);
-            filesSynced++;
-            if (!targetFile) {
-              filesCreated++;
-            } else {
-              filesUpdated++;
-            }
-
-            onProgress(
-              20 + Math.floor((i / sourceFiles.length) * 40),
-              `Synced ${await basename(sourceFile.path)}...`
-            );
-          } catch (error: any) {
-            onLog({
-              timestamp: new Date(),
-              level: 'warning',
-              message: `Failed to sync ${sourceFile.path}: ${error.message}`,
-            });
-          }
+      onProgress(30, 'Comparing source to target...');
+      for (const [relativePath, sourceFile] of sourceMap) {
+        if (shouldStop()) throw new Error('Agent stopped by user');
+        const targetFile = targetMap.get(relativePath);
+        const newer = targetFile && (
+          sourceFile.modified.getTime() > targetFile.modified.getTime() ||
+          (sourceFile.size !== targetFile.size && syncDirection === 'one-way')
+        );
+        if (!targetFile || newer) {
+          changes.push({
+            kind: 'copy',
+            source: sourceFile.path,
+            target: targetFile ? targetFile.path : await join(targetDirectory, relativePath),
+            overwrite: Boolean(targetFile),
+            size: sourceFile.size,
+            reason: targetFile ? 'Source is newer, replaces target' : 'Missing in target',
+          });
+          if (targetFile) filesUpdated++; else filesCreated++;
         }
       }
     }
 
     if (syncDirection === 'bidirectional') {
-      // Sync target -> source (for bidirectional)
-      onProgress(60, 'Syncing target to source...');
-
-      if (shouldStop()) {
-        throw new Error('Agent stopped by user');
-      }
-
-      const sourceFiles = await collectAllFiles(sourceDirectory, includeSubdirectories);
-      const sourceFileMap = new Map(sourceFiles.map(f => {
-        const relativePath = f.path.replace(sourceDirectory, '').replace(/^\//, '');
-        return [relativePath, f];
-      }));
-
-      const targetFiles = await collectAllFiles(targetDirectory, includeSubdirectories);
-
-      for (let i = 0; i < targetFiles.length; i++) {
-        const targetFile = targetFiles[i];
-        const relativePath = targetFile.path.replace(targetDirectory, '').replace(/^\//, '');
-        const sourcePath = await join(sourceDirectory, relativePath);
-        const sourceFile = sourceFileMap.get(relativePath);
-
-        if (shouldStop()) {
-          throw new Error('Agent stopped by user');
-        }
-
-        // Check if file needs syncing (only if it doesn't exist in source or is newer)
+      onProgress(60, 'Comparing target to source...');
+      for (const [relativePath, targetFile] of targetMap) {
+        if (shouldStop()) throw new Error('Agent stopped by user');
+        const sourceFile = sourceMap.get(relativePath);
         if (!sourceFile) {
-          try {
-            // Ensure source directory exists
-            const sourceDir = await dirname(sourcePath);
-            const sourceDirExists = await exists(sourceDir);
-            if (!sourceDirExists) {
-              await mkdir(sourceDir, { recursive: true });
-            }
-
-            await tauriCopyFile(targetFile.path, sourcePath);
-            filesSynced++;
-            filesCreated++;
-
-            onProgress(
-              60 + Math.floor((i / targetFiles.length) * 35),
-              `Synced ${await basename(targetFile.path)}...`
-            );
-          } catch (error: any) {
-            onLog({
-              timestamp: new Date(),
-              level: 'warning',
-              message: `Failed to sync ${targetFile.path}: ${error.message}`,
-            });
-          }
-        } else {
-          // Check if target is newer
-          const sourceTime = sourceFile.modified.getTime();
-          const targetTime = targetFile.modified.getTime();
-          if (targetTime > sourceTime && targetFile.size !== sourceFile.size) {
-            try {
-              await tauriCopyFile(targetFile.path, sourcePath);
-              filesSynced++;
-              filesUpdated++;
-
-              onProgress(
-                60 + Math.floor((i / targetFiles.length) * 35),
-                `Synced ${await basename(targetFile.path)}...`
-              );
-            } catch (error: any) {
-              onLog({
-                timestamp: new Date(),
-                level: 'warning',
-                message: `Failed to sync ${targetFile.path}: ${error.message}`,
-              });
-            }
-          }
+          changes.push({
+            kind: 'copy',
+            source: targetFile.path,
+            target: await join(sourceDirectory, relativePath),
+            overwrite: false,
+            size: targetFile.size,
+            reason: 'Missing in source',
+          });
+          filesCreated++;
+        } else if (targetFile.modified.getTime() > sourceFile.modified.getTime()) {
+          changes.push({
+            kind: 'copy',
+            source: targetFile.path,
+            target: sourceFile.path,
+            overwrite: true,
+            size: targetFile.size,
+            reason: 'Target is newer, replaces source',
+          });
+          filesUpdated++;
         }
       }
     }
@@ -903,13 +772,20 @@ export async function executeSyncAgent(
     onLog({
       timestamp: new Date(),
       level: 'success',
-      message: `Sync completed. Synced ${filesSynced} files (${filesCreated} created, ${filesUpdated} updated)`,
+      message: changes.length > 0
+        ? `Drafted ${changes.length} copies (${filesCreated} new, ${filesUpdated} overwrites).`
+        : 'Folders are already in sync.',
     });
 
     return {
-      filesSynced,
+      filesSynced: 0,
       filesCreated,
       filesUpdated,
+      proposal: changes.length > 0 ? {
+        title: `Sync ${changes.length} files (${syncDirection})`,
+        summary: `${filesCreated} new copies and ${filesUpdated} overwrites between ${sourceDirectory} and ${targetDirectory}. Overwritten files are kept in the agent trash.`,
+        changes,
+      } : undefined,
     };
   } catch (error: any) {
     onError(error.message || 'Sync failed');
@@ -993,52 +869,106 @@ async function collectAllFiles(
 }
 
 /**
- * Executes Clawdbot agent.
+ * Resolves the folder an AI agent should look at.
+ */
+function resolveWorkingDirectory(agent: AgentConfig): string | null {
+  return (
+    agent.params?.targetDirectory ||
+    localStorage.getItem('ai-assistant-current-directory') ||
+    null
+  );
+}
+
+/**
+ * Builds a compact, model-friendly snapshot of a folder.
+ */
+async function buildDirectorySnapshot(directory: string): Promise<string> {
+  const lines: string[] = [`Folder: ${directory}`];
+  try {
+    const entries = await readDir(directory);
+    const visible = entries.filter(e => !e.name.startsWith('.'));
+    const folders = visible.filter(e => e.isDirectory).map(e => e.name);
+    const files = visible.filter(e => e.isFile).map(e => e.name);
+    lines.push(`Top-level folders (${folders.length}): ${folders.slice(0, 40).join(', ') || 'none'}`);
+    lines.push(`Top-level files (${files.length}): ${files.slice(0, 40).join(', ') || 'none'}`);
+  } catch (error: any) {
+    lines.push(`Could not list folder: ${error?.message || error}`);
+  }
+  try {
+    const analysis = await analyzeDirectoryFiles(directory);
+    lines.push(`Total files: ${analysis.totalFiles}, total size: ${analysis.totalSize} bytes`);
+    lines.push(`Organization score: ${analysis.organizationScore.toFixed(0)}/100`);
+    lines.push(
+      'File types: ' +
+        analysis.fileTypes
+          .slice(0, 12)
+          .map(t => `${t.extension || '(none)'}: ${t.count}`)
+          .join(', ')
+    );
+    lines.push(
+      'Largest files: ' +
+        analysis.largestFiles.slice(0, 5).map(f => `${f.name} (${f.size} bytes)`).join(', ')
+    );
+  } catch {
+    // Analysis is optional context
+  }
+  return lines.join('\n');
+}
+
+const AGENT_SYSTEM_PROMPT = `You are a file management agent inside a desktop app.
+You can only read the folder snapshot you are given. You cannot change files yourself.
+Answer in plain text, under 200 words. Be specific to the snapshot.
+When you recommend an action that changes files, say which built-in agent should do it:
+File Organizer, Duplicate Finder, Cleanup Agent, Backup Agent or Sync Agent.
+Their changes always go to the Approval Inbox for a person to review.`;
+
+/**
+ * Executes Clawdbot: an AI assistant that reviews the working folder and
+ * writes a short brief with recommendations. It never changes files.
  */
 export async function executeClawdbotAgent(
   agent: AgentConfig,
   context: AgentExecutionContext
-): Promise<AgentResults> {
+): Promise<AgentExecutionResult> {
   const { onProgress, onLog, shouldStop } = context;
+  const directory = resolveWorkingDirectory(agent);
+  if (!directory) {
+    throw new Error('No folder to review. Set a target directory or a working directory in the AI Assistant.');
+  }
 
-  onLog({
-    timestamp: new Date(),
-    level: 'info',
-    message: 'Clawdbot initializing...',
+  onProgress(15, 'Reading folder...');
+  const snapshot = await buildDirectorySnapshot(directory);
+  if (shouldStop()) throw new Error('Agent stopped by user');
+
+  onProgress(50, 'Asking the model...');
+  const goal =
+    agent.params?.prompt ||
+    'Give a short status brief of this folder: what needs attention now, and what can wait.';
+  const brief = await completeWithAI({
+    system: AGENT_SYSTEM_PROMPT,
+    prompt: `${goal}\n\n${snapshot}`,
+    maxTokens: 600,
+    modelOverride: agent.params?.model,
   });
 
-  onProgress(10, 'Starting up...');
+  onLog({ timestamp: new Date(), level: 'success', message: brief });
+  onProgress(100, 'Completed');
 
-  // Simulate initialization
-  await new Promise(resolve => setTimeout(resolve, 1000));
-
-  if (shouldStop()) return {};
-
-  onLog({
-    timestamp: new Date(),
-    level: 'info',
-    message: 'Clawdbot is active and ready for commands.',
-  });
-
-  onProgress(100, 'Ready');
-
-  // For now, it just finishes initialization. 
-  // In a real scenario, it might stay running or enter a loop if it was a background daemon.
-  // But here agents seem to be "tasks" that run and complete.
-  // We'll treat it as a task that completes its initialization.
-
-  return {
-    message: 'Clawdbot initialized'
-  };
+  return { message: brief, directory };
 }
 
 /**
  * Executes a task agent with subagents.
+ *
+ * Each subagent either runs a built-in agent (when its `tools` list names
+ * one, e.g. "duplicate-finder") or asks the model to work on its goal.
+ * Changes drafted by built-in agents are merged into one proposal so the
+ * whole task is reviewed in the Approval Inbox as a single set.
  */
 export async function executeTaskAgent(
   agent: AgentConfig,
   context: AgentExecutionContext
-): Promise<AgentResults> {
+): Promise<AgentExecutionResult> {
   const { onProgress, onLog, shouldStop } = context;
   const subagents = agent.subagents || [];
 
@@ -1051,48 +981,54 @@ export async function executeTaskAgent(
     return { status: 'completed', subagentsExecuted: 0 };
   }
 
-  onLog({
-    timestamp: new Date(),
-    level: 'info',
-    message: `Starting task agent with ${subagents.length} subagent(s)...`,
-  });
+  const directory = resolveWorkingDirectory(agent);
+  const snapshot = directory ? await buildDirectorySnapshot(directory) : 'No folder selected.';
+  const builtInTypes = ['file-organizer', 'duplicate-finder', 'file-analyzer', 'cleanup-agent', 'backup-agent', 'sync-agent'];
 
-  onProgress(10, 'Initializing subagents...');
+  const subagentResults: Array<{ id: string; status: string; output?: string; error?: string }> = [];
+  const mergedChanges: AgentProposal['changes'] = [];
+  const proposalTitles: string[] = [];
+  const notes: string[] = [];
 
-  const subagentResults: any[] = [];
-  let completedCount = 0;
+  for (let index = 0; index < subagents.length; index++) {
+    const subagent = subagents[index];
+    if (shouldStop()) throw new Error('Agent stopped by user');
 
-  // Execute subagents in parallel
-  const promises = subagents.map(async (subagent, index) => {
-    if (shouldStop()) return;
-
+    onProgress(
+      10 + Math.floor((index / subagents.length) * 80),
+      `Subagent ${index + 1}/${subagents.length}: ${subagent.name}`
+    );
     onLog({
       timestamp: new Date(),
       level: 'info',
-      message: `Subagent [${subagent.name}] (${subagent.role}): Starting... Goal: ${subagent.goal}`,
+      message: `Subagent [${subagent.name}] (${subagent.role}): ${subagent.goal}`,
     });
 
     try {
-      // Simulate unique work duration for each subagent
-      const duration = 1500 + Math.random() * 2000;
-      await new Promise(resolve => setTimeout(resolve, duration));
-
-      if (shouldStop()) {
-        onLog({
-          timestamp: new Date(),
-          level: 'warning',
-          message: `Subagent [${subagent.name}]: Stopped by user.`,
+      const builtIn = subagent.tools?.find(t => builtInTypes.includes(t));
+      if (builtIn) {
+        const executor = getAgentExecutor(builtIn);
+        const result = await executor(
+          { ...agent, type: builtIn as AgentConfig['type'], name: `${agent.name} / ${subagent.name}` },
+          context
+        );
+        if (result.proposal) {
+          mergedChanges.push(...result.proposal.changes);
+          proposalTitles.push(result.proposal.title);
+        }
+        subagentResults.push({ id: subagent.id, status: 'completed', output: result.proposal?.title });
+      } else {
+        const earlier = notes.length > 0 ? `\n\nNotes from earlier subagents:\n${notes.join('\n')}` : '';
+        const output = await completeWithAI({
+          system: `${AGENT_SYSTEM_PROMPT}\nYour role: ${subagent.role}.`,
+          prompt: `Goal: ${subagent.goal}\n\n${snapshot}${earlier}`,
+          maxTokens: 500,
+          modelOverride: subagent.model,
         });
-        return;
+        notes.push(`[${subagent.name}] ${output}`);
+        onLog({ timestamp: new Date(), level: 'success', message: `[${subagent.name}] ${output}` });
+        subagentResults.push({ id: subagent.id, status: 'completed', output });
       }
-
-      onLog({
-        timestamp: new Date(),
-        level: 'success',
-        message: `Subagent [${subagent.name}]: Completed task.`,
-      });
-
-      subagentResults.push({ id: subagent.id, status: 'completed' });
     } catch (error: any) {
       onLog({
         timestamp: new Date(),
@@ -1100,31 +1036,28 @@ export async function executeTaskAgent(
         message: `Subagent [${subagent.name}]: Failed - ${error.message}`,
       });
       subagentResults.push({ id: subagent.id, status: 'error', error: error.message });
-    } finally {
-      completedCount++;
-      const progress = 10 + Math.floor((completedCount / subagents.length) * 80);
-      onProgress(progress, `Running subagents (${completedCount}/${subagents.length})...`);
     }
-  });
-
-  await Promise.all(promises);
-
-  if (shouldStop()) {
-    throw new Error('Agent stopped by user');
   }
 
   onProgress(100, 'Completed');
 
   return {
     subagentsExecuted: subagentResults.length,
-    results: subagentResults
+    results: subagentResults,
+    proposal: mergedChanges.length > 0 ? {
+      title: `${agent.name}: ${proposalTitles.join(' + ')}`,
+      summary: `Changes drafted by ${proposalTitles.length} subagent(s) of ${agent.name}.`,
+      changes: mergedChanges,
+    } : undefined,
   };
 }
 
 /**
  * Gets the executor function for an agent type.
  */
-export function getAgentExecutor(agentType: string) {
+export function getAgentExecutor(
+  agentType: string
+): (agent: AgentConfig, context: AgentExecutionContext) => Promise<AgentExecutionResult> {
   switch (agentType) {
     case 'file-organizer':
       return executeFileOrganizerAgent;
